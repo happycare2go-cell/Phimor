@@ -1,0 +1,93 @@
+// middleware/auth.js
+// ตรวจสอบตัวตนและสิทธิ์ — ทุก Endpoint ต้องผ่านมิดเดิลแวร์นี้ก่อนเสมอ
+// (ตาม Phimor_Technical_Design.docx หมวด 5 และหมวด 8 ความปลอดภัย)
+//
+// ⚠️ โหมดนี้อ่าน LINE User ID จาก Header ตรงๆ เพื่อให้ Dev ทดสอบได้ทันที
+//    ก่อน Deploy จริง ต้องเปลี่ยน identify() ให้ Verify LINE ID Token จริง
+//    (ตรวจ Signature และวันหมดอายุ ไม่ใช่เชื่อค่าจาก Header ตรงๆ)
+
+const { CenterStaff, Residents, CareProfiles } = require('../db');
+const { asyncHandler } = require('./asyncHandler');
+
+/** ดึงตัวตนผู้เรียก — จุดเดียวที่ต้องแก้เป็นของจริงตอน Deploy */
+function identify(req) {
+  const lineUserId = req.header('X-Line-User-Id');
+  if (!lineUserId) return null;
+  return { lineUserId };
+}
+
+function requireAuth(req, res, next) {
+  const user = identify(req);
+  if (!user) {
+    return res.status(401).json({ error: 'unauthorized', message: 'ไม่พบตัวตนผู้ใช้ กรุณาเข้าสู่ระบบผ่าน LINE ใหม่อีกครั้ง' });
+  }
+  req.user = user;
+  next();
+}
+
+/**
+ * ต้องเป็นเจ้าของหรือผู้จัดการของศูนย์ที่ระบุใน req.params.centerId (หรือ req.body.centerId)
+ * — ใช้กับ FR-A, FR-B, FR-K, FR-L (ฝั่งศูนย์), FR-M ตามข้อกำหนด "เจ้าของ/ผู้จัดการเท่านั้น"
+ */
+function requireCenterStaff(roles = ['owner', 'manager']) {
+  return asyncHandler(async (req, res, next) => {
+    const centerId = req.params.centerId || req.body.centerId || req.query.centerId;
+    if (!centerId) {
+      return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุศูนย์' });
+    }
+    const staff = await CenterStaff.findOne(
+      (s) => s.center_id === centerId && s.line_user_id === req.user.lineUserId && roles.includes(s.role)
+    );
+    if (!staff) {
+      return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์จัดการศูนย์นี้' });
+    }
+    req.centerId = centerId;
+    req.staffRole = staff.role;
+    next();
+  });
+}
+
+/**
+ * ผู้เรียกต้องเป็นพนักงาน (ทุกระดับ รวมพนักงานทั่วไปที่ไม่ต้องลงทะเบียน) ของศูนย์นี้
+ * ใช้กับ Endpoint ที่ทำงานผ่านกลุ่มไลน์งานศูนย์ (FR-C ถึง FR-F)
+ * — พนักงานทั่วไประบุตัวตนผ่าน group_id ที่ผูกกับศูนย์ ไม่ใช่ผ่าน CenterStaff
+ */
+async function resolveCenterByGroup(groupId) {
+  const { Centers } = require('../db');
+  return Centers.findOne((c) => c.group_id === groupId && c.status === 'active');
+}
+
+/**
+ * ต้องเป็นครอบครัวที่ผูก Care Profile นี้อยู่จริง
+ * ใช้กับ FR-H (ฝั่งครอบครัว)
+ */
+function requireFamilyAccess() {
+  return asyncHandler(async (req, res, next) => {
+    const careProfileId = req.params.careProfileId || req.body.careProfileId;
+    if (!careProfileId) {
+      return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุ Care Profile' });
+    }
+    const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+    if (!profile) {
+      return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูล' });
+    }
+    if (profile.owner_line_id !== req.user.lineUserId) {
+      return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+    }
+    req.careProfile = profile;
+    next();
+  });
+}
+
+/**
+ * ตรวจว่าศูนย์เข้าถึง Care Profile ของผู้พักรายนี้ได้จริง — ใช้ตรวจซ้ำระดับ Query
+ * ตามข้อกำหนดในหมวดความปลอดภัย: "ต้องตรวจสอบระดับ Query ไม่ใช่แค่ซ่อนใน UI"
+ * และข้อ B5: จำหน่ายออกแล้วต้องเพิกถอนสิทธิ์ทันที
+ */
+async function centerCanAccessResident(centerId, residentId) {
+  const resident = await Residents.findOne((r) => r.resident_id === residentId);
+  if (!resident) return false;
+  return resident.center_id === centerId && resident.status === 'active';
+}
+
+module.exports = { identify, requireAuth, requireCenterStaff, requireFamilyAccess, resolveCenterByGroup, centerCanAccessResident };

@@ -1,0 +1,52 @@
+# render.yaml — Blueprint สำหรับ Deploy พี่หมอ Backend ขึ้น Render.com แบบอัตโนมัติ
+# ใช้งาน: เข้า https://dashboard.render.com/blueprints → New Blueprint Instance
+#         → เชื่อม Repository ที่มีไฟล์นี้ → Render จะอ่านและสร้าง Service ให้เองทั้งหมด
+
+services:
+  - type: web
+    name: phimor-backend
+    runtime: node
+    region: singapore          # ใกล้ไทยที่สุดในตัวเลือกของ Render ลด Latency
+    plan: starter               # เริ่มจาก Starter พอสำหรับเฟส 1 (8 สาขา) อัปเกรดทีหลังได้
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ADMIN_API_KEY
+        sync: false   # ★ ตั้งเป็นค่าสุ่มยาวๆ ในหน้า Dashboard — ใช้สร้างศูนย์ใหม่ผ่าน /api/admin/centers
+      # ★ ต้องกรอกค่าจริงในหน้า Dashboard ของ Render หลัง Deploy (ห้ามใส่ค่าจริงในไฟล์นี้)
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LIFF_ID_CENTER_ADMIN
+        sync: false
+      - key: LIFF_ID_FAMILY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AI_NAME_MATCH_THRESHOLD
+        value: "0.82"
+      - key: CARD_EXPIRY_HOURS
+        value: "24"
+      - key: CARD_REMINDER_HOURS
+        value: "2"
+      - key: IMAGE_RATE_LIMIT_PER_MINUTE
+        value: "5"
+      - key: INVITE_EXPIRY_DAYS
+        value: "30"
+      - key: CARE2GO_UNAVAILABLE_DEADLINE_HOURS
+        value: "12"
+      - key: GOOGLE_SHEETS_SPREADSHEET_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_KEY
+        sync: false

@@ -1,0 +1,173 @@
+// tests/adminRoutes.test.js — ทดสอบ Endpoint สำหรับทีมงานสร้างศูนย์ (FR-A1)
+//
+// หมายเหตุ: ไม่ Reload server.js module ระหว่าง Test เพราะ middleware/adminAuth.js
+// อ่าน process.env.ADMIN_API_KEY สดทุกครั้งที่มี Request เข้ามาอยู่แล้ว (ไม่ได้ Cache ค่าไว้ตอน Import)
+// การ delete require.cache แล้ว require ใหม่จึงไม่จำเป็น และเคยทำให้ Test ค้างมาก่อน
+
+const { test, beforeEach, before, after } = require('node:test');
+const assert = require('node:assert');
+const http = require('node:http');
+
+const db = require('../backend/db');
+
+let server, baseUrl;
+const REAL_ADMIN_KEY = 'test-admin-key-12345';
+
+before(async () => {
+  process.env.ADMIN_API_KEY = REAL_ADMIN_KEY; // ตั้งค่าก่อน require ครั้งแรกครั้งเดียวพอ
+  const app = require('../backend/server');
+  server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, resolve));
+  baseUrl = `http://127.0.0.1:${server.address().port}`;
+});
+
+after(async () => {
+  await new Promise((resolve) => server.close(resolve));
+});
+
+beforeEach(() => db.resetAll());
+
+async function callAdmin(path, opts = {}) {
+  return fetch(`${baseUrl}${path}`, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+}
+
+test('สร้างศูนย์โดยไม่มี Admin Key ต้องถูกปฏิเสธ 401', async () => {
+  const res = await callAdmin('/api/admin/centers', {
+    method: 'POST', body: JSON.stringify({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' }),
+  });
+  assert.strictEqual(res.status, 401);
+});
+
+test('สร้างศูนย์ด้วย Admin Key ผิด ต้องถูกปฏิเสธ 401', async () => {
+  const res = await callAdmin('/api/admin/centers', {
+    method: 'POST', headers: { 'X-Admin-Key': 'wrong-key' },
+    body: JSON.stringify({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' }),
+  });
+  assert.strictEqual(res.status, 401);
+});
+
+test('สร้างศูนย์ด้วย Admin Key ที่ถูกต้อง ต้องสำเร็จและคืนขั้นตอนถัดไป', async () => {
+  const res = await callAdmin('/api/admin/centers', {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY },
+    body: JSON.stringify({ name: 'ศูนย์สุขสบาย', ownerLineId: 'U_OWNER_1' }),
+  });
+  assert.strictEqual(res.status, 201);
+  const body = await res.json();
+  assert.ok(body.centerId);
+  assert.strictEqual(body.name, 'ศูนย์สุขสบาย');
+  assert.strictEqual(body.ownerLineId, 'U_OWNER_1');
+  assert.ok(Array.isArray(body.nextSteps) && body.nextSteps.length > 0);
+
+  const centers = await db.Centers.findAll();
+  assert.strictEqual(centers.length, 1);
+});
+
+test('สร้างศูนย์โดยไม่ระบุชื่อ ต้องถูกปฏิเสธ 400', async () => {
+  const res = await callAdmin('/api/admin/centers', {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY },
+    body: JSON.stringify({ ownerLineId: 'U_OWNER' }),
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('สร้างศูนย์โดยไม่ระบุ ownerLineId ต้องถูกปฏิเสธ 400', async () => {
+  const res = await callAdmin('/api/admin/centers', {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY },
+    body: JSON.stringify({ name: 'ศูนย์ทดสอบ' }),
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('GET /api/admin/centers คืนรายชื่อศูนย์ทั้งหมดพร้อมสถานะการผูกกลุ่ม', async () => {
+  await callAdmin('/api/admin/centers', { method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY }, body: JSON.stringify({ name: 'ศูนย์ A', ownerLineId: 'U_A' }) });
+  await callAdmin('/api/admin/centers', { method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY }, body: JSON.stringify({ name: 'ศูนย์ B', ownerLineId: 'U_B' }) });
+
+  const res = await callAdmin('/api/admin/centers', { headers: { 'X-Admin-Key': REAL_ADMIN_KEY } });
+  const body = await res.json();
+  assert.strictEqual(body.centers.length, 2);
+  assert.strictEqual(body.centers[0].groupBound, false, 'ยังไม่ผูกกลุ่ม ต้องแสดง false');
+});
+
+test('ถ้าไม่ได้ตั้งค่า ADMIN_API_KEY บน Server ต้องปิดกั้นทุกคำขอด้วย 503 (กันลืมตั้งค่าตอน Deploy)', async () => {
+  const prevKey = process.env.ADMIN_API_KEY;
+  delete process.env.ADMIN_API_KEY; // จำลองว่าลืมตั้งค่าตอน Deploy — middleware อ่านค่านี้สดทุกครั้ง ไม่ต้อง Reload
+
+  const res = await callAdmin('/api/admin/centers', {
+    method: 'POST', headers: { 'X-Admin-Key': 'anything' },
+    body: JSON.stringify({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_X' }),
+  });
+  assert.strictEqual(res.status, 503, 'ต้องปิดกั้นทันทีถ้าไม่ได้ตั้งค่า Key ไว้ ห้ามเปิดช่องให้ผ่านฟรี');
+
+  process.env.ADMIN_API_KEY = prevKey; // คืนค่าเดิมให้ Test อื่นทำงานต่อได้ปกติ
+});
+
+test('Admin ดูรายชื่อทีมงานของศูนย์ได้ พร้อมชื่อบทบาทภาษาไทย (ใช้ช่วยหา LINE User ID)', async () => {
+  const centerService = require('../backend/services/centerService');
+  const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
+  await centerService.appointManager({ centerId: center.center_id, targetLineId: 'U_MGR', requesterLineId: 'U_OWNER' });
+  await centerService.recordStaffFromGroup(null, null); // ไม่มีผล
+  await db.CenterStaff.insert({ staff_id: 'STF-X', center_id: center.center_id, line_user_id: 'U_STAFF', role: 'staff', assigned_at: db.now(), auto_registered: true });
+
+  const res = await callAdmin(`/api/admin/centers/${center.center_id}/staff`, { headers: { 'X-Admin-Key': REAL_ADMIN_KEY } });
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.strictEqual(body.staff.length, 3);
+
+  const roles = body.staff.map((s) => s.roleLabel);
+  assert.ok(roles.includes('เจ้าของศูนย์'));
+  assert.ok(roles.includes('ผู้จัดการ'));
+  assert.ok(roles.includes('พนักงาน'));
+});
+
+test('Admin หมุน API Key ใหม่ได้ และกุญแจเดิมถูกเพิกถอนทันที', async () => {
+  const centerService = require('../backend/services/centerService');
+  const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
+  const oldKey = center.external_api_key;
+
+  const res = await callAdmin(`/api/admin/centers/${center.center_id}/rotate-key`, {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY },
+  });
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.notStrictEqual(body.newApiKey, oldKey);
+  assert.ok(body.warning.includes('เพิกถอน'));
+
+  const foundByOld = await centerService.findCenterByApiKey(oldKey);
+  assert.strictEqual(foundByOld, null, 'กุญแจเดิมต้องใช้ไม่ได้อีก');
+});
+
+test('Admin ปิดใช้งานศูนย์ได้ และพนักงานของศูนย์นั้นส่งรูปไม่ได้อีก', async () => {
+  const centerService = require('../backend/services/centerService');
+  const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
+  await centerService.bindGroupToCenter({ centerId: center.center_id, groupId: 'G_SUS', requesterLineId: 'U_OWNER' });
+  await centerService.recordStaffFromGroup('G_SUS', 'U_STAFF_SUS');
+
+  // ก่อนปิด — หาศูนย์เจอปกติ
+  let found = await centerService.findCenterByStaffUser('U_STAFF_SUS');
+  assert.ok(found, 'ก่อนปิดใช้งานต้องหาศูนย์เจอ');
+
+  const res = await callAdmin(`/api/admin/centers/${center.center_id}/status`, {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY }, body: JSON.stringify({ status: 'suspended' }),
+  });
+  assert.strictEqual(res.status, 200);
+
+  // หลังปิด — พนักงานส่งรูปไม่ได้เพราะหาศูนย์ไม่เจอ
+  found = await centerService.findCenterByStaffUser('U_STAFF_SUS');
+  assert.strictEqual(found, null, 'ปิดใช้งานแล้วพนักงานต้องส่งรูปไม่ได้');
+
+  // เปิดกลับได้
+  await callAdmin(`/api/admin/centers/${center.center_id}/status`, {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY }, body: JSON.stringify({ status: 'active' }),
+  });
+  found = await centerService.findCenterByStaffUser('U_STAFF_SUS');
+  assert.ok(found, 'เปิดกลับแล้วต้องใช้งานได้ตามปกติ');
+});
+
+test('Admin ส่ง status ที่ไม่ถูกต้อง ต้องถูกปฏิเสธ', async () => {
+  const centerService = require('../backend/services/centerService');
+  const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
+  const res = await callAdmin(`/api/admin/centers/${center.center_id}/status`, {
+    method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY }, body: JSON.stringify({ status: 'deleted' }),
+  });
+  assert.strictEqual(res.status, 400);
+});

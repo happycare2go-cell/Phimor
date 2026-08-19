@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>พี่หมอ</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Sarabun','Noto Sans Thai',sans-serif;background:var(--bg);color:#1a1a2e;font-size:15px}
+  .hdr{background:var(--navy);color:#fff;padding:16px 18px}
+  .hdr .logo{font-size:20px;font-weight:700}
+  .hdr .sub{font-size:12px;opacity:.85;margin-top:2px}
+  .tabs{display:flex;background:#fff;border-bottom:1px solid #E3E7F0}
+  .tab{flex:1;text-align:center;padding:12px 4px;font-size:12.5px;color:var(--gray);cursor:pointer;border-bottom:3px solid transparent}
+  .tab.active{color:var(--navy);font-weight:700;border-color:var(--gold)}
+  .view{display:none;padding:16px}
+  .view.active{display:block}
+  .card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  .card h3{margin:0 0 10px;font-size:15px;color:var(--navy)}
+  label{display:block;font-size:12px;color:var(--gray);margin:10px 0 4px}
+  input,textarea,select{width:100%;padding:10px 12px;border:1px solid #D8DEEC;border-radius:9px;font-size:14px;font-family:inherit}
+  .btn{display:block;width:100%;padding:12px;border-radius:9px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;text-align:center}
+  .btn-primary{background:var(--navy);color:#fff}
+  .btn-gold{background:var(--gold);color:var(--navy)}
+  .btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+  .empty{text-align:center;padding:36px 20px;color:var(--gray);font-size:13px}
+  .appt-item{padding:12px 0;border-bottom:1px solid #EEF1F8}
+  .appt-item:last-child{border:none}
+  .appt-h{font-weight:700;font-size:14px}
+  .appt-d{font-size:12px;color:var(--gray);margin-top:2px}
+  .lock{display:inline-block;background:var(--ice);color:var(--navy);font-size:11px;padding:2px 8px;border-radius:999px;margin-left:6px}
+  .consent-overlay{position:fixed;inset:0;background:#fff;z-index:200;display:flex;flex-direction:column;padding:24px 20px;overflow-y:auto}
+  .consent-overlay h2{color:var(--navy)}
+  .consent-overlay p{font-size:13.5px;line-height:1.7;color:#333}
+  .toast{position:fixed;bottom:20px;left:16px;right:16px;background:var(--navy);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;text-align:center;opacity:0;transition:.25s;z-index:99}
+  .toast.show{opacity:1}
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-end}
+  .modal-bg.show{display:flex}
+  .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
+  .badge-tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;background:var(--ice);color:var(--navy)}
+</style>
+</head>
+<body>
+
+<!-- ═══ F1: หน้ายินยอม PDPA — บังคับผ่านก่อนเข้าหน้าหลัก ═══ -->
+<div class="consent-overlay" id="consentOverlay" style="display:none">
+  <h2>ก่อนเริ่มใช้งานพี่หมอ</h2>
+  <p>พี่หมอเก็บข้อมูลสุขภาพของผู้สูงอายุที่คุณดูแล เพื่อใช้แจ้งเตือนนัดหมาย บันทึกรายการยา และช่วยให้ครอบครัวเห็นข้อมูลตรงกัน</p>
+  <p><b>ใครเข้าถึงข้อมูลได้บ้าง:</b> คุณในฐานะเจ้าของข้อมูล และศูนย์ดูแลเฉพาะช่วงที่ยังดูแลอยู่เท่านั้น</p>
+  <p><b>สิทธิ์ของคุณ:</b> แก้ไข ลบ หรือถอนความยินยอมได้ทุกเมื่อ ข้อมูลจะยังอยู่กับคุณแม้เปลี่ยนศูนย์ดูแล</p>
+  <div style="margin-top:auto;padding-top:16px">
+    <button class="btn btn-primary" onclick="acceptConsent()">ยอมรับและเริ่มใช้งาน</button>
+    <div style="height:8px"></div>
+    <button class="btn btn-outline" onclick="declineConsent()">ไม่ยอมรับ</button>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="hdr">
+    <div class="logo">พี่หมอ</div>
+    <div class="sub" id="profileLabel">กำลังโหลด...</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-view="home">หน้าหลัก</div>
+    <div class="tab" data-view="record">บันทึก</div>
+    <div class="tab" data-view="history">ประวัติ</div>
+    <div class="tab" data-view="health">สุขภาพ</div>
+  </div>
+
+  <!-- ═══ F2: หน้าหลัก ═══ -->
+  <div class="view active" id="view-home">
+    <div class="card" id="noProfileCard" style="display:none">
+      <h3>ยังไม่มีข้อมูลผู้สูงอายุ</h3>
+      <p style="font-size:13px;color:var(--gray)">สร้างโปรไฟล์เองได้เลย หรือรอลิงก์เชิญจากศูนย์ดูแล</p>
+      <label>ชื่อผู้สูงอายุ</label>
+      <input type="text" id="newProfileName" placeholder="เช่น คุณยายทองดี">
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="createIndependentProfile()">สร้างโปรไฟล์</button></div>
+    </div>
+
+    <div id="profileSummary"></div>
+
+    <div class="card">
+      <h3>📅 นัดหมายที่ใกล้ถึง</h3>
+      <div id="upcomingList"></div>
+    </div>
+  </div>
+
+  <!-- ═══ F3: บันทึกเอง ═══ -->
+  <div class="view" id="view-record">
+    <div class="card">
+      <h3>บันทึกนัดหมาย</h3>
+      <label>โรงพยาบาล / แผนก</label>
+      <input type="text" id="apHospital" placeholder="เช่น รพ.จุฬาฯ อายุรกรรม">
+      <label>วันที่</label>
+      <input type="date" id="apDate">
+      <label>เวลา</label>
+      <input type="time" id="apTime">
+      <label>หมายเหตุ</label>
+      <textarea id="apNote" placeholder="เช่น งดน้ำงดอาหารก่อนตรวจ"></textarea>
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveAppointment()">บันทึกนัด</button></div>
+    </div>
+    <div class="card">
+      <h3>บันทึกยา</h3>
+      <label>ชื่อยา</label>
+      <input type="text" id="medName" placeholder="เช่น Metformin 500mg">
+      <label>วิธีใช้</label>
+      <input type="text" id="medDose" placeholder="เช่น 1 เม็ด หลังอาหารเช้า">
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveMedication()">บันทึกยา</button></div>
+    </div>
+  </div>
+
+  <!-- ═══ F4: ประวัติ + PDF ═══ -->
+  <div class="view" id="view-history">
+    <div class="card">
+      <h3>ส่งออกประวัติ</h3>
+      <label>จากวันที่</label><input type="date" id="fromDate">
+      <label>ถึงวันที่</label><input type="date" id="toDate">
+      <div style="margin-top:12px"><button class="btn btn-gold" onclick="exportPdf()">ส่งออกเป็น PDF</button></div>
+    </div>
+    <div class="card"><h3>ประวัติทั้งหมด</h3><div id="historyList"></div></div>
+  </div>
+
+  <!-- ═══ F5: ข้อมูลสุขภาพ ═══ -->
+  <div class="view" id="view-health">
+    <div class="card">
+      <h3>ข้อมูลสุขภาพ</h3>
+      <label>กรุ๊ปเลือด</label>
+      <select id="bloodType">
+        <option value="">ไม่ทราบ</option>
+        <option>A</option><option>A+</option><option>B</option><option>B+</option>
+        <option>AB</option><option>AB+</option><option>O</option><option>O+</option>
+      </select>
+      <label>ส่วนสูง (ซม.)</label>
+      <input type="number" id="heightCm">
+      <label>น้ำหนัก (กก.)</label>
+      <input type="number" id="weightKg">
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveHealthInfo()">บันทึก</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BACKEND_URL = 'https://api.phimor.example.com'; // ★ Dev แทนที่ด้วย URL จริงตอน Deploy
+let LINE_USER_ID = null;
+let currentProfile = null;
+let allProfiles = [];
+
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+async function api(path, opts={}) {
+  const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) { toast(data.message || 'เกิดข้อผิดพลาด'); throw new Error(data.message); }
+  return data;
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('view-'+t.dataset.view).classList.add('active');
+  if (t.dataset.view === 'history' && currentProfile) loadHistory();
+});
+
+// ── F1: PDPA ──
+async function acceptConsent() {
+  await api('/api/consent', { method:'POST', body: JSON.stringify({ accepted: true }) });
+  document.getElementById('consentOverlay').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  await loadDashboard();
+}
+function declineConsent() { toast('จำเป็นต้องยอมรับก่อนใช้งานพี่หมอ'); }
+
+// ── F2: หน้าหลัก ──
+async function loadDashboard() {
+  const data = await api('/api/init-dashboard');
+  allProfiles = data.profiles;
+  currentProfile = allProfiles[0] || null;
+
+  document.getElementById('profileLabel').textContent = currentProfile ? currentProfile.profile.patient_name : 'ยังไม่มีข้อมูล';
+  document.getElementById('noProfileCard').style.display = currentProfile ? 'none' : 'block';
+
+  if (currentProfile) {
+    const p = currentProfile.profile;
+    const aiTag = currentProfile.canUseAi ? '' : '<span class="lock">🔒 AI ใช้ได้เมื่อผูกกับศูนย์</span>';
+    document.getElementById('profileSummary').innerHTML = `
+      <div class="card">
+        <h3>👤 ${esc(p.patient_name)} ${aiTag}</h3>
+        <div style="font-size:13px;color:var(--gray)">
+          🩸 ${p.blood_type||'ไม่ทราบกรุ๊ปเลือด'} · ⚖️ ${p.weight_kg||'-'} กก. · 📏 ${p.height_cm||'-'} ซม.
+        </div>
+      </div>`;
+    renderUpcoming(currentProfile.upcomingAppointments);
+  } else {
+    document.getElementById('profileSummary').innerHTML = '';
+    document.getElementById('upcomingList').innerHTML = '<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>';
+  }
+}
+function renderUpcoming(list) {
+  const box = document.getElementById('upcomingList');
+  if (!list || list.length === 0) { box.innerHTML = '<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>'; return; }
+  box.innerHTML = list.map(a => `
+    <div class="appt-item">
+      <div class="appt-h">${esc(a.hospital)}</div>
+      <div class="appt-d">${new Date(a.datetime).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'})}${a.note ? ' · '+esc(a.note) : ''}</div>
+    </div>`).join('');
+}
+
+async function createIndependentProfile() {
+  const patientName = document.getElementById('newProfileName').value.trim();
+  if (!patientName) return toast('กรุณากรอกชื่อ');
+  await api('/api/care-profile/independent', { method:'POST', body: JSON.stringify({ patientName }) });
+  toast('สร้างโปรไฟล์แล้ว');
+  await loadDashboard();
+}
+
+// ── F3: บันทึกเอง ──
+async function saveAppointment() {
+  if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
+  const hospital = document.getElementById('apHospital').value.trim();
+  const date = document.getElementById('apDate').value;
+  const time = document.getElementById('apTime').value || '09:00';
+  const note = document.getElementById('apNote').value.trim();
+  if (!hospital || !date) return toast('กรุณากรอกโรงพยาบาลและวันที่');
+  await api('/api/appointments', { method:'POST', body: JSON.stringify({
+    careProfileId: currentProfile.profile.care_profile_id, hospital, datetime: `${date}T${time}:00`, note,
+  })});
+  toast('บันทึกนัดแล้ว');
+  document.getElementById('apHospital').value=''; document.getElementById('apNote').value='';
+  await loadDashboard();
+}
+async function saveMedication() {
+  if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
+  const name = document.getElementById('medName').value.trim();
+  const dose = document.getElementById('medDose').value.trim();
+  if (!name) return toast('กรุณากรอกชื่อยา');
+  await api('/api/medications', { method:'POST', body: JSON.stringify({ careProfileId: currentProfile.profile.care_profile_id, name, dose }) });
+  toast('บันทึกยาแล้ว');
+  document.getElementById('medName').value=''; document.getElementById('medDose').value='';
+}
+
+// ── F4: ประวัติ + PDF ──
+async function loadHistory() {
+  // ในระบบจริง: GET /api/history?careProfileId=...
+  document.getElementById('historyList').innerHTML = '<div class="empty">แสดงประวัติทั้งหมดที่นี่</div>';
+}
+async function exportPdf() {
+  if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
+  const fromDate = document.getElementById('fromDate').value;
+  const toDate = document.getElementById('toDate').value;
+  const res = await fetch(BACKEND_URL + '/api/export/pdf', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID },
+    body: JSON.stringify({ careProfileId: currentProfile.profile.care_profile_id, fromDate, toDate }),
+  });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); return toast(err.message || 'สร้างไฟล์ไม่สำเร็จ'); }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'ประวัติสุขภาพ.pdf'; a.click();
+  URL.revokeObjectURL(url);
+  toast('ดาวน์โหลดไฟล์แล้ว');
+}
+
+// ── F5: ข้อมูลสุขภาพ ──
+async function saveHealthInfo() {
+  if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
+  await api(`/api/care-profile/${currentProfile.profile.care_profile_id}`, { method:'PATCH', body: JSON.stringify({
+    blood_type: document.getElementById('bloodType').value,
+    height_cm: document.getElementById('heightCm').value,
+    weight_kg: document.getElementById('weightKg').value,
+  })});
+  toast('บันทึกแล้ว');
+  await loadDashboard();
+}
+
+// ── เริ่มต้น ──
+async function main() {
+  await liff.init({ liffId: 'YOUR_LIFF_ID' }); // ★ Dev ใส่ LIFF ID จริงตอน Deploy
+  if (!liff.isLoggedIn()) { liff.login(); return; }
+  const profile = await liff.getProfile();
+  LINE_USER_ID = profile.userId;
+
+  const consentCheck = await fetch(BACKEND_URL + '/api/consent/check', { headers: { 'X-Line-User-Id': LINE_USER_ID } }).catch(()=>null);
+  const hasConsent = consentCheck && consentCheck.ok && (await consentCheck.json()).hasConsent;
+
+  if (!hasConsent) {
+    document.getElementById('consentOverlay').style.display = 'flex'; // ★ F1 บังคับผ่านก่อนเข้าหน้าหลัก
+  } else {
+    document.getElementById('app').style.display = 'block';
+    await loadDashboard();
+    // อ่าน URL Parameter จากปุ่ม Rich Menu เพื่อสลับแท็บอัตโนมัติ
+    const view = new URLSearchParams(location.search).get('view');
+    if (view === 'record' || view === 'history') {
+      document.querySelector(`.tab[data-view="${view}"]`)?.click();
+    }
+  }
+}
+main().catch(err => { console.error(err); toast('เชื่อมต่อไม่สำเร็จ'); });
+</script>
+</body>
+</html>

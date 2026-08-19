@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>พี่หมอ — จัดการศูนย์</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --red:#D64545; --gray:#5A6580; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Sarabun','Noto Sans Thai',sans-serif;background:var(--bg);color:#1a1a2e;font-size:15px}
+  .hdr{background:var(--navy);color:#fff;padding:16px 18px}
+  .hdr .logo{font-size:19px;font-weight:700}
+  .hdr .sub{font-size:12px;opacity:.8;margin-top:2px}
+  .tabs{display:flex;background:#fff;border-bottom:1px solid #E3E7F0;overflow-x:auto}
+  .tab{padding:12px 16px;font-size:13px;color:var(--gray);white-space:nowrap;cursor:pointer;border-bottom:3px solid transparent}
+  .tab.active{color:var(--navy);font-weight:700;border-color:var(--gold)}
+  .view{display:none;padding:16px}
+  .view.active{display:block}
+  .card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  .card h3{margin:0 0 10px;font-size:15px;color:var(--navy)}
+  label{display:block;font-size:12px;color:var(--gray);margin:10px 0 4px}
+  input[type=text],input[type=tel],input[type=number],input[type=date],input[type=time],textarea,select{
+    width:100%;padding:10px 12px;border:1px solid #D8DEEC;border-radius:9px;font-size:14px;font-family:inherit;background:#fff}
+  textarea{resize:vertical;min-height:60px}
+  .btn{display:inline-block;padding:11px 18px;border-radius:9px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+  .btn-primary{background:var(--navy);color:#fff;width:100%}
+  .btn-gold{background:var(--gold);color:var(--navy);width:100%}
+  .btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+  .btn-danger{background:#FCEBEB;color:var(--red);border:1px solid var(--red)}
+  .btn-sm{padding:6px 12px;font-size:12px;border-radius:7px}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  .resident-item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #EEF1F8}
+  .resident-item:last-child{border:none}
+  .resident-name{font-weight:600;font-size:14px}
+  .resident-meta{font-size:12px;color:var(--gray);margin-top:2px}
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
+  .badge-linked{background:#E3F5EC;color:var(--teal)}
+  .badge-pending{background:var(--ice);color:var(--navy)}
+  .search{position:relative;margin-bottom:14px}
+  .search input{padding-left:36px}
+  .search::before{content:"🔍";position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:13px}
+  .empty{text-align:center;padding:40px 20px;color:var(--gray);font-size:13px}
+  .switch-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #EEF1F8}
+  .switch{position:relative;width:44px;height:24px;flex-shrink:0}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;cursor:pointer;inset:0;background:#CBD3E5;border-radius:24px;transition:.2s}
+  .slider::before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  input:checked+.slider{background:var(--teal)}
+  input:checked+.slider::before{transform:translateX(20px)}
+  .price-input{width:90px;text-align:right}
+  .toast{position:fixed;bottom:20px;left:16px;right:16px;background:var(--navy);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;text-align:center;opacity:0;transition:.25s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-end}
+  .modal-bg.show{display:flex}
+  .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
+  .modal h3{margin-top:0;color:var(--navy)}
+  .transport-item{border:1px solid #EEF1F8;border-radius:12px;padding:12px;margin-bottom:10px}
+  .chip{display:inline-block;background:var(--ice);color:var(--navy);padding:3px 10px;border-radius:999px;font-size:11px;margin-right:6px}
+  .back-link{color:var(--navy);font-size:13px;cursor:pointer;margin-bottom:10px;display:inline-block}
+  .doc-thumb{width:100%;border-radius:10px;margin-bottom:12px;background:#eee;max-height:220px;object-fit:contain}
+  .edited-flag{background:#FFF6E4;padding:2px 6px;border-radius:5px;font-size:10px;color:#8A6D1F;margin-left:6px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="logo">พี่หมอ <span style="font-weight:400;font-size:13px;opacity:.85">· ศูนย์</span></div>
+  <div class="sub" id="centerNameLabel">กำลังโหลด...</div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-view="residents">ผู้พัก</div>
+  <div class="tab" data-view="transport">รอดำเนินการ</div>
+  <div class="tab" data-view="ratecard">ราคาบริการ</div>
+  <div class="tab" data-view="staff">ทีมงาน</div>
+</div>
+
+<!-- ═══ S2: รายชื่อผู้พัก ═══ -->
+<div class="view active" id="view-residents">
+  <div class="card">
+    <h3>➕ เพิ่มผู้พักใหม่</h3>
+    <label>ชื่อ-นามสกุล (ตามที่ปรากฏบนเอกสารโรงพยาบาล)</label>
+    <input type="text" id="newFullName" placeholder="เช่น สมศรี ใจดี">
+    <label>ชื่ออื่นที่ใช้ (ถ้ามี — คั่นด้วยจุลภาค)</label>
+    <input type="text" id="newAliases" placeholder="เช่น คุณแม่สมศรี, ป้าศรี">
+    <div class="row">
+      <div><label>เลขห้อง</label><input type="text" id="newRoom" placeholder="203"></div>
+      <div><label>เบอร์ญาติหลัก</label><input type="tel" id="newPhone" placeholder="08x-xxx-xxxx"></div>
+    </div>
+    <div style="margin-top:14px"><button class="btn btn-primary" onclick="addResident()">สร้างผู้พักใหม่</button></div>
+  </div>
+
+  <div class="search"><input type="text" id="searchInput" placeholder="ค้นหาชื่อผู้พัก..." oninput="renderResidents()"></div>
+  <div id="residentList"></div>
+</div>
+
+<!-- ═══ S4: แก้ไขการ์ดก่อนส่ง — เข้าถึงผ่าน ?view=edit-card&cardId=xxx เท่านั้น ไม่อยู่ใน Tab Bar ปกติ ═══
+     (ข้อ E3-E8: กรอกค่า AI ไว้ล่วงหน้า + แสดงรูปต้นฉบับ + Date/Time Picker + เปลี่ยนผู้พักได้
+      + กลับไปการ์ดยืนยันเสมอ ไม่ส่งตรง + ไฮไลต์ช่องที่ถูกแก้) -->
+<div class="view" id="view-edit-card">
+  <div class="card" id="editCardBanner" style="background:#1C2B64;color:#fff">
+    <h3 style="color:#fff;margin:0">ตรวจสอบและแก้ไขก่อนส่ง</h3>
+    <div style="font-size:12px;opacity:.85;margin-top:4px">แก้เฉพาะช่องที่ผิด ช่องที่แก้แล้วจะมีป้าย "แก้ไขแล้ว" กำกับไว้</div>
+  </div>
+
+  <div class="card">
+    <img id="ecDocImage" class="doc-thumb" style="display:none" alt="เอกสารต้นฉบับ">
+    <div id="ecNoImage" class="empty" style="display:none">ไม่มีรูปต้นฉบับให้แสดง</div>
+  </div>
+
+  <div class="card">
+    <label>ผู้พัก <span id="ecResidentFlag"></span></label>
+    <select id="ecResident" onchange="markEdited('resident')"></select>
+
+    <label style="margin-top:16px">โรงพยาบาล / แผนก <span id="ecHospitalFlag"></span></label>
+    <input type="text" id="ecHospital" oninput="markEdited('hospital')">
+
+    <div class="row" style="margin-top:10px">
+      <div><label>วันที่ <span id="ecDateFlag"></span></label><input type="date" id="ecDate" onchange="markEdited('date')"></div>
+      <div><label>เวลา <span id="ecTimeFlag"></span></label><input type="time" id="ecTime" onchange="markEdited('date')"></div>
+    </div>
+
+    <label style="margin-top:10px">หมายเหตุนัด <span id="ecApNoteFlag"></span></label>
+    <textarea id="ecApNote" oninput="markEdited('apnote')"></textarea>
+  </div>
+
+  <div class="card">
+    <label style="margin:0 0 8px">รายการยา <span id="ecMedFlag"></span></label>
+    <div id="ecMedList"></div>
+    <button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="addMedRow()">+ เพิ่มรายการยา</button>
+  </div>
+
+  <div class="card">
+    <label>คำสั่งแพทย์ <span id="ecDoctorFlag"></span></label>
+    <textarea id="ecDoctorNote" oninput="markEdited('doctornote')"></textarea>
+  </div>
+
+  <button class="btn btn-primary" onclick="saveCardEdit()">บันทึกและกลับไปตรวจ</button>
+</div>
+
+<!-- ═══ S3: แก้ไขผู้พัก (Modal) ═══ -->
+<div class="modal-bg" id="editResidentModal">
+  <div class="modal">
+    <h3>แก้ไขข้อมูลผู้พัก</h3>
+    <input type="hidden" id="editResidentId">
+    <label>ชื่อ-นามสกุล</label>
+    <input type="text" id="editFullName">
+    <label>ชื่ออื่นที่ใช้</label>
+    <input type="text" id="editAliases">
+    <div class="row">
+      <div><label>เลขห้อง</label><input type="text" id="editRoom"></div>
+      <div><label>เบอร์ญาติหลัก</label><input type="tel" id="editPhone"></div>
+    </div>
+    <div style="margin-top:14px" class="row">
+      <button class="btn btn-outline" onclick="closeModal('editResidentModal')">ยกเลิก</button>
+      <button class="btn btn-primary" onclick="saveResidentEdit()">บันทึก</button>
+    </div>
+    <div style="margin-top:8px">
+      <button class="btn btn-danger" style="width:100%" onclick="dischargeResident()">🗑 จำหน่ายผู้พักออกจากศูนย์</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ FR-K1, K2: ตารางนัดของทุกผู้พักในศูนย์ + FR-L ชั้นที่ 2: รอศูนย์ตัดสินใจ ═══ -->
+<div class="view" id="view-transport">
+  <div class="card">
+    <h3>📅 นัดที่กำลังจะถึงทั้งศูนย์</h3>
+    <div id="centerApptList"></div>
+  </div>
+  <div class="card">
+    <h3>รอศูนย์ตัดสินใจ</h3>
+    <div id="transportList"></div>
+  </div>
+</div>
+
+<!-- ═══ FR-M: ราคาบริการของศูนย์ ═══ -->
+<div class="view" id="view-ratecard">
+  <div class="card">
+    <h3>ราคาบริการของศูนย์</h3>
+    <p style="font-size:12px;color:var(--gray);margin-top:-4px">ถ้าปิดรายการใด ระบบจะเสนอให้ใช้บริการ Care2Go สำหรับรายการนั้นแทน</p>
+    <div class="switch-row">
+      <div>
+        <div style="font-weight:600;font-size:13px">ค่าคนเฝ้าไข้</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="number" class="price-input" id="escortPrice" placeholder="บาท">
+        <label class="switch"><input type="checkbox" id="escortEnabled"><span class="slider"></span></label>
+      </div>
+    </div>
+    <div class="switch-row">
+      <div><div style="font-weight:600;font-size:13px">ค่ารถรับส่ง</div></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="number" class="price-input" id="vehiclePrice" placeholder="บาท">
+        <label class="switch"><input type="checkbox" id="vehicleEnabled"><span class="slider"></span></label>
+      </div>
+    </div>
+    <div style="margin-top:14px"><button class="btn btn-primary" onclick="saveRateCard()">บันทึกราคา</button></div>
+  </div>
+</div>
+
+<!-- ═══ FR-A4: ทีมงาน ═══ -->
+<div class="view" id="view-staff">
+  <div class="card">
+    <h3>➕ แต่งตั้งผู้จัดการ</h3>
+    <label>LINE User ID</label>
+    <input type="text" id="newManagerId" placeholder="Uxxxxxxxxxxxxxxxx">
+    <div style="margin-top:12px"><button class="btn btn-primary" onclick="appointManager()">แต่งตั้ง</button></div>
+  </div>
+  <div class="card"><h3>รายชื่อทีมงาน</h3><div id="staffList"></div></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BACKEND_URL = 'https://api.phimor.example.com'; // ★ Dev แทนที่ด้วย URL จริงตอน Deploy
+let LINE_USER_ID = null;
+let CENTER_ID = null;
+let residentsCache = [];
+
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+function openModal(id){ document.getElementById(id).classList.add('show'); }
+function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+
+async function api(path, opts={}) {
+  const res = await fetch(BACKEND_URL + path, {
+    ...opts,
+    headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) },
+  });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) { toast(data.message || 'เกิดข้อผิดพลาด'); throw new Error(data.message); }
+  return data;
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('view-'+t.dataset.view).classList.add('active');
+  if (t.dataset.view === 'transport') loadTransport();
+  if (t.dataset.view === 'ratecard') loadRateCard();
+  if (t.dataset.view === 'staff') loadStaff();
+});
+
+// ── S2: ผู้พัก ──
+async function loadResidents() {
+  const data = await api('/api/residents?centerId=' + CENTER_ID);
+  residentsCache = data.residents;
+  renderResidents();
+}
+function renderResidents() {
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  const filtered = residentsCache.filter(r => !q || r.full_name.toLowerCase().includes(q));
+  const box = document.getElementById('residentList');
+  if (filtered.length === 0) { box.innerHTML = '<div class="empty">ยังไม่มีผู้พัก — เพิ่มคนแรกได้เลยด้านบน</div>'; return; }
+  box.innerHTML = '<div class="card">' + filtered.map(r => `
+    <div class="resident-item">
+      <div>
+        <div class="resident-name">${esc(r.full_name)} ${r.room ? '· ห้อง '+esc(r.room):''}</div>
+        <div class="resident-meta">
+          <span class="badge ${r.care_profile_id ? 'badge-linked' : 'badge-pending'}">${r.care_profile_id ? 'ผูกครอบครัวแล้ว' : 'ยังไม่ผูกครอบครัว'}</span>
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>
+    </div>`).join('') + '</div>';
+}
+function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+async function addResident() {
+  const fullName = document.getElementById('newFullName').value.trim();
+  if (!fullName) return toast('กรุณากรอกชื่อ-นามสกุล');
+  const aliases = document.getElementById('newAliases').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const room = document.getElementById('newRoom').value.trim();
+  const familyPhone = document.getElementById('newPhone').value.trim();
+  const result = await api('/api/residents', { method:'POST', body: JSON.stringify({ centerId: CENTER_ID, fullName, aliases, room, familyPhone }) });
+  document.getElementById('newFullName').value = '';
+  document.getElementById('newAliases').value = '';
+  document.getElementById('newRoom').value = '';
+  document.getElementById('newPhone').value = '';
+  toast('เพิ่มผู้พักแล้ว — ลิงก์เชิญพร้อมส่งให้ญาติ');
+  await loadResidents();
+}
+
+function openEditResident(id) {
+  const r = residentsCache.find(x => x.resident_id === id);
+  document.getElementById('editResidentId').value = r.resident_id;
+  document.getElementById('editFullName').value = r.full_name;
+  document.getElementById('editAliases').value = (r.aliases||[]).join(', ');
+  document.getElementById('editRoom').value = r.room || '';
+  document.getElementById('editPhone').value = r.family_phone || '';
+  openModal('editResidentModal');
+}
+async function saveResidentEdit() {
+  const id = document.getElementById('editResidentId').value;
+  await api(`/api/residents/${id}?centerId=${CENTER_ID}`, { method:'PATCH', body: JSON.stringify({
+    full_name: document.getElementById('editFullName').value.trim(),
+    aliases: document.getElementById('editAliases').value.split(',').map(s=>s.trim()).filter(Boolean),
+    room: document.getElementById('editRoom').value.trim(),
+    family_phone: document.getElementById('editPhone').value.trim(),
+  })});
+  closeModal('editResidentModal');
+  toast('บันทึกแล้ว');
+  await loadResidents();
+}
+async function dischargeResident() {
+  if (!confirm('ยืนยันจำหน่ายผู้พักออกจากศูนย์? ศูนย์จะเข้าถึงข้อมูลไม่ได้อีก')) return;
+  const id = document.getElementById('editResidentId').value;
+  await api(`/api/residents/${id}/discharge`, { method:'POST', body: JSON.stringify({ centerId: CENTER_ID }) });
+  closeModal('editResidentModal');
+  toast('จำหน่ายออกแล้ว');
+  await loadResidents();
+}
+
+// ── FR-K1, K2: ตารางนัดของทุกผู้พักในศูนย์ ──
+async function loadCenterAppointments() {
+  const data = await api('/api/center/appointments?centerId=' + CENTER_ID);
+  const box = document.getElementById('centerApptList');
+  if (data.appointments.length === 0) { box.innerHTML = '<div class="empty">ยังไม่มีนัดที่กำลังจะถึง</div>'; return; }
+  const statusLabel = { not_created:'ยังไม่ได้เลือกวิธีเดินทาง', awaiting_family:'รอครอบครัวเลือก', awaiting_center:'รอศูนย์ตัดสินใจ',
+    family_handled:'ครอบครัวไปเอง', center_handled:'ศูนย์จัดการเอง', care2go_requested:'ใช้ Care2Go', care2go_confirmed:'Care2Go ยืนยันแล้ว' };
+  box.innerHTML = data.appointments.map(a => `
+    <div class="transport-item" style="${a.needsAttention ? 'border-color:var(--gold);background:#FFFBF0' : ''}">
+      <div style="font-weight:600">${esc(a.residentName||'ไม่ทราบชื่อ')}${a.room?' · ห้อง '+esc(a.room):''}</div>
+      <div style="font-size:12px;color:var(--gray);margin:2px 0 6px">${esc(a.hospital)} · ${new Date(a.datetime).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'})}</div>
+      <span class="chip" style="${a.needsAttention?'background:var(--gold);color:#fff':''}">${statusLabel[a.transportStatus]||a.transportStatus}</span>
+    </div>`).join('');
+}
+
+// ── FR-L ชั้นที่ 2: รอดำเนินการ ──
+async function loadTransport() {
+  await loadCenterAppointments();
+  const data = await api('/api/transport/pending?centerId=' + CENTER_ID);
+  const box = document.getElementById('transportList');
+  if (data.pending.length === 0) { box.innerHTML = '<div class="empty">ไม่มีรายการรอดำเนินการ</div>'; return; }
+  box.innerHTML = data.pending.map(p => `
+    <div class="transport-item">
+      <div style="font-weight:600;margin-bottom:6px">ญาติขอให้ศูนย์จัดการ</div>
+      <div style="font-size:12px;color:var(--gray);margin-bottom:10px">รหัสนัด: ${p.appointment_id}</div>
+      <div class="row">
+        <button class="btn btn-primary btn-sm" onclick="centerChoose('${p.plan_id}','center_own')">ศูนย์จัดการเอง</button>
+        <button class="btn btn-outline btn-sm" onclick="centerChoose('${p.plan_id}','care2go')">ใช้บริการ Care2Go</button>
+      </div>
+    </div>`).join('');
+}
+async function centerChoose(planId, choice) {
+  await api(`/api/transport/${planId}/center-choice`, { method:'POST', body: JSON.stringify({ centerId: CENTER_ID, choice, needs: ['escort','vehicle'] }) });
+  toast('บันทึกแล้ว แจ้งครอบครัวเรียบร้อย');
+  loadTransport();
+}
+
+// ── FR-M: ราคาบริการ ──
+async function loadRateCard() {
+  const rc = await api('/api/center/ratecard?centerId=' + CENTER_ID);
+  document.getElementById('escortEnabled').checked = rc.escort_enabled;
+  document.getElementById('escortPrice').value = rc.escort_price || '';
+  document.getElementById('vehicleEnabled').checked = rc.vehicle_enabled;
+  document.getElementById('vehiclePrice').value = rc.vehicle_price || '';
+}
+async function saveRateCard() {
+  await api('/api/center/ratecard?centerId=' + CENTER_ID, { method:'PUT', body: JSON.stringify({
+    escortEnabled: document.getElementById('escortEnabled').checked,
+    escortPrice: document.getElementById('escortPrice').value,
+    vehicleEnabled: document.getElementById('vehicleEnabled').checked,
+    vehiclePrice: document.getElementById('vehiclePrice').value,
+  })});
+  toast('บันทึกราคาแล้ว');
+}
+
+// ── FR-A4: ทีมงาน ──
+async function loadStaff() {
+  const data = await api('/api/center/staff?centerId=' + CENTER_ID);
+  document.getElementById('staffList').innerHTML = data.staff.map(s => `
+    <div class="resident-item">
+      <div><div class="resident-name">${esc(s.line_user_id)}</div><div class="resident-meta">${s.role === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ'}</div></div>
+      ${s.role !== 'owner' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.line_user_id}')">ถอดถอน</button>` : ''}
+    </div>`).join('');
+}
+async function appointManager() {
+  const targetLineId = document.getElementById('newManagerId').value.trim();
+  if (!targetLineId) return toast('กรุณากรอก LINE User ID');
+  await api('/api/center/staff', { method:'POST', body: JSON.stringify({ centerId: CENTER_ID, targetLineId }) });
+  document.getElementById('newManagerId').value = '';
+  toast('แต่งตั้งแล้ว');
+  loadStaff();
+}
+async function removeManager(id) {
+  await api(`/api/center/staff/${id}?centerId=${CENTER_ID}`, { method:'DELETE' });
+  toast('ถอดถอนแล้ว');
+  loadStaff();
+}
+
+// ── S4: แก้ไขการ์ดก่อนส่ง (ข้อ E3-E8) ──
+let currentCard = null, currentCardOriginal = null, medRowSeq = 0;
+const editedFieldSet = new Set();
+
+async function loadEditCard(cardId) {
+  const groupId = new URLSearchParams(location.search).get('groupId') || '';
+  const data = await api(`/api/cards/${cardId}`, { headers: { 'X-Line-Group-Id': groupId } });
+  currentCard = data;
+  currentCardOriginal = JSON.parse(JSON.stringify(data.current)); // เก็บค่าดั้งเดิมไว้เทียบตอนบันทึก (ข้อ E8)
+
+  // ข้อ E4: แสดงรูปต้นฉบับค้างไว้ให้เทียบ
+  if (data.imageBase64) {
+    document.getElementById('ecDocImage').src = `data:image/jpeg;base64,${data.imageBase64}`;
+    document.getElementById('ecDocImage').style.display = 'block';
+  } else {
+    document.getElementById('ecNoImage').style.display = 'block';
+  }
+
+  // ข้อ E6: เปลี่ยนผู้พักได้จากหน้านี้ — โหลดรายชื่อทั้งศูนย์มาให้เลือก
+  const residentsData = await api('/api/residents?centerId=' + CENTER_ID);
+  const sel = document.getElementById('ecResident');
+  sel.innerHTML = residentsData.residents.map(r =>
+    `<option value="${r.resident_id}" ${r.resident_id===data.card.resident_id?'selected':''}>${esc(r.full_name)}${r.room?' · ห้อง '+esc(r.room):''}</option>`
+  ).join('');
+
+  // ข้อ E3: กรอกค่าที่ AI อ่านได้ไว้ล่วงหน้าทุกช่อง
+  const c = data.current;
+  document.getElementById('ecHospital').value = c.appointment?.hospital || '';
+  if (c.appointment?.datetime) {
+    const dt = new Date(c.appointment.datetime);
+    document.getElementById('ecDate').value = dt.toISOString().slice(0,10);
+    document.getElementById('ecTime').value = dt.toISOString().slice(11,16);
+  }
+  document.getElementById('ecApNote').value = c.appointment?.note || '';
+  document.getElementById('ecDoctorNote').value = c.doctorNote || '';
+
+  document.getElementById('ecMedList').innerHTML = '';
+  (c.medications || []).forEach(m => addMedRow(m.name, m.dose));
+  if (!c.medications || c.medications.length === 0) addMedRow();
+}
+
+function addMedRow(name = '', dose = '') {
+  medRowSeq++;
+  const rowId = `med-${medRowSeq}`;
+  const div = document.createElement('div');
+  div.className = 'row'; div.id = rowId; div.style.marginBottom = '6px';
+  div.innerHTML = `
+    <input type="text" placeholder="ชื่อยา" value="${esc(name)}" oninput="markEdited('medications')">
+    <input type="text" placeholder="วิธีใช้" value="${esc(dose)}" oninput="markEdited('medications')">
+    <button class="btn btn-danger btn-sm" onclick="document.getElementById('${rowId}').remove(); markEdited('medications')" style="flex:0 0 auto">✕</button>`;
+  document.getElementById('ecMedList').appendChild(div);
+}
+
+// ข้อ E8: ไฮไลต์ช่องที่ถูกแก้ไข ให้ต่างจากค่าที่ AI อ่านมา
+function markEdited(field) {
+  editedFieldSet.add(field);
+  const flagMap = { resident:'ecResidentFlag', hospital:'ecHospitalFlag', date:'ecDateFlag',
+    apnote:'ecApNoteFlag', medications:'ecMedFlag', doctornote:'ecDoctorFlag' };
+  const el = document.getElementById(flagMap[field]);
+  if (el) el.innerHTML = '<span class="edited-flag">แก้ไขแล้ว</span>';
+}
+
+// ข้อ E7: บันทึกแล้วต้องกลับไปที่การ์ดยืนยันเสมอ ห้ามส่งออกตรงจากหน้านี้
+async function saveCardEdit() {
+  const residentId = document.getElementById('ecResident').value;
+  const date = document.getElementById('ecDate').value;
+  const time = document.getElementById('ecTime').value || '09:00';
+  const hospital = document.getElementById('ecHospital').value.trim();
+
+  const medications = Array.from(document.getElementById('ecMedList').children).map(row => {
+    const inputs = row.querySelectorAll('input');
+    return { name: inputs[0].value.trim(), dose: inputs[1].value.trim() };
+  }).filter(m => m.name);
+
+  const editedFields = [];
+  if (editedFieldSet.has('resident')) editedFields.push('resident');
+  if (editedFieldSet.has('hospital') || editedFieldSet.has('date') || editedFieldSet.has('apnote')) editedFields.push('appointment');
+  if (editedFieldSet.has('medications')) editedFields.push('medications');
+  if (editedFieldSet.has('doctornote')) editedFields.push('doctorNote');
+
+  await api(`/api/cards/${currentCard.card.card_id}`, {
+    method: 'PATCH',
+    headers: { 'X-Line-Group-Id': new URLSearchParams(location.search).get('groupId') || '' },
+    body: JSON.stringify({
+      residentId,
+      appointment: hospital || date ? { hospital, datetime: date ? `${date}T${time}:00` : null, note: document.getElementById('ecApNote').value.trim() } : undefined,
+      medications,
+      doctorNote: document.getElementById('ecDoctorNote').value.trim(),
+      editedFields,
+    }),
+  });
+
+  toast('บันทึกแล้ว — กลับไปที่แชทเพื่อกดยืนยันการ์ดได้เลย');
+  setTimeout(() => { if (window.liff && liff.closeWindow) liff.closeWindow(); }, 1200);
+}
+
+
+async function main() {
+  await liff.init({ liffId: 'YOUR_LIFF_ID' }); // ★ Dev ใส่ LIFF ID จริงตอน Deploy
+  if (!liff.isLoggedIn()) { liff.login(); return; }
+  const profile = await liff.getProfile();
+  LINE_USER_ID = profile.userId;
+
+  const me = await api('/api/center/me');
+  CENTER_ID = me.centers[0].center_id;
+  document.getElementById('centerNameLabel').textContent = me.centers[0].name + ' · ' + (me.centers[0].myRole === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ');
+
+  // อ่าน URL Parameter เพื่อ Route ไปหน้าที่ถูกต้อง (ใช้กับปุ่ม Rich Menu และลิงก์แก้ไขการ์ดจาก LINE)
+  const view = new URLSearchParams(location.search).get('view');
+  const cardId = new URLSearchParams(location.search).get('cardId');
+
+  if (view === 'edit-card' && cardId) {
+    // หน้าแก้ไขการ์ด (S4) เข้าถึงเฉพาะทาง ไม่ต้องมี Tab Bar ให้สลับไปมา
+    document.querySelector('.tabs').style.display = 'none';
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-edit-card').classList.add('active');
+    await loadEditCard(cardId);
+    return;
+  }
+
+  await loadResidents();
+  if (view === 'transport') {
+    document.querySelector('.tab[data-view="transport"]').click();
+  }
+}
+main().catch(err => { console.error(err); toast('เชื่อมต่อไม่สำเร็จ'); });
+</script>
+</body>
+</html>
