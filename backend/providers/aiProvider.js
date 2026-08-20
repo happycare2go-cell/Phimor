@@ -3,7 +3,6 @@ const interpretDocument = async (imageBuffer) => {
     const apiKey = process.env.GEMINI_API_KEY || '';
     if (!apiKey) throw new Error("GEMINI_API_KEY is empty");
 
-    // 1. ตรวจสอบว่า API Key นี้มีสิทธิ์เข้าถึงโมเดลชื่ออะไรบ้าง (Auto-Discovery)
     const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
     const listRes = await fetch(listUrl);
     if (!listRes.ok) {
@@ -14,16 +13,15 @@ const interpretDocument = async (imageBuffer) => {
     const listData = await listRes.json();
     const availableModels = listData.models || [];
     
-    // พิมพ์รายชื่อโมเดลทั้งหมดที่พบลงใน Log
     console.log("[Auto-Discover] Found models:", availableModels.map(m => m.name).join(", "));
 
-    // 2. ลำดับความสำคัญของโมเดลที่อยากใช้
+    // อัปเดตรายชื่อโมเดลตามที่ Google แนะนำใน Log (gemini-3.6-flash)
     const priority = [
-        "models/gemini-1.5-flash",
-        "models/gemini-1.5-flash-latest",
-        "models/gemini-1.5-pro",
-        "models/gemini-1.5-pro-latest",
-        "models/gemini-pro-vision"
+        "models/gemini-3.6-flash",
+        "models/gemini-3.6-pro",
+        "models/gemini-3.5-flash",
+        "models/gemini-3.5-pro",
+        "models/gemini-3.1-flash"
     ];
 
     let targetModel = null;
@@ -34,22 +32,21 @@ const interpretDocument = async (imageBuffer) => {
         }
     }
 
-    // ถ้าไม่มีในรายชื่อ Priority เลย ให้สุ่มหยิบ Gemini ตัวไหนก็ได้ที่รองรับ generateContent
     if (!targetModel) {
          const fallback = availableModels.find(m => 
             m.supportedGenerationMethods?.includes("generateContent") && 
-            m.name.includes("gemini")
+            m.name.includes("gemini") && 
+            !m.name.includes("2.5") // ข้าม 2.5 ที่มีปัญหา
         );
         if (fallback) targetModel = fallback.name;
     }
 
     if (!targetModel) {
-         throw new Error("No usable model found. Your API key might not have access to Gemini models.");
+         throw new Error("No usable model found.");
     }
 
     console.log("[Auto-Discover] Selected model:", targetModel);
 
-    // 3. เริ่มส่งข้อมูลไปยังโมเดลที่หาเจอ
     const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${apiKey}`;
 
     const prompt = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
@@ -105,7 +102,7 @@ const interpretDocument = async (imageBuffer) => {
     console.error("AI Error:", error.message || error);
     return {
       documentType: 'unrelated',
-      unrelatedNote: `ระบบ AI ขัดข้องชั่วคราว (${error.message.substring(0, 50)}...) กรุณาลองใหม่อีกครั้งค่ะ`,
+      unrelatedNote: `ระบบ AI ขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งค่ะ`,
       nameGuess: null, nameConfidence: 0, appointment: null, medications: [], doctorNote: null
     };
   }
