@@ -226,6 +226,7 @@ function closeModal(id){ document.getElementById(id).classList.remove('show'); }
 async function api(path, opts={}) {
   const res = await fetch(BACKEND_URL + path, {
     ...opts,
+    cache: 'no-store',
     headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) },
   });
   const data = await res.json().catch(()=>({}));
@@ -515,7 +516,12 @@ async function main() {
     document.querySelector('.tab[data-view="transport"]').click();
   }
 }
-main().catch(err => { console.error(err); toast('เชื่อมต่อไม่สำเร็จ'); });
+main().catch(err => {
+  console.error(err);
+  const message = err?.message || 'เชื่อมต่อไม่สำเร็จ';
+  document.getElementById('centerNameLabel').textContent = message;
+  toast(message);
+});
 </script>
 </body>
 </html>
