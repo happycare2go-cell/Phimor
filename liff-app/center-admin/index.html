@@ -492,6 +492,7 @@ async function main() {
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
+  document.getElementById('centerNameLabel').textContent = 'LINE ID ของคุณคือ: ' + LINE_USER_ID;
 
   const me = await api('/api/center/me');
   CENTER_ID = me.centers[0].center_id;
