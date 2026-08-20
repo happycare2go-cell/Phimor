@@ -135,12 +135,14 @@ test('กลุ่มที่ไม่ได้ผูกกับศูนย�
   assert.strictEqual(staff, null, 'กลุ่มที่ไม่ผูกกับศูนย์ใด ต้องไม่บันทึกใครเป็นพนักงาน');
 });
 
-test('ข้อ A2: เชิญเข้ากลุ่มโดยเจ้าของศูนย์ → ผูกกลุ่มอัตโนมัติ', async () => {
+test('เชิญบอทเข้ากลุ่มอย่างเดียวยังไม่ผูก ต้องใช้รหัสระบุประเภทกลุ่ม', async () => {
   const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
   await postWebhook([{ type: 'join', source: { type: 'group', groupId: 'G_NEW', userId: 'U_OWNER' } }]);
 
   const updated = await db.Centers.findOne((c) => c.center_id === center.center_id);
-  assert.strictEqual(updated.group_id, 'G_NEW');
+  assert.strictEqual(updated.group_id, null);
+  const prompt = lineClient.getSentLog().find((x) => x.type === 'push' && x.to === 'G_NEW');
+  assert.ok(prompt.messages[0].text.includes('STAFF-'));
 });
 
 test('ข้อ N4 (แก้ไขแล้ว): Care Profile อิสระส่งรูปแบบ 1-1 ต้องได้ข้อความสุภาพที่เสนอทางเลือก ไม่ใช่ข้อความปฏิเสธทั่วไป', async () => {

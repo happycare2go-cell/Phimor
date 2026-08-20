@@ -7,7 +7,7 @@
 //                                      │                            │
 //                                      └──────── (เกิน 24 ชม.) ──→ expired
 
-const { PendingCards, Residents, GroupBindings, CareProfiles, Appointments, Medications, audit, id, now } = require('../db');
+const { PendingCards, Residents, GroupBindings, CareProfiles, Appointments, Medications, MedicationSnapshots, audit, id, now } = require('../db');
 const aiProvider = require('../providers/aiProvider');
 const lineClient = require('../providers/lineClient');
 const { matchResident } = require('../utils/nameMatch');
@@ -166,14 +166,28 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
       await Appointments.insert({
         appointment_id: id('APT'), care_profile_id: resident.care_profile_id,
         hospital: data.appointment.hospital, datetime: data.appointment.datetime, note: data.appointment.note || '',
+        clinic_or_department: data.appointment.clinicOrDepartment || '',
+        reason_for_visit: data.appointment.reasonForVisit || '',
+        related_condition: data.appointment.relatedCondition || '',
+        doctor_name: data.appointment.doctorName || '',
         // ข้อ J5: บันทึกที่มาให้ครบ — ระบบใด (source) ศูนย์ใด (source_center_id) เมื่อใด (created_at)
         source: 'center_photo', source_center_id: card.center_id, created_by: confirmedByLineId, created_at: now(),
       });
     }
+    let medicationSnapshotId = null;
+    if ((data.medications || []).length > 0) {
+      const snapshot = await MedicationSnapshots.insert({
+        snapshot_id: id('MEDS'), care_profile_id: resident.care_profile_id,
+        items: data.medications, source: 'center_photo', source_card_id: cardId,
+        recorded_by: confirmedByLineId, recorded_at: now(),
+      });
+      medicationSnapshotId = snapshot.snapshot_id;
+    }
     for (const med of (data.medications || [])) {
       await Medications.insert({
         medication_id: id('MED'), care_profile_id: resident.care_profile_id,
-        name: med.name, dose: med.dose, source: 'center_photo', source_center_id: card.center_id, created_at: now(),
+        name: med.name, dose: med.dose, condition: med.condition || '', snapshot_id: medicationSnapshotId,
+        source: 'center_photo', source_center_id: card.center_id, created_at: now(),
       });
     }
   }
@@ -181,7 +195,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   // ── FR-F: ส่งเข้ากลุ่มครอบครัว ──
   let sentToFamily = false, queuedForLater = false;
   if (resident.care_profile_id) {
-    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family');
+    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family' && g.status !== 'inactive');
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
     if (target) {
       await lineClient.pushMessage(target, [{

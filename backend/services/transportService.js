@@ -189,7 +189,7 @@ async function markCare2goUnavailable(planId, appointmentDatetime) {
 }
 
 async function resolveFamilyTarget(careProfileId, careProfile) {
-  const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family');
+  const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
   return groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
 }
 

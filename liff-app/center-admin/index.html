@@ -68,13 +68,14 @@
 <div class="hdr">
   <div class="logo">พี่หมอ <span style="font-weight:400;font-size:13px;opacity:.85">· ศูนย์</span></div>
   <div class="sub" id="centerNameLabel">กำลังโหลด...</div>
+  <select id="centerSelector" onchange="selectCenter(this.value)" style="display:none;margin-top:10px;background:#fff"></select>
 </div>
 
 <div class="tabs">
   <div class="tab active" data-view="residents">ผู้พัก</div>
   <div class="tab" data-view="transport">รอดำเนินการ</div>
   <div class="tab" data-view="ratecard">ราคาบริการ</div>
-  <div class="tab" data-view="staff">ทีมงาน</div>
+  <div class="tab" data-view="staff" id="staffTab">ทีมงาน</div>
 </div>
 
 <!-- ═══ S2: รายชื่อผู้พัก ═══ -->
@@ -90,6 +91,7 @@
       <div><label>เบอร์ญาติหลัก</label><input type="tel" id="newPhone" placeholder="08x-xxx-xxxx"></div>
     </div>
     <div style="margin-top:14px"><button class="btn btn-primary" onclick="addResident()">สร้างผู้พักใหม่</button></div>
+    <div id="inviteResult" style="display:none;margin-top:12px;padding:10px;background:var(--ice);border-radius:9px;font-size:12px;word-break:break-all"></div>
   </div>
 
   <div class="search"><input type="text" id="searchInput" placeholder="ค้นหาชื่อผู้พัก..." oninput="renderResidents()"></div>
@@ -124,6 +126,10 @@
 
     <label style="margin-top:10px">หมายเหตุนัด <span id="ecApNoteFlag"></span></label>
     <textarea id="ecApNote" oninput="markEdited('apnote')"></textarea>
+    <label>คลินิก / แผนก</label><input type="text" id="ecClinic" oninput="markEdited('apnote')">
+    <label>เหตุผลที่นัด / หัตถการ</label><input type="text" id="ecReason" oninput="markEdited('apnote')">
+    <label>โรคหรือภาวะที่เกี่ยวข้อง (ต้องยืนยันจากเอกสาร)</label><input type="text" id="ecCondition" oninput="markEdited('apnote')">
+    <label>ชื่อแพทย์</label><input type="text" id="ecDoctorName" oninput="markEdited('apnote')">
   </div>
 
   <div class="card">
@@ -162,6 +168,11 @@
     </div>
   </div>
 </div>
+
+<div class="modal-bg" id="careProfileModal"><div class="modal">
+  <h3>ข้อมูล Care Profile</h3><div id="careProfileDetails"></div>
+  <div style="margin-top:14px"><button class="btn btn-outline" style="width:100%" onclick="closeModal('careProfileModal')">ปิด</button></div>
+</div></div>
 
 <!-- ═══ FR-K1, K2: ตารางนัดของทุกผู้พักในศูนย์ + FR-L ชั้นที่ 2: รอศูนย์ตัดสินใจ ═══ -->
 <div class="view" id="view-transport">
@@ -204,9 +215,15 @@
 <div class="view" id="view-staff">
   <div class="card">
     <h3>➕ แต่งตั้งผู้จัดการ</h3>
-    <label>LINE User ID</label>
-    <input type="text" id="newManagerId" placeholder="Uxxxxxxxxxxxxxxxx">
+    <label>เลือกจากพนักงานที่ระบบรู้จักในกลุ่ม</label>
+    <select id="newManagerId"><option value="">เลือกพนักงาน</option></select>
     <div style="margin-top:12px"><button class="btn btn-primary" onclick="appointManager()">แต่งตั้ง</button></div>
+  </div>
+  <div class="card">
+    <h3>🔗 ผูกกลุ่มพนักงานของสาขานี้</h3>
+    <p style="font-size:12px;color:var(--gray)">สร้างรหัส แล้วส่งรหัสในกลุ่มหลังเชิญพี่หมอเข้ากลุ่ม รหัสมีอายุ 15 นาที</p>
+    <button class="btn btn-outline" style="width:100%" onclick="createStaffBindingCode()">สร้างรหัสผูกกลุ่ม</button>
+    <div id="staffBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div>
   </div>
   <div class="card"><h3>รายชื่อทีมงาน</h3><div id="staffList"></div></div>
 </div>
@@ -216,7 +233,9 @@
 <script>
 const BACKEND_URL = 'https://phimor-backend.onrender.com';
 let LINE_USER_ID = null;
+let LINE_ID_TOKEN = null;
 let CENTER_ID = null;
+let CENTERS = [];
 let residentsCache = [];
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
@@ -227,7 +246,7 @@ async function api(path, opts={}) {
   const res = await fetch(BACKEND_URL + path, {
     ...opts,
     cache: 'no-store',
-    headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) },
+    headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) },
   });
   const data = await res.json().catch(()=>({}));
   if (!res.ok) { toast(data.message || 'เกิดข้อผิดพลาด'); throw new Error(data.message); }
@@ -263,7 +282,7 @@ function renderResidents() {
           <span class="badge ${r.care_profile_id ? 'badge-linked' : 'badge-pending'}">${r.care_profile_id ? 'ผูกครอบครัวแล้ว' : 'ยังไม่ผูกครอบครัว'}</span>
         </div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>
+      <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">ข้อมูลสุขภาพ</button>` : ''} <button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button></div>
     </div>`).join('') + '</div>';
 }
 function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
@@ -279,7 +298,12 @@ async function addResident() {
   document.getElementById('newAliases').value = '';
   document.getElementById('newRoom').value = '';
   document.getElementById('newPhone').value = '';
-  toast('เพิ่มผู้พักแล้ว — ลิงก์เชิญพร้อมส่งให้ญาติ');
+  const inviteBox = document.getElementById('inviteResult');
+  inviteBox.style.display = 'block';
+  inviteBox.innerHTML = result.accessRequestSent
+    ? `พบ Care Profile เดิมและส่งคำขออนุญาตแล้ว<br>รหัสคำขอ: ${esc(result.accessRequestId||'-')}`
+    : `ลิงก์เชิญสำหรับครอบครัว:<br><b>${esc(result.inviteUrl)}</b><br><button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText('${result.inviteUrl}')">คัดลอกลิงก์</button>`;
+  toast(result.accessRequestSent ? 'ส่งคำขอไปยังเจ้าของ Care Profile แล้ว' : 'เพิ่มผู้พักแล้ว — ส่งลิงก์ให้ญาติได้เลย');
   await loadResidents();
 }
 
@@ -291,6 +315,19 @@ function openEditResident(id) {
   document.getElementById('editRoom').value = r.room || '';
   document.getElementById('editPhone').value = r.family_phone || '';
   openModal('editResidentModal');
+}
+async function viewCareProfile(residentId){
+  const data = await api(`/api/residents/${residentId}/care-profile?centerId=${CENTER_ID}`);
+  const p=data.profile, gender={female:'หญิง',male:'ชาย',other:'อื่น ๆ'}[p.gender]||'ไม่ระบุ';
+  document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8">
+    <b>${esc(p.patient_name)}</b><br>เพศ: ${gender}<br>กรุ๊ปเลือด: ${esc(p.blood_type||'ไม่ทราบ')}<br>
+    ส่วนสูง: ${p.height_cm||'-'} ซม. · น้ำหนัก: ${p.weight_kg||'-'} กก.<br>
+    โรคประจำตัว: ${esc((p.chronic_conditions||[]).join(', ')||'ไม่มีข้อมูล')}<br>
+    แพ้ยา: ${esc(p.drug_allergies||'ไม่มีข้อมูล')}<br>แพ้อาหาร: ${esc(p.food_allergies||'ไม่มีข้อมูล')}<br>
+    ข้อจำกัดการเคลื่อนไหว: ${esc(p.mobility_limitations||'ไม่มีข้อมูล')}<br>
+    ผู้ติดต่อฉุกเฉิน: ${esc(p.emergency_contact_name||'-')} ${esc(p.emergency_contact_phone||'')}<hr>
+    <b>ประวัติรายการยา</b><br>${data.medicationHistory.length?data.medicationHistory.map(s=>`${new Date(s.recorded_at).toLocaleString('th-TH')}: ${s.items.map(i=>esc(i.name)+' '+esc(i.dose||'')).join(', ')}`).join('<br>'):'ยังไม่มีข้อมูล'}</div>`;
+  openModal('careProfileModal');
 }
 async function saveResidentEdit() {
   const id = document.getElementById('editResidentId').value;
@@ -371,11 +408,15 @@ async function saveRateCard() {
 // ── FR-A4: ทีมงาน ──
 async function loadStaff() {
   const data = await api('/api/center/staff?centerId=' + CENTER_ID);
+  const labels = { owner:'เจ้าของศูนย์', manager:'ผู้จัดการ', staff:'พนักงาน' };
   document.getElementById('staffList').innerHTML = data.staff.map(s => `
     <div class="resident-item">
-      <div><div class="resident-name">${esc(s.line_user_id)}</div><div class="resident-meta">${s.role === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ'}</div></div>
-      ${s.role !== 'owner' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.line_user_id}')">ถอดถอน</button>` : ''}
+      <div><div class="resident-name">${esc(s.display_name || s.line_user_id)}</div><div class="resident-meta">${labels[s.role] || s.role}</div></div>
+      ${s.role === 'manager' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.line_user_id}')">ลดเป็นพนักงาน</button>` : ''}
     </div>`).join('');
+  document.getElementById('newManagerId').innerHTML = '<option value="">เลือกพนักงาน</option>' + data.staff
+    .filter(s => s.role === 'staff')
+    .map(s => `<option value="${esc(s.line_user_id)}">${esc(s.display_name || s.line_user_id)}</option>`).join('');
 }
 async function appointManager() {
   const targetLineId = document.getElementById('newManagerId').value.trim();
@@ -384,6 +425,24 @@ async function appointManager() {
   document.getElementById('newManagerId').value = '';
   toast('แต่งตั้งแล้ว');
   loadStaff();
+}
+
+async function createStaffBindingCode() {
+  const result = await api(`/api/center/${CENTER_ID}/group-binding-token`, { method:'POST', body:'{}' });
+  document.getElementById('staffBindingCode').textContent = result.code;
+  toast('คัดลอกรหัสนี้ไปส่งในกลุ่มพนักงาน');
+}
+
+async function selectCenter(centerId) {
+  CENTER_ID = centerId;
+  const center = CENTERS.find(c => c.center_id === centerId);
+  document.getElementById('centerNameLabel').textContent = center.name + ' · ' + (center.myRole === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ');
+  document.getElementById('staffTab').style.display = center.myRole === 'owner' ? '' : 'none';
+  await loadResidents();
+  const activeView = document.querySelector('.tab.active')?.dataset.view;
+  if (activeView === 'staff') await loadStaff();
+  if (activeView === 'transport') await loadTransport();
+  if (activeView === 'ratecard') await loadRateCard();
 }
 async function removeManager(id) {
   await api(`/api/center/staff/${id}?centerId=${CENTER_ID}`, { method:'DELETE' });
@@ -425,6 +484,10 @@ async function loadEditCard(cardId) {
     document.getElementById('ecTime').value = dt.toISOString().slice(11,16);
   }
   document.getElementById('ecApNote').value = c.appointment?.note || '';
+  document.getElementById('ecClinic').value = c.appointment?.clinicOrDepartment || '';
+  document.getElementById('ecReason').value = c.appointment?.reasonForVisit || '';
+  document.getElementById('ecCondition').value = c.appointment?.relatedCondition || '';
+  document.getElementById('ecDoctorName').value = c.appointment?.doctorName || '';
   document.getElementById('ecDoctorNote').value = c.doctorNote || '';
 
   document.getElementById('ecMedList').innerHTML = '';
@@ -476,7 +539,12 @@ async function saveCardEdit() {
     headers: { 'X-Line-Group-Id': new URLSearchParams(location.search).get('groupId') || '' },
     body: JSON.stringify({
       residentId,
-      appointment: hospital || date ? { hospital, datetime: date ? `${date}T${time}:00` : null, note: document.getElementById('ecApNote').value.trim() } : undefined,
+      appointment: hospital || date ? { hospital, datetime: date ? `${date}T${time}:00` : null,
+        note: document.getElementById('ecApNote').value.trim(),
+        clinicOrDepartment: document.getElementById('ecClinic').value.trim(),
+        reasonForVisit: document.getElementById('ecReason').value.trim(),
+        relatedCondition: document.getElementById('ecCondition').value.trim(),
+        doctorName: document.getElementById('ecDoctorName').value.trim() } : undefined,
       medications,
       doctorNote: document.getElementById('ecDoctorNote').value.trim(),
       editedFields,
@@ -493,10 +561,17 @@ async function main() {
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
+  LINE_ID_TOKEN = liff.getIDToken();
 
   const me = await api('/api/center/me');
-  CENTER_ID = me.centers[0].center_id;
-  document.getElementById('centerNameLabel').textContent = me.centers[0].name + ' · ' + (me.centers[0].myRole === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ');
+  CENTERS = me.centers.filter(Boolean);
+  if (CENTERS.length === 0) throw new Error('ไม่พบสาขาที่คุณมีสิทธิ์');
+  const selector = document.getElementById('centerSelector');
+  selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${c.myRole === 'owner' ? 'เจ้าของ' : 'ผู้จัดการ'}</option>`).join('');
+  selector.style.display = CENTERS.length > 1 ? 'block' : 'none';
+  CENTER_ID = CENTERS[0].center_id;
+  document.getElementById('staffTab').style.display = CENTERS[0].myRole === 'owner' ? '' : 'none';
+  document.getElementById('centerNameLabel').textContent = CENTERS[0].name + ' · ' + (CENTERS[0].myRole === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ');
 
   // อ่าน URL Parameter เพื่อ Route ไปหน้าที่ถูกต้อง (ใช้กับปุ่ม Rich Menu และลิงก์แก้ไขการ์ดจาก LINE)
   const view = new URLSearchParams(location.search).get('view');

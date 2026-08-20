@@ -25,6 +25,9 @@ router.post('/centers', asyncHandler(async (req, res) => {
   if (!ownerLineId || !ownerLineId.trim()) {
     return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุ LINE User ID ของเจ้าของศูนย์' });
   }
+  if (process.env.NODE_ENV !== 'test' && !/^U[0-9a-f]{32}$/i.test(ownerLineId.trim())) {
+    return res.status(400).json({ error: 'bad_request', message: 'LINE User ID ไม่ถูกต้อง ต้องขึ้นต้นด้วย U และมีอักขระตามหลัง 32 ตัว' });
+  }
 
   const center = await centerService.createCenter({ name: name.trim(), ownerLineId: ownerLineId.trim() });
   res.status(201).json({

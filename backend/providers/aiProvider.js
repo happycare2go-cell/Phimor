@@ -1,4 +1,6 @@
+const mockQueue = [];
 const interpretDocument = async (imageBuffer) => {
+  if (process.env.NODE_ENV === 'test' && mockQueue.length > 0) return mockQueue.shift();
   try {
     const apiKey = process.env.GEMINI_API_KEY || '';
     if (!apiKey) throw new Error("GEMINI_API_KEY is empty");
@@ -59,10 +61,14 @@ const interpretDocument = async (imageBuffer) => {
       "appointment": {
         "hospital": "ชื่อโรงพยาบาล",
         "datetime": "วันเวลานัดหมายในรูปแบบ ISO 8601 เช่น 2026-08-25T09:00:00 (ถ้าไม่มีเวลาให้สมมติเป็น 09:00:00, ถ้าไม่มีนัดเลยให้เป็น null)",
+        "clinicOrDepartment": "ชื่อคลินิกหรือแผนก ถ้าไม่มีให้เป็น null",
+        "reasonForVisit": "เหตุผลที่นัดหรือหัตถการ ถ้าไม่มีให้เป็น null",
+        "relatedCondition": "โรคหรือภาวะที่ระบุชัดในเอกสารเท่านั้น ห้ามเดาจากแผนก ถ้าไม่มีให้เป็น null",
+        "doctorName": "ชื่อแพทย์ ถ้าไม่มีให้เป็น null",
         "note": "หมายเหตุการนัด เช่น งดน้ำงดอาหาร"
       },
       "medications": [
-        { "name": "ชื่อยา", "dose": "วิธีใช้ยา" }
+        { "name": "ชื่อยา", "dose": "วิธีใช้ยา", "condition": "โรคที่ยานี้ใช้รักษาเมื่อเอกสารระบุชัด ถ้าไม่ระบุให้เป็นข้อความว่าง" }
       ],
       "doctorNote": "คำสั่งแพทย์อื่นๆ (ถ้าไม่มีให้ตอบ null)"
     }`;
@@ -109,7 +115,7 @@ const interpretDocument = async (imageBuffer) => {
 };
 
 const interpretLabResult = async (imageBuffer) => { return {}; };
-const queueMockResponse = () => {};
-const clearMockQueue = () => {};
+const queueMockResponse = (response) => { mockQueue.push(response); };
+const clearMockQueue = () => { mockQueue.splice(0, mockQueue.length); };
 
 module.exports = { interpretDocument, interpretLabResult, queueMockResponse, clearMockQueue };

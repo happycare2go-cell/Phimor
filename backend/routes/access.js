@@ -2,11 +2,16 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireCenterStaff } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const accessService = require('../services/accessService');
 
 router.use(requireAuth);
+
+router.get('/access-requests', asyncHandler(async (req, res) => {
+  const requests = await accessService.listPendingRequestsForOwner(req.user.lineUserId);
+  res.json({ requests });
+}));
 
 // POST /api/access-requests/:id/respond — ครอบครัวตอบรับหรือปฏิเสธ (ข้อ O2 — ไม่ต้องให้เหตุผล)
 router.post('/access-requests/:requestId/respond', asyncHandler(async (req, res) => {
@@ -17,8 +22,8 @@ router.post('/access-requests/:requestId/respond', asyncHandler(async (req, res)
 }));
 
 // GET /api/access-requests/:id — ศูนย์เช็คสถานะ (เห็นแค่สถานะ ไม่เห็นเหตุผล — ข้อ O2)
-router.get('/access-requests/:requestId', asyncHandler(async (req, res) => {
-  const status = await accessService.getRequestStatusForCenter(req.params.requestId);
+router.get('/access-requests/:requestId', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const status = await accessService.getRequestStatusForCenter(req.params.requestId, req.centerId);
   if (!status) return res.status(404).json({ error: 'not_found' });
   res.json(status);
 }));

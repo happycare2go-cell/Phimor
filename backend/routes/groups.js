@@ -1,0 +1,21 @@
+const express = require('express');
+const router = express.Router();
+const { requireAuth, requireCenterStaff, requireFamilyAccess } = require('../middleware/auth');
+const { asyncHandler } = require('../middleware/asyncHandler');
+const service = require('../services/groupBindingService');
+
+router.use(requireAuth);
+
+router.post('/center/:centerId/group-binding-token', requireCenterStaff(), asyncHandler(async (req, res) => {
+  const result = await service.createStaffBindingToken(req.params.centerId, req.user.lineUserId);
+  if (!result.ok) return res.status(403).json({ error: 'forbidden', message: result.reason });
+  res.status(201).json(result);
+}));
+
+router.post('/care-profile/:careProfileId/group-binding-token', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  const result = await service.createFamilyBindingToken(req.params.careProfileId, req.user.lineUserId);
+  if (!result.ok) return res.status(403).json({ error: 'forbidden', message: result.reason });
+  res.status(201).json(result);
+}));
+
+module.exports = router;

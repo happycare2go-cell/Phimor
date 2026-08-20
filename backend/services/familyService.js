@@ -1,6 +1,6 @@
 // services/familyService.js — FR-H (ฝั่งครอบครัว) และ FR-N (Care Profile อิสระ)
 
-const { CareProfiles, Residents, Invites, Appointments, Medications, GroupBindings, Consents, audit, id, now } = require('../db');
+const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, audit, id, now } = require('../db');
 const { isPast } = require('./cardService');
 const pdfService = require('./pdfService');
 
@@ -20,7 +20,7 @@ async function hasValidConsent(lineUserId) {
 }
 
 // ── FR-H1: ผูกบัญชีผ่านลิงก์เชิญ → สร้าง Care Profile โดยครอบครัวเป็นเจ้าของ ──
-async function acceptInvite(token, lineUserId) {
+async function acceptInvite(token, lineUserId, profileData = {}) {
   const invite = await Invites.findOne((i) => i.invite_token === token);
   if (!invite) return { ok: false, reason: 'ลิงก์เชิญไม่ถูกต้อง' };
   if (invite.used_at) return { ok: false, reason: 'ลิงก์เชิญนี้ถูกใช้ไปแล้ว' };
@@ -36,7 +36,15 @@ async function acceptInvite(token, lineUserId) {
     center_id: resident.center_id,
     family_phone: resident.family_phone || null, // เก็บเบอร์ไว้ด้วย เผื่อข้อ O1 ต้องค้นหาเบอร์นี้ในอนาคต
     status: 'linked', // linked | independent
-    blood_type: null, height_cm: null, weight_kg: null, chronic_conditions: [],
+    gender: profileData.gender || null,
+    blood_type: profileData.bloodType || null,
+    height_cm: profileData.heightCm ? Number(profileData.heightCm) : null,
+    weight_kg: profileData.weightKg ? Number(profileData.weightKg) : null,
+    chronic_conditions: Array.isArray(profileData.chronicConditions) ? profileData.chronicConditions : [],
+    drug_allergies: profileData.drugAllergies || '', food_allergies: profileData.foodAllergies || '',
+    mobility_limitations: profileData.mobilityLimitations || '',
+    emergency_contact_name: profileData.emergencyContactName || '',
+    emergency_contact_phone: profileData.emergencyContactPhone || '',
     created_at: now(),
   });
 
@@ -49,7 +57,8 @@ async function acceptInvite(token, lineUserId) {
 
 // ── FR-N1: ครอบครัวสร้าง Care Profile เองได้โดยไม่ผ่านศูนย์ ──
 // familyPhone เก็บไว้ด้วย (Optional) เพื่อให้ข้อ O1 ค้นหาเจอ ถ้าศูนย์เพิ่มผู้พักด้วยเบอร์เดียวกันทีหลัง
-async function createIndependentProfile({ ownerLineId, patientName, familyPhone }) {
+async function createIndependentProfile({ ownerLineId, patientName, familyPhone, gender, bloodType, heightCm, weightKg,
+  chronicConditions = [], drugAllergies, foodAllergies, mobilityLimitations, emergencyContactName, emergencyContactPhone }) {
   const profile = await CareProfiles.insert({
     care_profile_id: id('CP'),
     owner_line_id: ownerLineId,
@@ -57,7 +66,12 @@ async function createIndependentProfile({ ownerLineId, patientName, familyPhone 
     center_id: null,
     family_phone: familyPhone || null,
     status: 'independent',
-    blood_type: null, height_cm: null, weight_kg: null, chronic_conditions: [],
+    gender: gender || null, blood_type: bloodType || null,
+    height_cm: heightCm ? Number(heightCm) : null, weight_kg: weightKg ? Number(weightKg) : null,
+    chronic_conditions: Array.isArray(chronicConditions) ? chronicConditions : [],
+    drug_allergies: drugAllergies || '', food_allergies: foodAllergies || '',
+    mobility_limitations: mobilityLimitations || '',
+    emergency_contact_name: emergencyContactName || '', emergency_contact_phone: emergencyContactPhone || '',
     created_at: now(),
   });
   return profile;
@@ -69,10 +83,42 @@ async function bindFamilyGroup({ careProfileId, groupId, requesterLineId }) {
   if (!profile) return { ok: false, reason: 'ไม่พบ Care Profile' };
   if (profile.owner_line_id !== requesterLineId) return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้' };
 
+  const conflict = await GroupBindings.findOne(
+    (g) => g.line_group_id === groupId && g.status !== 'inactive'
+      && !(g.kind === 'family' && g.care_profile_id === careProfileId)
+  );
+  if (conflict) return { ok: false, reason: 'กลุ่มนี้ถูกผูกกับศูนย์หรือ Care Profile อื่นแล้ว' };
+  const previous = await GroupBindings.findOne(
+    (g) => g.kind === 'family' && g.care_profile_id === careProfileId && g.status !== 'inactive'
+  );
+  if (previous && previous.line_group_id === groupId) return { ok: true, existing: true };
+  if (previous) await GroupBindings.update((g) => g.binding_id === previous.binding_id, { status: 'inactive', unbound_at: now() });
   await GroupBindings.insert({
     binding_id: id('GB'), care_profile_id: careProfileId, line_group_id: groupId, kind: 'family', bound_at: now(),
+    center_id: null, status: 'active', bound_by_line_user_id: requesterLineId,
   });
   return { ok: true };
+}
+
+async function recordMedicationSnapshot({ careProfileId, items, recordedBy, source = 'manual', sourceImageBase64 = null }) {
+  const cleanItems = (Array.isArray(items) ? items : []).map((item) => ({
+    name: String(item.name || '').trim(), dose: String(item.dose || '').trim(),
+    condition: String(item.condition || '').trim(), note: String(item.note || '').trim(),
+  })).filter((item) => item.name);
+  if (cleanItems.length === 0) return { ok: false, reason: 'กรุณาระบุรายการยาอย่างน้อยหนึ่งรายการ' };
+  const snapshot = await MedicationSnapshots.insert({
+    snapshot_id: id('MEDS'), care_profile_id: careProfileId, items: cleanItems,
+    source, source_image_base64: sourceImageBase64, recorded_by: recordedBy, recorded_at: now(),
+  });
+  for (const item of cleanItems) {
+    await Medications.insert({ medication_id: id('MED'), care_profile_id: careProfileId, ...item,
+      snapshot_id: snapshot.snapshot_id, source, created_by: recordedBy, created_at: now() });
+  }
+  return { ok: true, snapshot };
+}
+
+async function getMedicationHistory(careProfileId) {
+  return MedicationSnapshots.findWhere((s) => s.care_profile_id === careProfileId);
 }
 
 // ── FR-H2: บันทึกนัด/ยาด้วยตนเอง (ใช้ร่วมกันได้ทั้ง linked และ independent) ──
@@ -143,4 +189,5 @@ module.exports = {
   recordConsent, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
   exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
+  recordMedicationSnapshot, getMedicationHistory,
 };

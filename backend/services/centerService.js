@@ -1,6 +1,6 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
-const { Centers, CenterStaff, Residents, Invites, GroupBindings, audit, id, now } = require('../db');
+const { Centers, CenterStaff, StaffContexts, Residents, Invites, GroupBindings, audit, id, now } = require('../db');
 const richMenuService = require('./richMenuService');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
@@ -43,16 +43,41 @@ async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
   if (!staff) {
     return { ok: false, reason: 'ผู้เชิญไม่มีสิทธิ์เจ้าของหรือผู้จัดการของศูนย์นี้' };
   }
-  // หนึ่งศูนย์ผูกได้หนึ่งกลุ่ม (ข้อ A3) — ถ้าเคยผูกไว้แล้วต้องแจ้งว่าจะทับของเดิม
-  const existing = await Centers.findOne((c) => c.center_id === centerId);
-  const alreadyBound = !!existing.group_id && existing.group_id !== groupId;
+  const previous = await GroupBindings.findOne(
+    (g) => g.kind === 'center_staff' && g.center_id === centerId && g.status !== 'inactive'
+  );
+  const groupUsedElsewhere = await GroupBindings.findOne(
+    (g) => g.line_group_id === groupId && g.status !== 'inactive'
+      && !(g.kind === 'center_staff' && g.center_id === centerId)
+  );
+  if (groupUsedElsewhere) return { ok: false, reason: 'กลุ่มนี้ถูกผูกกับศูนย์หรือ Care Profile อื่นแล้ว' };
 
+  const alreadyBound = !!previous && previous.line_group_id !== groupId;
+  if (previous && previous.line_group_id !== groupId) {
+    await GroupBindings.update(
+      (g) => g.binding_id === previous.binding_id,
+      { status: 'inactive', unbound_at: now() }
+    );
+  }
+  if (!previous || previous.line_group_id !== groupId) {
+    await GroupBindings.insert({
+      binding_id: id('GB'), kind: 'center_staff', center_id: centerId,
+      care_profile_id: null, line_group_id: groupId, status: 'active',
+      bound_by_line_user_id: requesterLineId, bound_at: now(),
+    });
+  }
+  // เก็บ field เดิมไว้เพื่อให้ deployment เก่าและข้อมูลเดิมยังทำงานระหว่างเปลี่ยนผ่าน
   await Centers.update((c) => c.center_id === centerId, { group_id: groupId });
   await audit('center.group_bound', requesterLineId, { centerId, groupId, replacedPrevious: alreadyBound });
   return { ok: true, replacedPrevious: alreadyBound };
 }
 
 async function findCenterByGroup(groupId) {
+  const binding = await GroupBindings.findOne((g) => g.line_group_id === groupId);
+  if (binding) {
+    if (binding.kind !== 'center_staff' || binding.status === 'inactive') return null;
+    return Centers.findOne((c) => c.center_id === binding.center_id && c.status === 'active');
+  }
   return Centers.findOne((c) => c.group_id === groupId && c.status === 'active');
 }
 
@@ -64,7 +89,18 @@ async function appointManager({ centerId, targetLineId, requesterLineId }) {
   if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่แต่งตั้งผู้จัดการได้' };
 
   const already = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === targetLineId);
-  if (already) return { ok: false, reason: 'ผู้ใช้นี้มีสิทธิ์อยู่แล้ว' };
+  if (already?.role === 'owner') return { ok: false, reason: 'ผู้ใช้นี้เป็นเจ้าของศูนย์อยู่แล้ว' };
+  if (already?.role === 'manager') return { ok: false, reason: 'ผู้ใช้นี้เป็นผู้จัดการอยู่แล้ว' };
+
+  if (already?.role === 'staff') {
+    const promoted = await CenterStaff.update(
+      (s) => s.center_id === centerId && s.line_user_id === targetLineId,
+      { role: 'manager', promoted_at: now() }
+    );
+    linkMenuBestEffort(targetLineId);
+    await audit('center.manager_appointed', requesterLineId, { centerId, targetLineId, promotedExistingStaff: true });
+    return { ok: true, staff: promoted };
+  }
 
   const staff = await CenterStaff.insert({
     staff_id: id('STF'), center_id: centerId, line_user_id: targetLineId, role: 'manager', assigned_at: now(),
@@ -80,8 +116,9 @@ async function removeManager({ centerId, targetLineId, requesterLineId }) {
   );
   if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่ถอดถอนผู้จัดการได้' };
 
-  const removed = await CenterStaff.remove(
+  const removed = await CenterStaff.update(
     (s) => s.center_id === centerId && s.line_user_id === targetLineId && s.role === 'manager'
+    , { role: 'staff', demoted_at: now() }
   );
   if (removed) await audit('center.manager_removed', requesterLineId, { centerId, targetLineId });
   return { ok: removed };
@@ -96,24 +133,71 @@ async function listStaff(centerId) {
 // พนักงานทักอะไรก็ได้ในกลุ่มครั้งเดียว ระบบจะจำได้ว่าเป็นพนักงานของศูนย์ใด แล้วส่งรูปในแชทส่วนตัวได้ตลอดไป
 async function recordStaffFromGroup(groupId, lineUserId) {
   if (!groupId || !lineUserId) return null;
-  const center = await Centers.findOne((c) => c.group_id === groupId && c.status === 'active');
+  const center = await findCenterByGroup(groupId);
   if (!center) return null;
 
   const existing = await CenterStaff.findOne((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
-  if (existing) return existing; // เป็นเจ้าของ ผู้จัดการ หรือพนักงานอยู่แล้ว ไม่ต้องบันทึกซ้ำ
+  if (existing) {
+    await setActiveCenterForStaff(lineUserId, center.center_id);
+    return existing;
+  }
+
+  const lineClient = require('../providers/lineClient');
+  const profile = await lineClient.getGroupMemberProfile(groupId, lineUserId);
 
   const staff = await CenterStaff.insert({
     staff_id: id('STF'), center_id: center.center_id, line_user_id: lineUserId,
+    display_name: profile?.displayName || null, picture_url: profile?.pictureUrl || null,
     role: 'staff', assigned_at: now(), auto_registered: true,
   });
+  await setActiveCenterForStaff(lineUserId, center.center_id);
   return staff;
+}
+
+async function setActiveCenterForStaff(lineUserId, centerId) {
+  const membership = await CenterStaff.findOne((s) => s.line_user_id === lineUserId && s.center_id === centerId);
+  if (!membership) return { ok: false, reason: 'ผู้ใช้ไม่มีสิทธิ์ในสาขานี้' };
+  const existing = await StaffContexts.findOne((c) => c.line_user_id === lineUserId);
+  if (existing) await StaffContexts.update((c) => c.line_user_id === lineUserId, { center_id: centerId, selected_at: now() });
+  else await StaffContexts.insert({ context_id: id('CTX'), line_user_id: lineUserId, center_id: centerId, selected_at: now() });
+  return { ok: true };
+}
+
+async function listCentersByStaffUser(lineUserId) {
+  const memberships = await CenterStaff.findWhere((s) => s.line_user_id === lineUserId);
+  const centers = [];
+  for (const membership of memberships) {
+    const center = await Centers.findOne((c) => c.center_id === membership.center_id && c.status === 'active');
+    if (center) centers.push({ ...center, role: membership.role });
+  }
+  return centers;
+}
+
+/** ถอนสิทธิ์สาขาทันทีเมื่อออกจากกลุ่มพนักงาน เจ้าของต้องโอนสิทธิ์/ปิดศูนย์ด้วยขั้นตอนเฉพาะ */
+async function removeStaffFromGroup(groupId, lineUserId) {
+  if (!groupId || !lineUserId) return { removed: false };
+  const center = await findCenterByGroup(groupId);
+  if (!center) return { removed: false };
+  const member = await CenterStaff.findOne(
+    (s) => s.center_id === center.center_id && s.line_user_id === lineUserId
+  );
+  if (!member || member.role === 'owner') return { removed: false, preservedOwner: member?.role === 'owner' };
+  const removed = await CenterStaff.remove(
+    (s) => s.center_id === center.center_id && s.line_user_id === lineUserId && s.role !== 'owner'
+  );
+  const context = await StaffContexts.findOne((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
+  if (removed && context) await StaffContexts.remove((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
+  if (removed) await audit('center.staff_left_group', lineUserId, { centerId: center.center_id, groupId, previousRole: member.role });
+  return { removed, centerId: center.center_id };
 }
 
 /** หาศูนย์ที่ผู้ใช้คนนี้สังกัด — ใช้ตอนพนักงานส่งรูปในแชทส่วนตัว */
 async function findCenterByStaffUser(lineUserId) {
-  const staff = await CenterStaff.findOne((s) => s.line_user_id === lineUserId);
-  if (!staff) return null;
-  return Centers.findOne((c) => c.center_id === staff.center_id && c.status === 'active');
+  const centers = await listCentersByStaffUser(lineUserId);
+  if (centers.length === 0) return null;
+  if (centers.length === 1) return centers[0];
+  const context = await StaffContexts.findOne((c) => c.line_user_id === lineUserId);
+  return centers.find((c) => c.center_id === context?.center_id) || null;
 }
 
 /** รายชื่อเจ้าของและผู้จัดการของศูนย์ — ใช้ส่งการ์ดยืนยันเข้าแชทส่วนตัวของแต่ละคน */
@@ -153,18 +237,23 @@ async function addResident({ centerId, fullName, aliases = [], room, familyPhone
 
   // ข้อ O1: ตรวจสอบว่าเบอร์นี้เคยมี Care Profile จากศูนย์อื่นมาก่อนไหม (ไม่ใช่แค่ Test เฉยๆ ต้องเรียกจริง)
   let accessRequestSent = false;
+  let accessRequestId = null;
   if (familyPhone) {
     const accessService = require('./accessService');
     const existingProfile = await accessService.findProfileByPhone(familyPhone);
     if (existingProfile && !existingProfile.center_id) {
-      await accessService.createAccessRequest({ centerId, careProfileId: existingProfile.care_profile_id, requestedBy: 'system:auto_match' });
-      accessRequestSent = true;
+      const requestResult = await accessService.createAccessRequest({
+        centerId, careProfileId: existingProfile.care_profile_id,
+        residentId: resident.resident_id, requestedBy: 'system:auto_match',
+      });
+      accessRequestSent = !!requestResult.ok;
+      accessRequestId = requestResult.request?.request_id || null;
     }
   }
 
   return {
     resident, inviteUrl: `https://liff.line.me/xxx?token=${invite.invite_token}`, inviteExpiresAt: invite.expires_at,
-    accessRequestSent,
+    accessRequestSent, accessRequestId,
   };
 }
 
@@ -197,7 +286,7 @@ async function dischargeResident(residentId, requesterLineId) {
       + 'ยังบันทึกนัด รับการเตือน และเรียกใช้บริการผู้ดูแลจาก Care2Go ได้ตามปกติ'; // ข้อความตามที่ตกลงไว้
 
     // ⚠️ ข้อ B6 ระบุว่า "ระบบส่งข้อความแจ้งครอบครัว" — ต้อง Push จริง ไม่ใช่แค่คืนค่าไปให้ศูนย์เห็น
-    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family');
+    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family' && g.status !== 'inactive');
     const careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
     if (target) {
@@ -290,4 +379,6 @@ module.exports = {
   addResident, updateResident, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
   rotateExternalApiKey, findCenterByApiKey,
   recordStaffFromGroup, findCenterByStaffUser, listApprovers, canApprove,
+  removeStaffFromGroup,
+  setActiveCenterForStaff, listCentersByStaffUser,
 };

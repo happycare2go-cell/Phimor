@@ -42,13 +42,13 @@
             document.getElementById('status').style.color = '#DEB14E';
 
             try {
+                const idToken = liff.getIDToken();
                 const profile = await liff.getProfile();
-                const lineUserId = profile.userId;
 
                 const response = await fetch(`${BACKEND_URL}/api/external/register-center`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ centerName, lineUserId })
+                    body: JSON.stringify({ centerName, idToken, lineUserId: profile.userId })
                 });
 
                 const data = await response.json();

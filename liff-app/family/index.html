@@ -61,6 +61,7 @@
   <div class="hdr">
     <div class="logo">พี่หมอ</div>
     <div class="sub" id="profileLabel">กำลังโหลด...</div>
+    <select id="profileSelector" onchange="selectProfile(this.value)" style="display:none;margin-top:10px;background:#fff"></select>
   </div>
 
   <div class="tabs">
@@ -73,14 +74,27 @@
   <!-- ═══ F2: หน้าหลัก ═══ -->
   <div class="view active" id="view-home">
     <div class="card" id="noProfileCard" style="display:none">
-      <h3>ยังไม่มีข้อมูลผู้สูงอายุ</h3>
-      <p style="font-size:13px;color:var(--gray)">สร้างโปรไฟล์เองได้เลย หรือรอลิงก์เชิญจากศูนย์ดูแล</p>
+      <h3 id="newProfileTitle">ยังไม่มีข้อมูลผู้สูงอายุ</h3>
+      <p id="newProfileHelp" style="font-size:13px;color:var(--gray)">สร้างโปรไฟล์เองได้เลย หรือรอลิงก์เชิญจากศูนย์ดูแล</p>
       <label>ชื่อผู้สูงอายุ</label>
       <input type="text" id="newProfileName" placeholder="เช่น คุณยายทองดี">
-      <div style="margin-top:12px"><button class="btn btn-primary" onclick="createIndependentProfile()">สร้างโปรไฟล์</button></div>
+      <label>เพศ</label><select id="newGender"><option value="">ไม่ระบุ</option><option value="female">หญิง</option><option value="male">ชาย</option><option value="other">อื่น ๆ</option></select>
+      <label>กรุ๊ปเลือด</label><select id="newBloodType"><option value="">ไม่ทราบ</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select>
+      <div style="display:flex;gap:8px"><div style="flex:1"><label>ส่วนสูง (ซม.)</label><input type="number" id="newHeight"></div><div style="flex:1"><label>น้ำหนัก (กก.)</label><input type="number" id="newWeight"></div></div>
+      <label>โรคประจำตัว (เลือกได้หลายรายการ)</label>
+      <select id="newConditions" multiple size="6"><option>เบาหวาน</option><option>ความดันโลหิตสูง</option><option>ไขมันในเลือดสูง</option><option>โรคหัวใจ</option><option>โรคไต</option><option>โรคตับ</option><option>โรคหลอดเลือดสมอง</option><option>อัลไซเมอร์/สมองเสื่อม</option><option>พาร์กินสัน</option><option>โรคปอด</option><option>มะเร็ง</option></select>
+      <label>โรคอื่น ๆ (คั่นด้วยจุลภาค)</label><input type="text" id="newOtherConditions">
+      <label>แพ้ยา</label><input type="text" id="newDrugAllergies">
+      <label>แพ้อาหาร</label><input type="text" id="newFoodAllergies">
+      <label>ข้อจำกัดการเคลื่อนไหว</label><textarea id="newMobility"></textarea>
+      <label>ผู้ติดต่อฉุกเฉิน</label><input type="text" id="newEmergencyName">
+      <label>เบอร์ผู้ติดต่อฉุกเฉิน</label><input type="tel" id="newEmergencyPhone">
+      <label>เบอร์โทรศัพท์ครอบครัว</label><input type="tel" id="newFamilyPhone">
+      <div style="margin-top:12px"><button class="btn btn-primary" id="createProfileButton" onclick="createIndependentProfile()">สร้างโปรไฟล์</button></div>
     </div>
 
     <div id="profileSummary"></div>
+    <div id="accessRequestList"></div>
 
     <div class="card">
       <h3>📅 นัดหมายที่ใกล้ถึง</h3>
@@ -108,7 +122,9 @@
       <input type="text" id="medName" placeholder="เช่น Metformin 500mg">
       <label>วิธีใช้</label>
       <input type="text" id="medDose" placeholder="เช่น 1 เม็ด หลังอาหารเช้า">
-      <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveMedication()">บันทึกยา</button></div>
+      <label>ใช้สำหรับโรค/ภาวะ</label><input type="text" id="medCondition" placeholder="เช่น เบาหวาน">
+      <label>หรือถ่าย/อัปโหลดรูปใบรายการยา</label><input type="file" id="medImage" accept="image/*" capture="environment">
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveMedication()">บันทึกรายการยารอบนี้</button></div>
     </div>
   </div>
 
@@ -130,31 +146,41 @@
       <label>กรุ๊ปเลือด</label>
       <select id="bloodType">
         <option value="">ไม่ทราบ</option>
-        <option>A</option><option>A+</option><option>B</option><option>B+</option>
-        <option>AB</option><option>AB+</option><option>O</option><option>O+</option>
+        <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
+        <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
       </select>
+      <label>เพศ</label><select id="gender"><option value="">ไม่ระบุ</option><option value="female">หญิง</option><option value="male">ชาย</option><option value="other">อื่น ๆ</option></select>
       <label>ส่วนสูง (ซม.)</label>
       <input type="number" id="heightCm">
       <label>น้ำหนัก (กก.)</label>
       <input type="number" id="weightKg">
+      <label>โรคประจำตัว (คั่นด้วยจุลภาค)</label><textarea id="chronicConditions"></textarea>
+      <label>แพ้ยา</label><input type="text" id="drugAllergies">
+      <label>แพ้อาหาร</label><input type="text" id="foodAllergies">
+      <label>ข้อจำกัดการเคลื่อนไหว</label><textarea id="mobilityLimitations"></textarea>
+      <label>ผู้ติดต่อฉุกเฉิน</label><input type="text" id="emergencyContactName">
+      <label>เบอร์ผู้ติดต่อฉุกเฉิน</label><input type="tel" id="emergencyContactPhone">
       <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveHealthInfo()">บันทึก</button></div>
     </div>
+    <div class="card"><h3>🔗 ผูกกลุ่มครอบครัว</h3><p style="font-size:12px;color:var(--gray)">สร้างรหัส แล้วส่งรหัสในกลุ่มหลังเชิญพี่หมอเข้ากลุ่ม รหัสมีอายุ 15 นาที</p><button class="btn btn-outline" onclick="createFamilyBindingCode()">สร้างรหัสผูกกลุ่ม</button><div id="familyBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div></div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-const BACKEND_URL = 'https://api.phimor.example.com'; // ★ Dev แทนที่ด้วย URL จริงตอน Deploy
+const BACKEND_URL = 'https://phimor-backend.onrender.com';
 let LINE_USER_ID = null;
+let LINE_ID_TOKEN = null;
 let currentProfile = null;
 let allProfiles = [];
+let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 
 async function api(path, opts={}) {
-  const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
+  const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
   const data = await res.json().catch(()=>({}));
   if (!res.ok) { toast(data.message || 'เกิดข้อผิดพลาด'); throw new Error(data.message); }
   return data;
@@ -181,10 +207,23 @@ function declineConsent() { toast('จำเป็นต้องยอมรั
 async function loadDashboard() {
   const data = await api('/api/init-dashboard');
   allProfiles = data.profiles;
-  currentProfile = allProfiles[0] || null;
+  const previousId = currentProfile?.profile?.care_profile_id;
+  currentProfile = allProfiles.find(x=>x.profile.care_profile_id===previousId) || allProfiles[0] || null;
+  const selector=document.getElementById('profileSelector');
+  selector.innerHTML=allProfiles.map(x=>`<option value="${x.profile.care_profile_id}" ${x===currentProfile?'selected':''}>${esc(x.profile.patient_name)}</option>`).join('');
+  selector.style.display=allProfiles.length>1?'block':'none';
 
   document.getElementById('profileLabel').textContent = currentProfile ? currentProfile.profile.patient_name : 'ยังไม่มีข้อมูล';
   document.getElementById('noProfileCard').style.display = currentProfile ? 'none' : 'block';
+  if (INVITE_TOKEN) {
+    const invite = await api('/api/invite/' + encodeURIComponent(INVITE_TOKEN));
+    document.getElementById('noProfileCard').style.display = 'block';
+    document.getElementById('newProfileTitle').textContent = 'ยืนยันเชื่อมผู้พักจากศูนย์';
+    document.getElementById('newProfileHelp').textContent = `กรอกข้อมูลของ ${invite.residentName || 'ผู้รับการดูแล'} แล้วกดยืนยัน`;
+    document.getElementById('newProfileName').value = invite.residentName || '';
+    document.getElementById('newProfileName').readOnly = true;
+    const button=document.getElementById('createProfileButton'); button.textContent='ยืนยันและเชื่อมกับศูนย์'; button.onclick=acceptInvite;
+  }
 
   if (currentProfile) {
     const p = currentProfile.profile;
@@ -197,11 +236,25 @@ async function loadDashboard() {
         </div>
       </div>`;
     renderUpcoming(currentProfile.upcomingAppointments);
+    document.getElementById('bloodType').value=p.blood_type||''; document.getElementById('gender').value=p.gender||'';
+    document.getElementById('heightCm').value=p.height_cm||''; document.getElementById('weightKg').value=p.weight_kg||'';
+    document.getElementById('chronicConditions').value=(p.chronic_conditions||[]).join(', ');
+    document.getElementById('drugAllergies').value=p.drug_allergies||''; document.getElementById('foodAllergies').value=p.food_allergies||'';
+    document.getElementById('mobilityLimitations').value=p.mobility_limitations||'';
+    document.getElementById('emergencyContactName').value=p.emergency_contact_name||'';
+    document.getElementById('emergencyContactPhone').value=p.emergency_contact_phone||'';
   } else {
     document.getElementById('profileSummary').innerHTML = '';
     document.getElementById('upcomingList').innerHTML = '<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>';
   }
+  await loadAccessRequests();
 }
+function selectProfile(id){ currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null; loadDashboard(); }
+async function loadAccessRequests(){
+  const data = await api('/api/access-requests');
+  document.getElementById('accessRequestList').innerHTML = data.requests.map(r=>`<div class="card"><h3>ศูนย์ขอเข้าถึงข้อมูลของ ${esc(r.patientName)}</h3><div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="respondAccess('${r.requestId}',true)">อนุญาต</button><button class="btn btn-outline" onclick="respondAccess('${r.requestId}',false)">ไม่อนุญาต</button></div></div>`).join('');
+}
+async function respondAccess(id, approved){ await api(`/api/access-requests/${id}/respond`,{method:'POST',body:JSON.stringify({approved})}); toast(approved?'อนุญาตการเชื่อมต่อแล้ว':'ไม่อนุญาตการเชื่อมต่อ'); await loadDashboard(); }
 function renderUpcoming(list) {
   const box = document.getElementById('upcomingList');
   if (!list || list.length === 0) { box.innerHTML = '<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>'; return; }
@@ -215,10 +268,21 @@ function renderUpcoming(list) {
 async function createIndependentProfile() {
   const patientName = document.getElementById('newProfileName').value.trim();
   if (!patientName) return toast('กรุณากรอกชื่อ');
-  await api('/api/care-profile/independent', { method:'POST', body: JSON.stringify({ patientName }) });
+  const selected = Array.from(document.getElementById('newConditions').selectedOptions).map(o=>o.value);
+  const other = document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean);
+  await api('/api/care-profile/independent', { method:'POST', body: JSON.stringify({
+    patientName, gender:document.getElementById('newGender').value, bloodType:document.getElementById('newBloodType').value,
+    heightCm:document.getElementById('newHeight').value, weightKg:document.getElementById('newWeight').value,
+    chronicConditions:[...selected,...other], drugAllergies:document.getElementById('newDrugAllergies').value,
+    foodAllergies:document.getElementById('newFoodAllergies').value, mobilityLimitations:document.getElementById('newMobility').value,
+    emergencyContactName:document.getElementById('newEmergencyName').value,
+    emergencyContactPhone:document.getElementById('newEmergencyPhone').value, familyPhone:document.getElementById('newFamilyPhone').value,
+  }) });
   toast('สร้างโปรไฟล์แล้ว');
   await loadDashboard();
 }
+function collectProfileForm(){ const selected=Array.from(document.getElementById('newConditions').selectedOptions).map(o=>o.value); const other=document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean); return { gender:document.getElementById('newGender').value,bloodType:document.getElementById('newBloodType').value,heightCm:document.getElementById('newHeight').value,weightKg:document.getElementById('newWeight').value,chronicConditions:[...selected,...other],drugAllergies:document.getElementById('newDrugAllergies').value,foodAllergies:document.getElementById('newFoodAllergies').value,mobilityLimitations:document.getElementById('newMobility').value,emergencyContactName:document.getElementById('newEmergencyName').value,emergencyContactPhone:document.getElementById('newEmergencyPhone').value }; }
+async function acceptInvite(){ if(!INVITE_TOKEN)return; await api('/api/invite/'+encodeURIComponent(INVITE_TOKEN)+'/accept',{method:'POST',body:JSON.stringify(collectProfileForm())}); INVITE_TOKEN=null; history.replaceState({},'',location.pathname); toast('เชื่อม Care Profile กับศูนย์แล้ว'); await loadDashboard(); }
 
 // ── F3: บันทึกเอง ──
 async function saveAppointment() {
@@ -239,16 +303,20 @@ async function saveMedication() {
   if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
   const name = document.getElementById('medName').value.trim();
   const dose = document.getElementById('medDose').value.trim();
-  if (!name) return toast('กรุณากรอกชื่อยา');
-  await api('/api/medications', { method:'POST', body: JSON.stringify({ careProfileId: currentProfile.profile.care_profile_id, name, dose }) });
-  toast('บันทึกยาแล้ว');
+  const file = document.getElementById('medImage').files[0];
+  if (!name && !file) return toast('กรุณากรอกชื่อยาหรือเลือกรูป');
+  const imageBase64 = file ? await fileToBase64(file) : null;
+  const items = name ? [{ name, dose, condition:document.getElementById('medCondition').value.trim() }] : [];
+  await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`, { method:'POST', body: JSON.stringify({ items, imageBase64 }) });
+  toast('บันทึกรายการยารอบนี้แล้ว');
   document.getElementById('medName').value=''; document.getElementById('medDose').value='';
 }
+function fileToBase64(file){ return new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(String(r.result).split(',')[1]); r.onerror=reject; r.readAsDataURL(file); }); }
 
 // ── F4: ประวัติ + PDF ──
 async function loadHistory() {
-  // ในระบบจริง: GET /api/history?careProfileId=...
-  document.getElementById('historyList').innerHTML = '<div class="empty">แสดงประวัติทั้งหมดที่นี่</div>';
+  const data = await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`);
+  document.getElementById('historyList').innerHTML = data.snapshots.length ? data.snapshots.map(s=>`<div class="appt-item"><div class="appt-h">รายการยา ${new Date(s.recorded_at).toLocaleString('th-TH')}</div><div class="appt-d">${s.items.map(i=>esc(i.name)+' '+esc(i.dose||'')+(i.condition?' · '+esc(i.condition):'')).join('<br>')}</div></div>`).join('') : '<div class="empty">ยังไม่มีประวัติรายการยา</div>';
 }
 async function exportPdf() {
   if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
@@ -256,7 +324,7 @@ async function exportPdf() {
   const toDate = document.getElementById('toDate').value;
   const res = await fetch(BACKEND_URL + '/api/export/pdf', {
     method: 'POST',
-    headers: { 'Content-Type':'application/json', 'X-Line-User-Id': LINE_USER_ID },
+    headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID },
     body: JSON.stringify({ careProfileId: currentProfile.profile.care_profile_id, fromDate, toDate }),
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); return toast(err.message || 'สร้างไฟล์ไม่สำเร็จ'); }
@@ -273,21 +341,32 @@ async function saveHealthInfo() {
   if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
   await api(`/api/care-profile/${currentProfile.profile.care_profile_id}`, { method:'PATCH', body: JSON.stringify({
     blood_type: document.getElementById('bloodType').value,
+    gender: document.getElementById('gender').value,
     height_cm: document.getElementById('heightCm').value,
     weight_kg: document.getElementById('weightKg').value,
+    chronic_conditions: document.getElementById('chronicConditions').value.split(',').map(s=>s.trim()).filter(Boolean),
+    drug_allergies: document.getElementById('drugAllergies').value,
+    food_allergies: document.getElementById('foodAllergies').value,
+    mobility_limitations: document.getElementById('mobilityLimitations').value,
+    emergency_contact_name: document.getElementById('emergencyContactName').value,
+    emergency_contact_phone: document.getElementById('emergencyContactPhone').value,
   })});
   toast('บันทึกแล้ว');
   await loadDashboard();
 }
+async function createFamilyBindingCode(){ if(!currentProfile)return toast('ยังไม่มีโปรไฟล์'); const id=currentProfile.profile.care_profile_id; const result=await api(`/api/care-profile/${id}/group-binding-token`,{method:'POST',body:'{}'}); document.getElementById('familyBindingCode').textContent=result.code; toast('คัดลอกรหัสนี้ไปส่งในกลุ่มครอบครัว'); }
 
 // ── เริ่มต้น ──
 async function main() {
-  await liff.init({ liffId: 'YOUR_LIFF_ID' }); // ★ Dev ใส่ LIFF ID จริงตอน Deploy
+  const config = await fetch(BACKEND_URL + '/config/liff').then(r=>r.json());
+  if (!config.familyLiffId) throw new Error('ยังไม่ได้ตั้งค่า LIFF_ID_FAMILY');
+  await liff.init({ liffId: config.familyLiffId });
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
+  LINE_ID_TOKEN = liff.getIDToken();
 
-  const consentCheck = await fetch(BACKEND_URL + '/api/consent/check', { headers: { 'X-Line-User-Id': LINE_USER_ID } }).catch(()=>null);
+  const consentCheck = await fetch(BACKEND_URL + '/api/consent/check', { headers: { 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID } }).catch(()=>null);
   const hasConsent = consentCheck && consentCheck.ok && (await consentCheck.json()).hasConsent;
 
   if (!hasConsent) {

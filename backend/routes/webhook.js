@@ -10,9 +10,12 @@ const familyService = require('../services/familyService');
 const lineClient = require('../providers/lineClient');
 const flex = require('../flexMessages');
 const rateLimiter = require('../utils/rateLimiter');
-const { Residents, PendingCards, CareProfiles } = require('../db');
+const { Residents, PendingCards, CareProfiles, CenterStaff, Centers } = require('../db');
 
 const IMAGE_RATE_LIMIT = Number(process.env.IMAGE_RATE_LIMIT_PER_MINUTE) || 5;
+const webhookParser = (process.env.NODE_ENV === 'test' || process.env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true')
+  ? express.json()
+  : line.middleware({ channelSecret: process.env.LINE_CHANNEL_SECRET || 'missing-channel-secret' });
 
 async function safeReply(replyToken, messages) {
   return lineClient.replyMessage(replyToken, Array.isArray(messages) ? messages : [messages]);
@@ -20,17 +23,12 @@ async function safeReply(replyToken, messages) {
 
 async function handleJoinEvent(event) {
   const groupId = event.source.groupId;
-  const inviterLineId = event.source.userId;
-  if (!groupId || !inviterLineId) return;
-
-  const { CenterStaff } = require('../db');
-  const staffRows = await CenterStaff.findWhere((s) => s.line_user_id === inviterLineId && ['owner', 'manager'].includes(s.role));
-  if (staffRows.length === 0) return;
-
-  const result = await centerService.bindGroupToCenter({ centerId: staffRows[0].center_id, groupId, requesterLineId: inviterLineId });
-  if (result.ok) {
-    await lineClient.pushMessage(groupId, [{ type: 'text', text: 'ผูกกลุ่มนี้เป็นกลุ่มงานศูนย์เรียบร้อยค่ะ\n\nขั้นตอนต่อไปสำหรับพนักงานทุกคน:\nพิมพ์ทักทายอะไรก็ได้ในกลุ่มนี้หนึ่งครั้ง เพื่อให้ระบบรู้จักว่าท่านเป็นพนักงานของศูนย์นี้\nจากนั้นส่งรูปเอกสารมาที่แชทส่วนตัวกับพี่หมอได้เลย' }]);
-  }
+  if (!groupId) return;
+  // join event ไม่รับประกัน userId ของผู้เชิญ จึงห้ามเดาว่าเป็นกลุ่มพนักงานหรือครอบครัว
+  await lineClient.pushMessage(groupId, [{
+    type: 'text',
+    text: 'พี่หมอเข้ากลุ่มแล้วค่ะ กรุณาให้ผู้ที่สร้างรหัสผูกกลุ่มส่งรหัส STAFF-xxxxxx หรือ FAMILY-xxxxxx ในกลุ่มนี้ภายใน 15 นาที',
+  }]);
 }
 
 async function captureStaffFromGroupEvent(event) {
@@ -41,20 +39,46 @@ async function captureStaffFromGroupEvent(event) {
   await centerService.recordStaffFromGroup(groupId, lineUserId);
 }
 
+async function handleGroupBindingCode(event) {
+  if (event.message?.type !== 'text') return false;
+  const match = String(event.message.text || '').toUpperCase().match(/\b(STAFF|FAMILY)-[A-Z0-9]{6}\b/);
+  if (!match) return false;
+  const groupBindingService = require('../services/groupBindingService');
+  const result = await groupBindingService.consumeCodeFromGroup({
+    code: match[0], groupId: event.source?.groupId, senderLineId: event.source?.userId,
+  });
+  await safeReply(event.replyToken, {
+    type: 'text',
+    text: result.ok
+      ? (result.kind === 'center_staff' ? '✅ ผูกเป็นกลุ่มพนักงานของสาขาเรียบร้อยค่ะ' : '✅ ผูกเป็นกลุ่มครอบครัวเรียบร้อยค่ะ')
+      : `⚠️ ผูกกลุ่มไม่สำเร็จ: ${result.reason}`,
+  });
+  return true;
+}
+
 async function handleImageMessage(event, imageBuffer) {
   const groupId = event.source.groupId;
   const lineUserId = event.source.userId;
 
-  if (groupId) return; // โหมดนินจา
+  if (groupId) return safeReply(event.replyToken, { type: 'text', text: 'เพื่อรักษาความเป็นส่วนตัว กรุณาส่งรูปเอกสารในแชทส่วนตัวกับพี่หมอค่ะ' });
   if (!lineUserId) return;
 
   const center = await centerService.findCenterByStaffUser(lineUserId);
   if (!center) {
+    const staffCenters = await centerService.listCentersByStaffUser(lineUserId);
+    if (staffCenters.length > 1) {
+      return safeReply(event.replyToken, {
+        type: 'text', text: 'กรุณาเลือกสาขาสำหรับเอกสารนี้ แล้วส่งรูปอีกครั้งค่ะ',
+        quickReply: { items: staffCenters.slice(0, 13).map((c) => ({
+          type: 'action', action: { type: 'postback', label: String(c.name).slice(0, 20), data: `action=set_active_center&centerId=${c.center_id}` },
+        })) },
+      });
+    }
     const profile = await CareProfiles.findOne((p) => p.owner_line_id === lineUserId && p.status === 'independent');
     if (profile) return safeReply(event.replyToken, { type: 'text', text: familyService.AI_RESTRICTED_MESSAGE });
     
     return safeReply(event.replyToken, {
-      type: 'text', text: 'พี่หมอยังไม่รู้จักคุณเลยครับ รบกวนพิมพ์ทักทาย หรือส่งสติ๊กเกอร์ 1 ตัวใน "กลุ่มไลน์งานศูนย์" เพื่อให้พี่หมอจำหน้าได้ก่อนน้า'
+      type: 'text', text: 'พี่หมอยังไม่รู้จักคุณเลยครับ รบกวนพิมพ์ทักทาย หรือส่งสติ๊กเกอร์ 1 ตัวใน "กลุ่มงานศูนย์" เพื่อให้พี่หมอจำหน้าได้ก่อนน้า'
     });
   }
 
@@ -87,15 +111,25 @@ async function handlePostback(event) {
     const action = params.get('action');
     const lineUserId = event.source.userId;
 
+    if (action === 'set_active_center') {
+      const result = await centerService.setActiveCenterForStaff(lineUserId, params.get('centerId'));
+      return safeReply(event.replyToken, { type: 'text', text: result.ok ? '✅ เลือกสาขาแล้ว กรุณาส่งรูปเอกสารอีกครั้งค่ะ' : `⚠️ ${result.reason}` });
+    }
+
     if (action === 'select_resident') {
         const cardId = params.get('cardId');
         const residentId = params.get('residentId');
+        const card = await PendingCards.findOne((c) => c.card_id === cardId);
+        const membership = card ? await CenterStaff.findOne((s) => s.center_id === card.center_id && s.line_user_id === lineUserId) : null;
+        const staffCenter = membership ? await Centers.findOne((c) => c.center_id === card.center_id && c.status === 'active') : null;
+        if (!card || !staffCenter) {
+          return safeReply(event.replyToken, { type: 'text', text: '⚠️ คุณไม่มีสิทธิ์เลือกผู้พักสำหรับรายการนี้' });
+        }
         const result = await cardService.selectResidentForCard(cardId, residentId);
         if (!result.ok) return safeReply(event.replyToken, { type: 'text', text: result.reason });
 
-        const card = await PendingCards.findOne((c) => c.card_id === cardId);
-        const center = await centerService.findCenterByStaffUser(lineUserId);
-        if (center) await notifyApproversAndSubmitter(event, card, center);
+        const updatedCard = await PendingCards.findOne((c) => c.card_id === cardId);
+        if (staffCenter) await notifyApproversAndSubmitter(event, updatedCard, staffCenter);
         return;
     }
 
@@ -149,7 +183,7 @@ async function handlePostback(event) {
     }
 }
 
-router.post('/webhook', express.json(), async (req, res) => {
+router.post('/webhook', webhookParser, async (req, res) => {
   res.status(200).end();
   const events = req.body.events || [];
 
@@ -159,10 +193,18 @@ router.post('/webhook', express.json(), async (req, res) => {
         const groupId = event.source.groupId || event.source.roomId;
         const leftMembers = event.left.members;
         for (const member of leftMembers) {
-            await centerService.removeStaffFromGroup(groupId, member.userId);
+            await require('../services/groupBindingService').handleMemberLeft(groupId, member.userId);
         }
-      } else if (event.type === 'join' || event.type === 'memberJoined') {
+      } else if (event.type === 'leave') {
+        const groupId = event.source.groupId || event.source.roomId;
+        await require('../services/groupBindingService').deactivateGroup(groupId);
+      } else if (event.type === 'join') {
         await handleJoinEvent(event);
+      } else if (event.type === 'memberJoined') {
+        const groupId = event.source.groupId || event.source.roomId;
+        for (const member of event.joined?.members || []) {
+          await centerService.recordStaffFromGroup(groupId, member.userId);
+        }
       } else if (event.type === 'message' && event.message.type === 'image') {
         let imageBuffer;
         if (event.message.mockBase64) {
@@ -177,7 +219,8 @@ router.post('/webhook', express.json(), async (req, res) => {
       } else if (event.type === 'postback') {
         await handlePostback(event);
       } else if (event.type === 'message' && event.source?.groupId) {
-        await captureStaffFromGroupEvent(event);
+        const handledBinding = await handleGroupBindingCode(event);
+        if (!handledBinding) await captureStaffFromGroupEvent(event);
       }
     } catch (err) {
       console.error('webhook handler error:', err);

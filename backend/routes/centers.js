@@ -5,6 +5,7 @@ const router = express.Router();
 const { requireAuth, requireCenterStaff } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
+const familyService = require('../services/familyService');
 const transportService = require('../services/transportService');
 const { CenterStaff, Centers } = require('../db');
 
@@ -61,13 +62,56 @@ router.post('/residents', requireCenterStaff(), asyncHandler(async (req, res) =>
   if (!fullName || !fullName.trim()) {
     return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุชื่อ-นามสกุลผู้พัก' });
   }
-  const { resident, inviteUrl, inviteExpiresAt } = await centerService.addResident({
+  const { resident, inviteUrl, inviteExpiresAt, accessRequestSent, accessRequestId } = await centerService.addResident({
     centerId: req.centerId, fullName, aliases, room, familyPhone,
   });
   res.status(201).json({
     residentId: resident.resident_id, status: resident.status, careProfileId: resident.care_profile_id,
-    inviteUrl, inviteExpiresAt,
+    inviteUrl, inviteExpiresAt, accessRequestSent, accessRequestId,
   });
+}));
+
+// รายละเอียดสุขภาพเปิดให้เฉพาะ owner/manager เท่านั้น พนักงานทั่วไปไม่มี endpoint สำหรับอ่านข้อมูลนี้
+router.get('/residents/:residentId/care-profile', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const { Residents, CareProfiles, audit } = require('../db');
+  const resident = await Residents.findOne(
+    (r) => r.resident_id === req.params.residentId && r.center_id === req.centerId && r.status === 'active'
+  );
+  if (!resident) return res.status(404).json({ error: 'not_found', message: 'ไม่พบผู้พักในสาขานี้' });
+  if (!resident.care_profile_id) return res.status(404).json({ error: 'not_linked', message: 'ผู้พักยังไม่ได้ผูก Care Profile' });
+  const profile = await CareProfiles.findOne(
+    (p) => p.care_profile_id === resident.care_profile_id && p.center_id === req.centerId && p.status === 'linked'
+  );
+  if (!profile) return res.status(403).json({ error: 'forbidden', message: 'ศูนย์ไม่มีสิทธิ์เข้าถึง Care Profile นี้' });
+  const medicationHistory = await familyService.getMedicationHistory(profile.care_profile_id);
+  await audit('care_profile.viewed_by_center', req.user.lineUserId, { centerId: req.centerId, residentId: resident.resident_id, careProfileId: profile.care_profile_id });
+  res.json({ profile, medicationHistory });
+}));
+
+router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const { Residents, CareProfiles } = require('../db');
+  const resident = await Residents.findOne(
+    (r) => r.resident_id === req.params.residentId && r.center_id === req.centerId && r.status === 'active'
+  );
+  if (!resident?.care_profile_id) return res.status(404).json({ error: 'not_linked', message: 'ผู้พักยังไม่ได้ผูก Care Profile' });
+  const profile = await CareProfiles.findOne(
+    (p) => p.care_profile_id === resident.care_profile_id && p.center_id === req.centerId && p.status === 'linked'
+  );
+  if (!profile) return res.status(403).json({ error: 'forbidden' });
+  let items = req.body.items;
+  let source = 'center_manual';
+  if ((!Array.isArray(items) || items.length === 0) && req.body.imageBase64) {
+    const aiProvider = require('../providers/aiProvider');
+    const parsed = await aiProvider.interpretDocument(Buffer.from(req.body.imageBase64, 'base64'));
+    items = parsed.medications || [];
+    source = 'center_image_ai';
+  }
+  const result = await familyService.recordMedicationSnapshot({
+    careProfileId: profile.care_profile_id, items, recordedBy: req.user.lineUserId,
+    source, sourceImageBase64: req.body.imageBase64 || null,
+  });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  res.status(201).json(result.snapshot);
 }));
 
 // PATCH /api/residents/:id — แก้ไขข้อมูลผู้พัก (เจ้าของ/ผู้จัดการ)

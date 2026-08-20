@@ -67,6 +67,27 @@
 ```bash
 curl https://phimor-backend.onrender.com/health
 # ต้องได้ {"status":"ok","service":"phimor-backend"}
+
+## Environment Variables ที่เพิ่มสำหรับการยืนยันตัวตนและผูกกลุ่ม
+
+ตั้งค่าใน Render ก่อน deploy เวอร์ชันนี้:
+
+```text
+LINE_CHANNEL_SECRET=<Channel secret จาก Messaging API>
+LINE_LOGIN_CHANNEL_ID=<Channel ID ของ LINE Login ที่ใช้กับ LIFF>
+LIFF_ID_REGISTER=<LIFF ID หน้าลงทะเบียนศูนย์>
+```
+
+ค่าที่ต้องมีอยู่แล้ว:
+
+```text
+LINE_CHANNEL_ACCESS_TOKEN
+LIFF_ID_CENTER_ADMIN
+LIFF_ID_FAMILY
+DATABASE_URL
+```
+
+ห้ามตั้ง `ALLOW_INSECURE_LINE_HEADER=true` หรือ `ALLOW_UNSIGNED_LINE_WEBHOOK=true` ใน Production เพราะสองค่านี้มีไว้สำหรับ local development/test เท่านั้น
 ```
 
 ---

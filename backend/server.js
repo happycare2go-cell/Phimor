@@ -9,6 +9,7 @@ const cardsRouter = require('./routes/cards');
 const familyRouter = require('./routes/family');
 const transportRouter = require('./routes/transport');
 const accessRouter = require('./routes/access');
+const groupsRouter = require('./routes/groups');
 const adminRouter = require('./routes/admin');
 const externalRouter = require('./routes/external');
 const reminderService = require('./services/reminderService');
@@ -34,8 +35,14 @@ app.use('/api', cardsRouter);
 app.use('/api', familyRouter);
 app.use('/api', transportRouter);
 app.use('/api', accessRouter);
+app.use('/api', groupsRouter);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend' }));
+app.get('/config/liff', (req, res) => res.json({
+  familyLiffId: process.env.LIFF_ID_FAMILY || null,
+  centerAdminLiffId: process.env.LIFF_ID_CENTER_ADMIN || null,
+  registerLiffId: process.env.LIFF_ID_REGISTER || null,
+}));
 
 app.use((err, req, res, next) => {
   console.error(err);

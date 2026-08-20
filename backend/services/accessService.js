@@ -21,7 +21,7 @@ async function findProfileByPhone(phone) {
   return CareProfiles.findOne((p) => p.care_profile_id === priorResidentLink.care_profile_id);
 }
 
-async function createAccessRequest({ centerId, careProfileId, requestedBy }) {
+async function createAccessRequest({ centerId, careProfileId, residentId, requestedBy }) {
   // ข้อ O3: หนึ่ง Care Profile ผูกกับศูนย์ได้ครั้งละหนึ่งศูนย์
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
   if (profile?.center_id) {
@@ -29,7 +29,7 @@ async function createAccessRequest({ centerId, careProfileId, requestedBy }) {
   }
 
   const request = await AccessRequests.insert({
-    request_id: id('AR'), center_id: centerId, care_profile_id: careProfileId,
+    request_id: id('AR'), center_id: centerId, care_profile_id: careProfileId, resident_id: residentId || null,
     status: 'pending', requested_by: requestedBy, requested_at: now(), responded_at: null,
   });
 
@@ -62,20 +62,33 @@ async function respondAccessRequest(requestId, approved, respondingLineId) {
       center_id: request.center_id, status: 'linked',
     });
     // ผูก Resident ที่รอเชื่อมกลับเข้าโปรไฟล์เดียวกัน
-    await Residents.update(
-      (r) => r.center_id === request.center_id && r.care_profile_id === request.care_profile_id,
-      {}
-    );
+    if (request.resident_id) {
+      await Residents.update(
+        (r) => r.resident_id === request.resident_id && r.center_id === request.center_id,
+        { care_profile_id: request.care_profile_id }
+      );
+    }
   }
   // ข้อ O2: ศูนย์เห็นแค่สถานะ "ยังไม่ได้รับอนุญาต" ไม่เห็นเหตุผลใดๆ — ไม่ส่งรายละเอียดเพิ่มให้ศูนย์
   return { ok: true, status: newStatus };
 }
 
-async function getRequestStatusForCenter(requestId) {
-  const r = await AccessRequests.findOne((x) => x.request_id === requestId);
+async function getRequestStatusForCenter(requestId, centerId = null) {
+  const r = await AccessRequests.findOne((x) => x.request_id === requestId && (!centerId || x.center_id === centerId));
   if (!r) return null;
   // คืนเฉพาะสถานะ ไม่มีช่องเหตุผลให้เห็นเลย (ตามหลักการ O2)
   return { requestId: r.request_id, status: r.status === 'declined' ? 'not_approved' : r.status };
 }
 
-module.exports = { findProfileByPhone, createAccessRequest, respondAccessRequest, getRequestStatusForCenter };
+async function listPendingRequestsForOwner(lineUserId) {
+  const profiles = await CareProfiles.findWhere((p) => p.owner_line_id === lineUserId);
+  const profileIds = new Set(profiles.map((p) => p.care_profile_id));
+  const requests = await AccessRequests.findWhere((r) => profileIds.has(r.care_profile_id) && r.status === 'pending');
+  return requests.map((request) => ({
+    requestId: request.request_id, careProfileId: request.care_profile_id,
+    patientName: profiles.find((p) => p.care_profile_id === request.care_profile_id)?.patient_name || '',
+    requestedAt: request.requested_at,
+  }));
+}
+
+module.exports = { findProfileByPhone, createAccessRequest, respondAccessRequest, getRequestStatusForCenter, listPendingRequestsForOwner };

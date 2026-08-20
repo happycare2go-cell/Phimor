@@ -9,21 +9,39 @@
 const { CenterStaff, Residents, CareProfiles } = require('../db');
 const { asyncHandler } = require('./asyncHandler');
 
-/** ดึงตัวตนผู้เรียก — จุดเดียวที่ต้องแก้เป็นของจริงตอน Deploy */
-function identify(req) {
-  const lineUserId = req.header('X-Line-User-Id');
-  if (!lineUserId) return null;
-  return { lineUserId };
+async function verifyLineIdToken(idToken) {
+  const clientId = process.env.LINE_LOGIN_CHANNEL_ID;
+  if (!idToken || !clientId) return null;
+  const body = new URLSearchParams({ id_token: idToken, client_id: clientId });
+  const response = await fetch('https://api.line.me/oauth2/v2.1/verify', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body,
+  });
+  if (!response.ok) return null;
+  const claims = await response.json();
+  return claims.sub ? { lineUserId: claims.sub, claims } : null;
 }
 
-function requireAuth(req, res, next) {
-  const user = identify(req);
+/** Production ต้องใช้ LINE ID Token; header ตรงอนุญาตเฉพาะ local/test ที่เปิด flag ชัดเจน */
+async function identify(req) {
+  const authorization = req.header('Authorization') || '';
+  const bearer = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : null;
+  const verified = await verifyLineIdToken(bearer);
+  if (verified) return verified;
+  if (process.env.ALLOW_INSECURE_LINE_HEADER === 'true' || process.env.NODE_ENV === 'test') {
+    const lineUserId = req.header('X-Line-User-Id');
+    if (lineUserId) return { lineUserId, insecureDevelopmentIdentity: true };
+  }
+  return null;
+}
+
+const requireAuth = asyncHandler(async (req, res, next) => {
+  const user = await identify(req);
   if (!user) {
     return res.status(401).json({ error: 'unauthorized', message: 'ไม่พบตัวตนผู้ใช้ กรุณาเข้าสู่ระบบผ่าน LINE ใหม่อีกครั้ง' });
   }
   req.user = user;
   next();
-}
+});
 
 /**
  * ต้องเป็นเจ้าของหรือผู้จัดการของศูนย์ที่ระบุใน req.params.centerId (หรือ req.body.centerId)
@@ -53,8 +71,7 @@ function requireCenterStaff(roles = ['owner', 'manager']) {
  * — พนักงานทั่วไประบุตัวตนผ่าน group_id ที่ผูกกับศูนย์ ไม่ใช่ผ่าน CenterStaff
  */
 async function resolveCenterByGroup(groupId) {
-  const { Centers } = require('../db');
-  return Centers.findOne((c) => c.group_id === groupId && c.status === 'active');
+  return require('../services/centerService').findCenterByGroup(groupId);
 }
 
 /**
@@ -90,4 +107,4 @@ async function centerCanAccessResident(centerId, residentId) {
   return resident.center_id === centerId && resident.status === 'active';
 }
 
-module.exports = { identify, requireAuth, requireCenterStaff, requireFamilyAccess, resolveCenterByGroup, centerCanAccessResident };
+module.exports = { identify, verifyLineIdToken, requireAuth, requireCenterStaff, requireFamilyAccess, resolveCenterByGroup, centerCanAccessResident };

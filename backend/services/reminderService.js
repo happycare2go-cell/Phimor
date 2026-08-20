@@ -9,7 +9,7 @@ function isSameDay(a, b) {
 }
 
 async function resolveFamilyTarget(careProfileId) {
-  const gb = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family');
+  const gb = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
   if (gb) return gb.line_group_id;
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
   return profile ? profile.owner_line_id : null;

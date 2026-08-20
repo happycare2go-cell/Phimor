@@ -26,7 +26,7 @@ router.post('/invite/:token/accept', asyncHandler(async (req, res) => {
   if (!hasConsent) {
     return res.status(412).json({ error: 'consent_required', message: 'กรุณายืนยันความยินยอมก่อนใช้งาน' }); // ข้อ H6
   }
-  const result = await familyService.acceptInvite(req.params.token, req.user.lineUserId);
+  const result = await familyService.acceptInvite(req.params.token, req.user.lineUserId, req.body || {});
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
   res.status(201).json(result.careProfile);
 }));
@@ -48,9 +48,12 @@ router.post('/consent', asyncHandler(async (req, res) => {
 router.post('/care-profile/independent', asyncHandler(async (req, res) => {
   const hasConsent = await familyService.hasValidConsent(req.user.lineUserId);
   if (!hasConsent) return res.status(412).json({ error: 'consent_required', message: 'กรุณายืนยันความยินยอมก่อนใช้งาน' });
-  const { patientName, familyPhone } = req.body;
+  const { patientName, familyPhone, gender, bloodType, heightCm, weightKg, chronicConditions,
+    drugAllergies, foodAllergies, mobilityLimitations, emergencyContactName, emergencyContactPhone } = req.body;
   if (!patientName) return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุชื่อ' });
-  const profile = await familyService.createIndependentProfile({ ownerLineId: req.user.lineUserId, patientName, familyPhone });
+  const profile = await familyService.createIndependentProfile({ ownerLineId: req.user.lineUserId, patientName, familyPhone,
+    gender, bloodType, heightCm, weightKg, chronicConditions, drugAllergies, foodAllergies,
+    mobilityLimitations, emergencyContactName, emergencyContactPhone });
   res.status(201).json(profile);
 }));
 
@@ -76,7 +79,9 @@ router.get('/init-dashboard', asyncHandler(async (req, res) => {
 // PATCH /api/care-profile/:id — แก้ไขข้อมูลสุขภาพ
 router.patch('/care-profile/:careProfileId', requireFamilyAccess(), asyncHandler(async (req, res) => {
   const { CareProfiles: CP } = require('../db');
-  const allowed = ['blood_type', 'height_cm', 'weight_kg', 'chronic_conditions'];
+  const allowed = ['gender', 'blood_type', 'height_cm', 'weight_kg', 'chronic_conditions',
+    'drug_allergies', 'food_allergies', 'mobility_limitations',
+    'emergency_contact_name', 'emergency_contact_phone', 'family_phone'];
   const patch = {};
   for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
   const updated = await CP.update((p) => p.care_profile_id === req.params.careProfileId, patch);
@@ -104,6 +109,29 @@ router.post('/medications', asyncHandler(async (req, res) => {
   if (!profile) return res.status(403).json({ error: 'forbidden' });
   const result = await familyService.addMedicationByFamily({ careProfileId, name, dose, createdBy: req.user.lineUserId });
   res.status(201).json(result.medication);
+}));
+
+// เก็บรายการยาเป็น snapshot เพื่อย้อนดูการเปลี่ยนแปลงแต่ละครั้งได้
+router.post('/care-profile/:careProfileId/medication-snapshots', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  let items = req.body.items;
+  let source = 'manual';
+  if ((!Array.isArray(items) || items.length === 0) && req.body.imageBase64) {
+    const aiProvider = require('../providers/aiProvider');
+    const parsed = await aiProvider.interpretDocument(Buffer.from(req.body.imageBase64, 'base64'));
+    items = parsed.medications || [];
+    source = 'image_ai';
+  }
+  const result = await familyService.recordMedicationSnapshot({
+    careProfileId: req.params.careProfileId, items, recordedBy: req.user.lineUserId,
+    source, sourceImageBase64: req.body.imageBase64 || null,
+  });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  res.status(201).json(result.snapshot);
+}));
+
+router.get('/care-profile/:careProfileId/medication-snapshots', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  const snapshots = await familyService.getMedicationHistory(req.params.careProfileId);
+  res.json({ snapshots });
 }));
 
 // POST /api/export/pdf — ส่งออกประวัติเป็นไฟล์ PDF จริง ตามช่วงวันที่ (ข้อ H4)
