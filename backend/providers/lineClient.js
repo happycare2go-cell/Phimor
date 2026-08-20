@@ -4,6 +4,9 @@ const line = require('@line/bot-sdk');
 const client = new line.messagingApi.MessagingApiClient({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'dummy'
 });
+const blobClient = new line.messagingApi.MessagingApiBlobClient({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'dummy'
+});
 
 // ฟังก์ชันตอบกลับข้อความทันที (ใช้ตอนลูกค้ายิงแชทมา)
 async function replyMessage(replyToken, messages) {
@@ -39,16 +42,15 @@ async function getProfile(userId) {
   }
 }
 
-// ------------------------------------------------------------------
-// ฟังก์ชันด้านล่างคือ Mock ของเดิม เก็บไว้ไม่ให้ส่วนอื่นของระบบ (เช่น Test) Error
-// ------------------------------------------------------------------
 function clearSentLog() {}
 function getSentLog() { return []; }
-async function createRichMenu(obj) { return { richMenuId: 'dummy' }; }
-async function uploadRichMenuImage(id, buf, type) { return {}; }
-async function setDefaultRichMenu(id) { return {}; }
-async function linkRichMenuToUser(uid, id) { return {}; }
-async function unlinkRichMenuFromUser(uid) { return {}; }
+async function createRichMenu(obj) { return client.createRichMenu(obj); }
+async function uploadRichMenuImage(id, buf, type = 'image/png') {
+  return blobClient.setRichMenuImage(id, new Blob([buf], { type }));
+}
+async function setDefaultRichMenu(id) { return client.setDefaultRichMenu(id); }
+async function linkRichMenuToUser(uid, id) { return client.linkRichMenuIdToUser(uid, id); }
+async function unlinkRichMenuFromUser(uid) { return client.unlinkRichMenuIdFromUser(uid); }
 
 module.exports = {
   replyMessage, pushMessage, getProfile,
