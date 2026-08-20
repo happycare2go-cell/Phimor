@@ -1,9 +1,8 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-
-async function interpretDocument(imageBuffer) {
+const interpretDocument = async (imageBuffer) => {
   try {
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
     const prompt = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
     โปรดอ่านภาพเอกสารนี้และสกัดข้อมูลออกมาเป็น JSON เท่านั้น โดยมีโครงสร้างดังนี้เป๊ะๆ (ห้ามมีข้อความอื่นนอกจาก JSON):
     {
@@ -22,37 +21,31 @@ async function interpretDocument(imageBuffer) {
       "doctorNote": "คำสั่งแพทย์อื่นๆ (ถ้าไม่มีให้ตอบ null)"
     }`;
 
-    const imageParts = [
-      {
-        inlineData: {
-          data: imageBuffer.toString("base64"),
-          mimeType: "image/jpeg"
-        }
-      }
-    ];
+    const base64Image = imageBuffer.toString("base64");
 
-    // ระบบสำรอง (Fallback): ลองเรียกใช้โมเดลตามลำดับ ถ้าตัวแรกพัง ให้เปลี่ยนไปใช้ตัวถัดไปอัตโนมัติ
-    const modelsToTry = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-pro-vision"];
-    let responseText = "";
-    let lastError = null;
+    const payload = {
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+        ]
+      }]
+    };
 
-    for (const modelName of modelsToTry) {
-        try {
-            const model = genAI.getGenerativeModel({ model: modelName });
-            const result = await model.generateContent([prompt, ...imageParts]);
-            const response = await result.response;
-            responseText = response.text();
-            console.log(`[Success] Used model: ${modelName}`);
-            break; // สำเร็จแล้วให้ออกจากลูปทันที
-        } catch (err) {
-            console.log(`[Fallback] Model ${modelName} failed, trying next...`);
-            lastError = err;
-        }
+    // ส่งข้อมูลตรงหา Google โดยไม่ต้องใช้ Package ใดๆ ทั้งสิ้น
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Google API Error: ${response.status} - ${errText}`);
     }
 
-    if (!responseText) {
-        throw lastError || new Error("All AI models failed");
-    }
+    const data = await response.json();
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -68,10 +61,10 @@ async function interpretDocument(imageBuffer) {
       nameGuess: null, nameConfidence: 0, appointment: null, medications: [], doctorNote: null
     };
   }
-}
+};
 
-async function interpretLabResult(imageBuffer) { return {}; }
-function queueMockResponse() {}
-function clearMockQueue() {}
+const interpretLabResult = async (imageBuffer) => { return {}; };
+const queueMockResponse = () => {};
+const clearMockQueue = () => {};
 
 module.exports = { interpretDocument, interpretLabResult, queueMockResponse, clearMockQueue };
