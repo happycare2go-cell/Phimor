@@ -67,14 +67,27 @@ async function linkAdminMenuToStaff(adminMenuId) {
   const staff = await CenterStaff.findWhere((row) =>
     ['owner', 'manager'].includes(row.role) && Boolean(row.line_user_id)
   );
-  const userIds = [...new Set(staff.map((row) => row.line_user_id))];
+  const userIds = [...new Set(staff.map((row) => String(row.line_user_id).trim()))];
+  let linkedCount = 0;
+  let skippedCount = 0;
   for (const userId of userIds) {
-    await callLineApi(
-      `https://api.line.me/v2/bot/user/${encodeURIComponent(userId)}/richmenu/${adminMenuId}`,
-      'POST',
-    );
+    if (!/^U[0-9a-f]{32}$/i.test(userId)) {
+      console.warn(`⚠️ ข้าม LINE userId ที่รูปแบบไม่ถูกต้อง: ${userId}`);
+      skippedCount += 1;
+      continue;
+    }
+    try {
+      await callLineApi(
+        `https://api.line.me/v2/bot/user/${encodeURIComponent(userId)}/richmenu/${adminMenuId}`,
+        'POST',
+      );
+      linkedCount += 1;
+    } catch (err) {
+      console.warn(`⚠️ ผูก Rich Menu ให้ ${userId} ไม่สำเร็จ: ${err.message}`);
+      skippedCount += 1;
+    }
   }
-  return userIds.length;
+  return { linkedCount, skippedCount };
 }
 
 async function run() {
@@ -111,12 +124,13 @@ async function run() {
     ],
   }, ADMIN_IMAGE);
   await replaceStoredMenu('center_admin', adminMenuId);
-  const linkedCount = await linkAdminMenuToStaff(adminMenuId);
+  const { linkedCount, skippedCount } = await linkAdminMenuToStaff(adminMenuId);
 
   console.log('✅ ติดตั้ง Rich Menu สำเร็จ');
   console.log(`- Family (default): ${familyMenuId}`);
   console.log(`- Center admin: ${adminMenuId}`);
   console.log(`- ผูกเมนูศูนย์ให้ owner/manager: ${linkedCount} คน`);
+  if (skippedCount > 0) console.log(`- ข้าม userId ที่ไม่ถูกต้อง/ผูกไม่สำเร็จ: ${skippedCount} คน`);
 }
 
 run().catch((err) => {
