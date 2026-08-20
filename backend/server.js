@@ -11,6 +11,7 @@ const transportRouter = require('./routes/transport');
 const accessRouter = require('./routes/access');
 const adminRouter = require('./routes/admin');
 const externalRouter = require('./routes/external');
+const centerApiRouter = require('./routes/centerApi'); // <-- เพิ่มเข้ามาใหม่
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
@@ -34,6 +35,7 @@ app.use('/api', cardsRouter);
 app.use('/api', familyRouter);
 app.use('/api', transportRouter);
 app.use('/api', accessRouter);
+app.use('/api', centerApiRouter); // <-- เพิ่มเข้ามาใหม่
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend' }));
 
