@@ -1,3 +1,5 @@
+const line = require('@line/bot-sdk');
+const blobClient = new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'dummy' });
 const express = require('express');
 const router = express.Router();
 
@@ -162,7 +164,15 @@ router.post('/webhook', express.json(), async (req, res) => {
       } else if (event.type === 'join' || event.type === 'memberJoined') {
         await handleJoinEvent(event);
       } else if (event.type === 'message' && event.message.type === 'image') {
-        const imageBuffer = Buffer.from(event.message.mockBase64 || '', 'base64');
+        let imageBuffer;
+        if (event.message.mockBase64) {
+            imageBuffer = Buffer.from(event.message.mockBase64, 'base64');
+        } else {
+            const stream = await blobClient.getMessageContent(event.message.id);
+            const chunks = [];
+            for await (const chunk of stream) { chunks.push(chunk); }
+            imageBuffer = Buffer.concat(chunks);
+        }
         await handleImageMessage(event, imageBuffer);
       } else if (event.type === 'postback') {
         await handlePostback(event);
