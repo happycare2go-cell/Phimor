@@ -1,12 +1,10 @@
-const { Anthropic } = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 async function interpretDocument(imageBuffer) {
   try {
-    const base64Image = imageBuffer.toString('base64');
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     
     const prompt = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
     โปรดอ่านภาพเอกสารนี้และสกัดข้อมูลออกมาเป็น JSON เท่านั้น โดยมีโครงสร้างดังนี้เป๊ะๆ (ห้ามมีข้อความอื่นนอกจาก JSON):
@@ -26,24 +24,19 @@ async function interpretDocument(imageBuffer) {
       "doctorNote": "คำสั่งแพทย์อื่นๆ (ถ้าไม่มีให้ตอบ null)"
     }`;
 
-    const response = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20240620",
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: "image/jpeg", data: base64Image }
-            },
-            { type: "text", text: prompt }
-          ]
+    const imageParts = [
+      {
+        inlineData: {
+          data: imageBuffer.toString("base64"),
+          mimeType: "image/jpeg"
         }
-      ]
-    });
+      }
+    ];
 
-    const textResponse = response.content[0].text;
+    const result = await model.generateContent([prompt, ...imageParts]);
+    const response = await result.response;
+    const textResponse = response.text();
+    
     const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
         return JSON.parse(jsonMatch[0]);
