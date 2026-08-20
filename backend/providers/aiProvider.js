@@ -4,8 +4,6 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 async function interpretDocument(imageBuffer) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    
     const prompt = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
     โปรดอ่านภาพเอกสารนี้และสกัดข้อมูลออกมาเป็น JSON เท่านั้น โดยมีโครงสร้างดังนี้เป๊ะๆ (ห้ามมีข้อความอื่นนอกจาก JSON):
     {
@@ -33,18 +31,37 @@ async function interpretDocument(imageBuffer) {
       }
     ];
 
-    const result = await model.generateContent([prompt, ...imageParts]);
-    const response = await result.response;
-    const textResponse = response.text();
+    // ระบบสำรอง (Fallback): ลองเรียกใช้โมเดลตามลำดับ ถ้าตัวแรกพัง ให้เปลี่ยนไปใช้ตัวถัดไปอัตโนมัติ
+    const modelsToTry = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-pro-vision"];
+    let responseText = "";
+    let lastError = null;
+
+    for (const modelName of modelsToTry) {
+        try {
+            const model = genAI.getGenerativeModel({ model: modelName });
+            const result = await model.generateContent([prompt, ...imageParts]);
+            const response = await result.response;
+            responseText = response.text();
+            console.log(`[Success] Used model: ${modelName}`);
+            break; // สำเร็จแล้วให้ออกจากลูปทันที
+        } catch (err) {
+            console.log(`[Fallback] Model ${modelName} failed, trying next...`);
+            lastError = err;
+        }
+    }
+
+    if (!responseText) {
+        throw lastError || new Error("All AI models failed");
+    }
     
-    const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
         return JSON.parse(jsonMatch[0]);
     } else {
         throw new Error("Invalid format from AI");
     }
   } catch (error) {
-    console.error("AI Error:", error);
+    console.error("AI Error:", error.message || error);
     return {
       documentType: 'unrelated',
       unrelatedNote: 'ระบบ AI ไม่สามารถอ่านเอกสารนี้ได้ หรือรูปภาพไม่ชัดเจน กรุณาลองใหม่อีกครั้งค่ะ',
