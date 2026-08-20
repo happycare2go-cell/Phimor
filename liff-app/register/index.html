@@ -18,6 +18,8 @@
         <h2 style="color: #1C2B64;">ลงทะเบียนศูนย์ใหม่</h2>
         <p style="color: #5F5E5A; margin-bottom: 20px;">ระบบจะดึง LINE ID ของคุณเพื่อผูกเป็นเจ้าของศูนย์โดยอัตโนมัติ</p>
         <input type="text" id="centerName" placeholder="ระบุชื่อศูนย์ดูแลของคุณ">
+        <input type="text" id="address" placeholder="ที่อยู่/จุดรับของสาขา">
+        <input type="tel" id="contactPhone" placeholder="เบอร์ติดต่อเจ้าของศูนย์">
         <button onclick="registerCenter()">ยืนยันเปิดศูนย์</button>
         <p id="status" style="color: #0F6E56; margin-top: 15px; font-weight: bold;"></p>
     </div>
@@ -36,7 +38,9 @@
 
         async function registerCenter() {
             const centerName = document.getElementById('centerName').value;
-            if(!centerName) return alert('กรุณากรอกชื่อศูนย์');
+            const address = document.getElementById('address').value.trim();
+            const contactPhone = document.getElementById('contactPhone').value.trim();
+            if(!centerName || !address || !contactPhone) return alert('กรุณากรอกชื่อ ที่อยู่ และเบอร์ติดต่อให้ครบ');
 
             document.getElementById('status').innerText = 'กำลังสร้างศูนย์...';
             document.getElementById('status').style.color = '#DEB14E';
@@ -48,7 +52,7 @@
                 const response = await fetch(`${BACKEND_URL}/api/external/register-center`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ centerName, idToken, lineUserId: profile.userId })
+                    body: JSON.stringify({ centerName, address, contactPhone, idToken, lineUserId: profile.userId })
                 });
 
                 const data = await response.json();

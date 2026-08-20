@@ -146,6 +146,8 @@ const AuditLog = makeTable('auditLog');
 const Consents = makeTable('consents');
 const RichMenus = makeTable('richMenus');
 const Vitals = makeTable('vitals');
+const CareProfileMembers = makeTable('careProfileMembers');
+const CareProfileShareInvites = makeTable('careProfileShareInvites');
 
 async function audit(action, actorLineId, meta = {}) {
   return AuditLog.insert({
@@ -167,6 +169,6 @@ module.exports = {
   id, now,
   Centers, CenterStaff, StaffContexts, Residents, CareProfiles, PendingCards, Invites,
   Appointments, Medications, GroupBindings, GroupBindingTokens, MedicationSnapshots, TransportPlans, CenterRateCards,
-  Bills, AccessRequests, AuditLog, Consents, RichMenus, Vitals,
+  Bills, AccessRequests, AuditLog, Consents, RichMenus, Vitals, CareProfileMembers, CareProfileShareInvites,
   audit, resetAll,
 };

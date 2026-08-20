@@ -1,6 +1,6 @@
 // services/familyService.js — FR-H (ฝั่งครอบครัว) และ FR-N (Care Profile อิสระ)
 
-const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, audit, id, now } = require('../db');
+const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, audit, id, now } = require('../db');
 const { isPast } = require('./cardService');
 const pdfService = require('./pdfService');
 
@@ -17,6 +17,40 @@ async function recordConsent(lineUserId, accepted) {
 async function hasValidConsent(lineUserId) {
   const c = await Consents.findOne((x) => x.line_user_id === lineUserId && x.accepted && x.version === CONSENT_VERSION);
   return !!c;
+}
+
+async function createCaregiverInvite({ careProfileId, requesterLineId }) {
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+  if (!profile || profile.owner_line_id !== requesterLineId) return { ok:false, reason:'เฉพาะเจ้าของ Care Profile หลักเท่านั้นที่เชิญญาติได้' };
+  const invite = await CareProfileShareInvites.insert({ invite_id:id('CPI'), token:id('SHARE'), care_profile_id:careProfileId,
+    created_by:requesterLineId, created_at:now(), expires_at:new Date(Date.now()+7*86400000).toISOString(), used_at:null, status:'active' });
+  const liffId = process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID';
+  return { ok:true, invite, url:`https://liff.line.me/${liffId}?shareToken=${encodeURIComponent(invite.token)}` };
+}
+
+async function getCaregiverInvite(token) {
+  const invite = await CareProfileShareInvites.findOne((i) => i.token === token && i.status === 'active');
+  if (!invite || invite.used_at || new Date(invite.expires_at).getTime() < Date.now()) return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้แล้ว' };
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === invite.care_profile_id);
+  return profile ? { ok:true, invite, patientName:profile.patient_name } : { ok:false, reason:'ไม่พบ Care Profile' };
+}
+
+async function acceptCaregiverInvite(token, lineUserId) {
+  const found = await getCaregiverInvite(token); if (!found.ok) return found;
+  if (found.invite.created_by === lineUserId) return { ok:false, reason:'เจ้าของ Care Profile ไม่จำเป็นต้องรับคำเชิญของตนเอง' };
+  let member = await CareProfileMembers.findOne((m) => m.care_profile_id === found.invite.care_profile_id && m.line_user_id === lineUserId);
+  if (member) member = await CareProfileMembers.update((m) => m.member_id === member.member_id, { status:'active', role:'caregiver', rejoined_at:now() });
+  else member = await CareProfileMembers.insert({ member_id:id('CPM'), care_profile_id:found.invite.care_profile_id, line_user_id:lineUserId, role:'caregiver', status:'active', joined_at:now(), invited_by:found.invite.created_by });
+  await CareProfileShareInvites.update((i) => i.invite_id === found.invite.invite_id, { used_at:now(), used_by:lineUserId, status:'used' });
+  await audit('care_profile.caregiver_joined', lineUserId, { careProfileId:found.invite.care_profile_id, invitedBy:found.invite.created_by });
+  return { ok:true, member };
+}
+
+async function canAccessProfile(careProfileId, lineUserId) {
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+  if (!profile) return false;
+  if (profile.owner_line_id === lineUserId) return true;
+  return !!await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === lineUserId && m.status === 'active');
 }
 
 // ── FR-H1: ผูกบัญชีผ่านลิงก์เชิญ → สร้าง Care Profile โดยครอบครัวเป็นเจ้าของ ──
@@ -126,8 +160,11 @@ async function addAppointmentByFamily({ careProfileId, hospital, datetime, note,
   if (isPast(datetime)) return { ok: false, reason: 'ไม่สามารถบันทึกนัดที่เป็นเวลาในอดีตได้' }; // ข้อ G2
   const appt = await Appointments.insert({
     appointment_id: id('APT'), care_profile_id: careProfileId, hospital, datetime, note: note || '',
-    source: 'family_manual', source_center_id: null, created_by: createdBy, created_at: now(), // ข้อ J5: ระบุชัดว่าไม่มีศูนย์เกี่ยวข้อง
+    source: 'family_manual', source_center_id: null, created_by: createdBy, created_at: now(), status:'confirmed', // ข้อ J5
   });
+  const { Residents } = require('../db');
+  const resident = await Residents.findOne((r) => r.care_profile_id === careProfileId && r.status === 'active');
+  await require('./transportService').launchTransportChoice({ appointment:appt, careProfileId, centerId:resident?.center_id || null });
   return { ok: true, appointment: appt };
 }
 
@@ -189,5 +226,5 @@ module.exports = {
   recordConsent, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
   exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
-  recordMedicationSnapshot, getMedicationHistory,
+  recordMedicationSnapshot, getMedicationHistory, createCaregiverInvite, getCaregiverInvite, acceptCaregiverInvite, canAccessProfile,
 };

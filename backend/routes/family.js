@@ -5,7 +5,7 @@ const router = express.Router();
 const { requireAuth, requireFamilyAccess } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const familyService = require('../services/familyService');
-const { CareProfiles } = require('../db');
+const { CareProfiles, CareProfileMembers } = require('../db');
 
 router.use(requireAuth);
 
@@ -57,6 +57,26 @@ router.post('/care-profile/independent', asyncHandler(async (req, res) => {
   res.status(201).json(profile);
 }));
 
+router.post('/care-profile/:careProfileId/caregiver-invites', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (req.familyRole !== 'owner') return res.status(403).json({ error:'forbidden', message:'เฉพาะเจ้าของ Care Profile หลักเท่านั้นที่เชิญญาติได้' });
+  const result = await familyService.createCaregiverInvite({ careProfileId:req.params.careProfileId, requesterLineId:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.status(201).json({ url:result.url, expiresAt:result.invite.expires_at });
+}));
+
+router.get('/caregiver-invites/:token', asyncHandler(async (req, res) => {
+  const result = await familyService.getCaregiverInvite(req.params.token);
+  if (!result.ok) return res.status(410).json({ error:'gone', message:result.reason });
+  res.json({ patientName:result.patientName, expiresAt:result.invite.expires_at });
+}));
+
+router.post('/caregiver-invites/:token/accept', asyncHandler(async (req, res) => {
+  if (!await familyService.hasValidConsent(req.user.lineUserId)) return res.status(412).json({ error:'consent_required', message:'กรุณายืนยันความยินยอมก่อนใช้งาน' });
+  const result = await familyService.acceptCaregiverInvite(req.params.token, req.user.lineUserId);
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.status(201).json(result.member);
+}));
+
 // POST /api/care-profile/:id/bind-group — ผูกกลุ่มไลน์ครอบครัวด้วยตนเอง (ข้อ N1)
 router.post('/care-profile/:careProfileId/bind-group', requireFamilyAccess(), asyncHandler(async (req, res) => {
   const { groupId } = req.body;
@@ -67,9 +87,12 @@ router.post('/care-profile/:careProfileId/bind-group', requireFamilyAccess(), as
 
 // GET /api/init-dashboard — ข้อมูลหน้าหลักทั้งหมดในการเรียกครั้งเดียว
 router.get('/init-dashboard', asyncHandler(async (req, res) => {
-  const profiles = await CareProfiles.findWhere((p) => p.owner_line_id === req.user.lineUserId);
+  const memberships = await CareProfileMembers.findWhere((m) => m.line_user_id === req.user.lineUserId && m.status === 'active');
+  const memberIds = new Set(memberships.map((m) => m.care_profile_id));
+  const profiles = await CareProfiles.findWhere((p) => p.owner_line_id === req.user.lineUserId || memberIds.has(p.care_profile_id));
   const data = await Promise.all(profiles.map(async (p) => ({
     profile: p,
+    familyRole: p.owner_line_id === req.user.lineUserId ? 'owner' : 'caregiver',
     upcomingAppointments: await familyService.getUpcomingAppointments(p.care_profile_id),
     canUseAi: familyService.canUseAiFeatures(p),
   })));
@@ -95,8 +118,7 @@ router.get('/appointments', requireFamilyAccess(), asyncHandler(async (req, res)
 }));
 router.post('/appointments', asyncHandler(async (req, res) => {
   const { careProfileId, hospital, datetime, note } = req.body;
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId && p.owner_line_id === req.user.lineUserId);
-  if (!profile) return res.status(403).json({ error: 'forbidden' });
+  if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) return res.status(403).json({ error: 'forbidden' });
   const result = await familyService.addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy: req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason }); // ข้อ G2
   res.status(201).json(result.appointment);
@@ -105,8 +127,7 @@ router.post('/appointments', asyncHandler(async (req, res) => {
 // POST /api/medications
 router.post('/medications', asyncHandler(async (req, res) => {
   const { careProfileId, name, dose } = req.body;
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId && p.owner_line_id === req.user.lineUserId);
-  if (!profile) return res.status(403).json({ error: 'forbidden' });
+  if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) return res.status(403).json({ error: 'forbidden' });
   const result = await familyService.addMedicationByFamily({ careProfileId, name, dose, createdBy: req.user.lineUserId });
   res.status(201).json(result.medication);
 }));
@@ -137,8 +158,7 @@ router.get('/care-profile/:careProfileId/medication-snapshots', requireFamilyAcc
 // POST /api/export/pdf — ส่งออกประวัติเป็นไฟล์ PDF จริง ตามช่วงวันที่ (ข้อ H4)
 router.post('/export/pdf', asyncHandler(async (req, res) => {
   const { careProfileId, fromDate, toDate } = req.body;
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId && p.owner_line_id === req.user.lineUserId);
-  if (!profile) return res.status(403).json({ error: 'forbidden' });
+  if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) return res.status(403).json({ error: 'forbidden' });
 
   const result = await familyService.exportHistoryToPdf(careProfileId, { fromDate, toDate });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });

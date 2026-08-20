@@ -9,6 +9,14 @@ const { TransportPlans, CareProfiles } = require('../db');
 
 router.use(requireAuth);
 
+router.get('/transport/family/pending', asyncHandler(async (req, res) => {
+  const { CareProfileMembers } = require('../db');
+  const owned = await CareProfiles.findWhere((p) => p.owner_line_id === req.user.lineUserId);
+  const memberships = await CareProfileMembers.findWhere((m) => m.line_user_id === req.user.lineUserId && m.status === 'active');
+  const ids = [...new Set([...owned.map((p) => p.care_profile_id), ...memberships.map((m) => m.care_profile_id)])];
+  res.json({ pending:await transportService.getPendingFamilyPlans(ids) });
+}));
+
 // GET /api/transport/:id — ดูสถานะและประวัติการตัดสินใจ
 router.get('/transport/:planId', asyncHandler(async (req, res) => {
   const plan = await TransportPlans.findOne((p) => p.plan_id === req.params.planId);
@@ -20,8 +28,7 @@ router.get('/transport/:planId', asyncHandler(async (req, res) => {
 router.post('/transport/:planId/family-choice', asyncHandler(async (req, res) => {
   const plan = await TransportPlans.findOne((p) => p.plan_id === req.params.planId);
   if (!plan) return res.status(404).json({ error: 'not_found' });
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === plan.care_profile_id);
-  if (!profile || profile.owner_line_id !== req.user.lineUserId) {
+  if (!await require('../services/familyService').canAccessProfile(plan.care_profile_id, req.user.lineUserId)) {
     return res.status(403).json({ error: 'forbidden', message: 'เฉพาะครอบครัวเจ้าของ Care Profile เท่านั้น' });
   }
   const { choice } = req.body;

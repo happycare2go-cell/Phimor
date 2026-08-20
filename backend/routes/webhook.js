@@ -27,7 +27,7 @@ async function handleJoinEvent(event) {
   // join event ไม่รับประกัน userId ของผู้เชิญ จึงห้ามเดาว่าเป็นกลุ่มพนักงานหรือครอบครัว
   await lineClient.pushMessage(groupId, [{
     type: 'text',
-    text: 'พี่หมอเข้ากลุ่มแล้วค่ะ กรุณาให้ผู้ที่สร้างรหัสผูกกลุ่มส่งรหัส STAFF-xxxxxx หรือ FAMILY-xxxxxx ในกลุ่มนี้ภายใน 15 นาที',
+    text: 'พี่หมอเข้ากลุ่มแล้วค่ะ กรุณาส่งรหัส STAFF-xxxxxx หรือ FAMILY-xxxxxx ที่สร้างไว้ หรือรหัสตั้งค่ากลุ่ม Care2Go ตามที่ผู้ดูแลระบบกำหนด',
   }]);
 }
 
@@ -41,7 +41,13 @@ async function captureStaffFromGroupEvent(event) {
 
 async function handleGroupBindingCode(event) {
   if (event.message?.type !== 'text') return false;
-  const match = String(event.message.text || '').toUpperCase().match(/\b(STAFF|FAMILY)-[A-Z0-9]{6}\b/);
+  const raw = String(event.message.text || '').trim();
+  if (process.env.CARE2GO_GROUP_BIND_CODE && raw === process.env.CARE2GO_GROUP_BIND_CODE) {
+    await transportService.bindCare2goOperationsGroup(event.source?.groupId, event.source?.userId);
+    await safeReply(event.replyToken,{type:'text',text:'✅ ผูกกลุ่มนี้เป็นกลุ่มปฏิบัติการ Care2Go แล้ว'});
+    return true;
+  }
+  const match = raw.toUpperCase().match(/\b(STAFF|FAMILY)-[A-Z0-9]{6}\b/);
   if (!match) return false;
   const groupBindingService = require('../services/groupBindingService');
   const result = await groupBindingService.consumeCodeFromGroup({
@@ -156,16 +162,17 @@ async function handlePostback(event) {
         return safeReply(event.replyToken, { type: 'text', text: `แก้ไขข้อมูลก่อนส่งได้ที่นี่ค่ะ\n${editUrl}` });
     }
 
-    if (action === 'transport_self') {
-        const planId = params.get('planId');
-        const result = await transportService.familyChooseSelf(planId, lineUserId);
-        return safeReply(event.replyToken, { type: 'text', text: result.ok ? 'บันทึกแล้วค่ะ ขับรถปลอดภัยนะคะ' : result.reason });
+    if (['transport_self','transport_request_center','transport_care2go'].includes(action)) {
+        const url = `https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?view=transport`;
+        return safeReply(event.replyToken, { type:'text', text:`เพื่อป้องกันการกดผิด กรุณาตรวจสอบและเลือกวิธีเดินทางใน Family LIFF ค่ะ\n${url}` });
     }
 
-    if (action === 'transport_request_center') {
-        const planId = params.get('planId');
-        const result = await transportService.familyRequestCenter(planId, lineUserId);
-        return safeReply(event.replyToken, { type: 'text', text: result.ok ? 'ส่งเรื่องให้ศูนย์แล้ว รอศูนย์ยืนยันวิธีจัดการนะคะ' : result.reason });
+    if (action === 'care2go_ack' || action === 'care2go_confirm') {
+        const groupId=event.source?.groupId;
+        const binding=groupId && await require('../db').GroupBindings.findOne((g)=>g.kind==='care2go_ops'&&g.line_group_id===groupId&&g.status!=='inactive');
+        if(!binding) return safeReply(event.replyToken,{type:'text',text:'⚠️ ปุ่มนี้ใช้ได้เฉพาะในกลุ่มปฏิบัติการ Care2Go'});
+        const result=await transportService.care2goAcknowledge(params.get('planId'),lineUserId,action==='care2go_confirm');
+        return safeReply(event.replyToken,{type:'text',text:result.ok?(action==='care2go_confirm'?'✅ ยืนยันจัดบริการและแจ้งผู้ร้องขอแล้ว':'✅ รับเรื่องแล้ว'):`⚠️ ${result.reason}`});
     }
 
     if (action === 'center_own' || action === 'center_care2go') {

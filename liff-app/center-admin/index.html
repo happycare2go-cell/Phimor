@@ -80,6 +80,9 @@
 
 <!-- ═══ S2: รายชื่อผู้พัก ═══ -->
 <div class="view active" id="view-residents">
+  <div class="card" id="directCare2goButton" style="display:none">
+    <button class="btn btn-primary">เรียก Care2Go: รถรับส่ง / คนเฝ้าไข้โรงพยาบาล</button>
+  </div>
   <div class="card">
     <h3>➕ เพิ่มผู้พักใหม่</h3>
     <label>ชื่อ-นามสกุล (ตามที่ปรากฏบนเอกสารโรงพยาบาล)</label>
@@ -213,6 +216,14 @@
 
 <!-- ═══ FR-A4: ทีมงาน ═══ -->
 <div class="view" id="view-staff">
+  <div class="card">
+    <h3>📍 ข้อมูลสาขาสำหรับประสาน Care2Go</h3>
+    <label>ที่อยู่/จุดรับของสาขา</label>
+    <textarea id="centerAddress" rows="3" placeholder="กรอกที่อยู่และจุดสังเกต"></textarea>
+    <label>เบอร์ติดต่อเจ้าของศูนย์</label>
+    <input id="centerContactPhone" type="tel" placeholder="เช่น 0812345678">
+    <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveCenterSettings()">บันทึกข้อมูลสาขา</button></div>
+  </div>
   <div class="card">
     <h3>➕ แต่งตั้งผู้จัดการ</h3>
     <label>เลือกจากพนักงานที่ระบบรู้จักในกลุ่ม</label>
@@ -430,6 +441,9 @@ async function saveRateCard() {
 
 // ── FR-A4: ทีมงาน ──
 async function loadStaff() {
+  const center = CENTERS.find(c => c.center_id === CENTER_ID) || {};
+  document.getElementById('centerAddress').value = center.address || '';
+  document.getElementById('centerContactPhone').value = center.contact_phone || '';
   const data = await api('/api/center/staff?centerId=' + CENTER_ID);
   const labels = { owner:'เจ้าของศูนย์', manager:'ผู้จัดการ', staff:'พนักงาน' };
   document.getElementById('staffList').innerHTML = data.staff.map(s => `
@@ -440,6 +454,15 @@ async function loadStaff() {
   document.getElementById('newManagerId').innerHTML = '<option value="">เลือกพนักงาน</option>' + data.staff
     .filter(s => s.role === 'staff')
     .map(s => `<option value="${esc(s.line_user_id)}">${esc(s.display_name || s.line_user_id)}</option>`).join('');
+}
+async function saveCenterSettings() {
+  const updated = await api('/api/center/settings?centerId=' + CENTER_ID, { method:'PATCH', body:JSON.stringify({
+    address:document.getElementById('centerAddress').value,
+    contactPhone:document.getElementById('centerContactPhone').value,
+  }) });
+  const index = CENTERS.findIndex(c => c.center_id === CENTER_ID);
+  if (index >= 0) CENTERS[index] = { ...CENTERS[index], ...updated };
+  toast('บันทึกข้อมูลสาขาแล้ว');
 }
 async function appointManager() {
   const targetLineId = document.getElementById('newManagerId').value.trim();

@@ -86,6 +86,35 @@ test('เกณฑ์ยอมรับข้อ 10, L6: ศูนย์เล�
   assert.ok(familyMsg.messages[0].text.includes('ออกใบเสร็จโดย Care2Go'));
 });
 
+test('Care2Go: ผูกกลุ่มปฏิบัติการแล้วคำขอจากศูนย์ส่งรายละเอียดต้นทาง ปลายทาง วันเวลา และเบอร์ติดต่อ', async () => {
+  const center = await centerService.createCenter({ name:'สาขาสุขุมวิท', ownerLineId:'U_OWNER', address:'สุขุมวิท 50 กรุงเทพฯ', contactPhone:'0812345678' });
+  const profile = await db.CareProfiles.insert({ care_profile_id:'CP-1', owner_line_id:'U_FAMILY', patient_name:'สมศรี ใจดี', center_id:center.center_id, status:'linked' });
+  await db.Residents.insert({ resident_id:'R-1', center_id:center.center_id, care_profile_id:profile.care_profile_id, full_name:'สมศรี ใจดี', status:'active' });
+  await db.Appointments.insert({ appointment_id:'A1', care_profile_id:profile.care_profile_id, hospital:'โรงพยาบาลกลาง', datetime:'2026-09-01T09:00:00+07:00' });
+  await transportService.bindCare2goOperationsGroup('G_CARE2GO', 'U_OPS');
+  const plan = await transportService.createTransportPlan({ appointmentId:'A1', careProfileId:profile.care_profile_id, centerId:center.center_id });
+  await transportService.familyRequestCenter(plan.plan_id, 'U_FAMILY');
+  const result = await transportService.centerChoose(plan.plan_id, 'care2go', 'U_OWNER', { needs:['vehicle'] });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.operationsNotified, true);
+  const sent = lineClient.getSentLog().find((s) => s.to === 'G_CARE2GO');
+  assert.ok(sent);
+  const serialized = JSON.stringify(sent.messages[0]);
+  for (const expected of ['สาขาสุขุมวิท','สุขุมวิท 50','โรงพยาบาลกลาง','0812345678','2026-09-01']) assert.ok(serialized.includes(expected));
+});
+
+test('Care2Go: ญาติเลือกโดยตรง และทีม Care2Go กดรับเรื่อง/ยืนยันได้', async () => {
+  const { center, profile } = await setupLinkedProfile();
+  await db.Appointments.insert({ appointment_id:'A1', care_profile_id:profile.care_profile_id, hospital:'รพ.ทดสอบ', datetime:'2026-09-01T09:00:00+07:00' });
+  await transportService.bindCare2goOperationsGroup('G_CARE2GO', 'U_OPS');
+  const plan = await transportService.createTransportPlan({ appointmentId:'A1', careProfileId:profile.care_profile_id, centerId:center.center_id });
+  const requested = await transportService.familyRequestCare2go(plan.plan_id, 'U_FAMILY');
+  assert.strictEqual(requested.ok, true);
+  assert.strictEqual(requested.operationsNotified, true);
+  assert.strictEqual((await transportService.care2goAcknowledge(plan.plan_id, 'U_OPS')).status, 'care2go_acknowledged');
+  assert.strictEqual((await transportService.care2goAcknowledge(plan.plan_id, 'U_OPS', true)).status, 'care2go_confirmed');
+});
+
 test('เกณฑ์ยอมรับข้อ 11, M2: ปิดบริการค่ารถ → ศูนย์เลือก "จัดการเอง" สำหรับรถไม่ได้', async () => {
   const { center, profile } = await setupLinkedProfile();
   await transportService.updateRateCard(center.center_id, { escort_enabled: true, escort_price: 800, vehicle_enabled: false, vehicle_price: 0 }, 'U_OWNER');

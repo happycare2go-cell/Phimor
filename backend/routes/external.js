@@ -6,14 +6,14 @@ const { Vitals, Residents, Centers, id, now } = require('../db');
 const centerService = require('../services/centerService');
 
 router.post('/register-center', asyncHandler(async (req, res) => {
-  const { centerName, idToken } = req.body;
+  const { centerName, address, contactPhone, idToken } = req.body;
   const { verifyLineIdToken } = require('../middleware/auth');
   const identity = await verifyLineIdToken(idToken);
   if (!centerName || !identity) return res.status(401).json({ error: 'ไม่สามารถยืนยันบัญชี LINE ได้' });
   const lineUserId = identity.lineUserId;
   const duplicate = await Centers.findOne((c) => c.owner_line_id === lineUserId && c.name.trim() === centerName.trim() && c.status === 'active');
   if (duplicate) return res.status(409).json({ error: 'ศูนย์ชื่อนี้ถูกลงทะเบียนกับบัญชีของคุณแล้ว', center: duplicate });
-  const newCenter = await centerService.createCenter({ name: centerName, ownerLineId: lineUserId });
+  const newCenter = await centerService.createCenter({ name: centerName, ownerLineId: lineUserId, address, contactPhone });
   res.status(201).json({ success: true, message: 'สร้างศูนย์สำเร็จ', center: newCenter });
 }));
 

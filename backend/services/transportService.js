@@ -35,6 +35,69 @@ async function createTransportPlan({ appointmentId, careProfileId, centerId }) {
   });
 }
 
+async function launchTransportChoice({ appointment, careProfileId, centerId, notifyFamily = true }) {
+  if (!appointment?.appointment_id) return null;
+  const existing = await TransportPlans.findOne((p) => p.appointment_id === appointment.appointment_id);
+  const plan = existing || await createTransportPlan({ appointmentId: appointment.appointment_id, careProfileId, centerId });
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+  const target = await resolveFamilyTarget(careProfileId, profile);
+  if (target && notifyFamily) {
+    const liffId = process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID';
+    await lineClient.pushMessage(target, [{ type:'text', text:`📅 มีนัดใหม่ที่รอเลือกวิธีเดินทาง\n${appointment.hospital} — ${appointment.datetime}\n\nกรุณาเปิด Family LIFF เพื่อตรวจสอบและยืนยัน\nhttps://liff.line.me/${liffId}?view=transport` }]);
+  }
+  return plan;
+}
+
+async function bindCare2goOperationsGroup(groupId, actorLineId) {
+  const old = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
+  if (old && old.line_group_id !== groupId) await GroupBindings.update((g) => g.binding_id === old.binding_id, { status:'inactive', unbound_at:now() });
+  let binding = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.line_group_id === groupId && g.status !== 'inactive');
+  if (!binding) binding = await GroupBindings.insert({ binding_id:id('GB'), kind:'care2go_ops', line_group_id:groupId, status:'active', bound_by_line_user_id:actorLineId, bound_at:now() });
+  await audit('care2go.group_bound', actorLineId, { groupId });
+  return binding;
+}
+
+async function notifyCare2goOperations(planId, requestedByType) {
+  const { Appointments, Centers, Residents } = require('../db');
+  const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
+  const appointment = plan && await Appointments.findOne((a) => a.appointment_id === plan.appointment_id);
+  if (!plan || !appointment) return { ok:false, reason:'ไม่พบข้อมูลคำขอ' };
+  const center = plan.center_id ? await Centers.findOne((c) => c.center_id === plan.center_id) : null;
+  const resident = plan.center_id ? await Residents.findOne((r) => r.center_id === plan.center_id && r.care_profile_id === plan.care_profile_id && r.status === 'active') : null;
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === plan.care_profile_id);
+  const ops = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
+  if (!ops) return { ok:false, reason:'ยังไม่ได้ผูกกลุ่มปฏิบัติการ Care2Go' };
+  const contact = requestedByType === 'center' ? (center?.contact_phone || 'ยังไม่มีเบอร์ติดต่อศูนย์') : (profile?.emergency_contact_phone || profile?.family_phone || 'ยังไม่มีเบอร์ญาติ');
+  const flex = require('../flexMessages');
+  await lineClient.pushMessage(ops.line_group_id, [flex.care2goOperationsRequestFlex({
+    planId, residentName:resident?.full_name || profile?.patient_name || 'ไม่ระบุ', destination:appointment.hospital,
+    origin:[center?.name,center?.address].filter(Boolean).join(' — ') || 'ญาติแจ้งจุดรับทางโทรศัพท์', datetime:appointment.datetime,
+    contact, requestedByType, needs:plan.needs || ['vehicle'], note:plan.note || '',
+  })]);
+  await appendHistory(planId, 'care2go_operations_notified');
+  return { ok:true };
+}
+
+async function familyRequestCare2go(planId, requesterLineId) {
+  const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
+  if (!plan || plan.status !== 'awaiting_family') return { ok:false, reason:'รายการนี้ไม่อยู่ในสถานะรอครอบครัว' };
+  await TransportPlans.update((p) => p.plan_id === planId, { family_choice:'care2go', family_decided_by:requesterLineId, family_decided_at:now(), status:'care2go_requested', needs:['vehicle'], liability_mode:'agent', care2go_booking_id:id('B') });
+  await appendHistory(planId,'family_choice=care2go'); await audit('transport.family_care2go',requesterLineId,{planId});
+  const notified = await notifyCare2goOperations(planId,'family');
+  return {ok:true,status:'care2go_requested',operationsNotified:notified.ok,operationsWarning:notified.ok?null:notified.reason};
+}
+
+async function care2goAcknowledge(planId, actorLineId, confirmed=false) {
+  const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
+  if (!plan || !['care2go_requested','care2go_acknowledged'].includes(plan.status)) return {ok:false,reason:'สถานะคำขอไม่ถูกต้อง'};
+  const status=confirmed?'care2go_confirmed':'care2go_acknowledged';
+  await TransportPlans.update((p)=>p.plan_id===planId,{status,care2go_acknowledged_by:actorLineId,care2go_acknowledged_at:now()});
+  await appendHistory(planId,confirmed?'care2go_confirmed':'care2go_acknowledged'); await audit(`transport.${status}`,actorLineId,{planId});
+  const profile=await CareProfiles.findOne((p)=>p.care_profile_id===plan.care_profile_id); const target=await resolveFamilyTarget(plan.care_profile_id,profile);
+  if(target) await lineClient.pushMessage(target,[{type:'text',text:confirmed?'✅ Care2Go ยืนยันการจัดบริการแล้ว ทีมงานจะโทรยืนยันรายละเอียดค่ะ':'✅ ทีม Care2Go รับเรื่องแล้ว กำลังประสานรถ/ผู้ดูแลค่ะ'}]);
+  return {ok:true,status};
+}
+
 async function appendHistory(planId, event) {
   const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
   const history = [...(plan.history || []), { event, at: now() }];
@@ -144,11 +207,16 @@ async function centerChoose(planId, choice, requesterLineId, { needs = [], note 
       'ทีมงาน Care2Go จะติดต่อคุณโดยตรงเพื่อยืนยันรายละเอียดและราคา',
       '', 'ออกใบเสร็จโดย Care2Go',
     ].join('\n');
+    const opsResult = await notifyCare2goOperations(planId, 'center');
+    var operationsNotified = opsResult.ok;
+    var operationsWarning = opsResult.ok ? null : opsResult.reason;
   }
 
   if (familyTarget) await lineClient.pushMessage(familyTarget, [{ type: 'text', text: familyText }]);
 
-  return { ok: true, status: newStatus, liabilityMode, care2goBookingId, familyNotified: !!familyTarget };
+  return { ok: true, status: newStatus, liabilityMode, care2goBookingId, familyNotified: !!familyTarget,
+    operationsNotified: choice === 'care2go' ? operationsNotified : undefined,
+    operationsWarning: choice === 'care2go' ? operationsWarning : undefined };
 }
 
 // ── FR-L8: ศูนย์เปลี่ยนการตัดสินใจก่อนถึงนัดได้ — บันทึกประวัติทุกครั้ง ──
@@ -191,6 +259,13 @@ async function markCare2goUnavailable(planId, appointmentDatetime) {
 async function resolveFamilyTarget(careProfileId, careProfile) {
   const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
   return groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
+}
+
+async function getPendingFamilyPlans(careProfileIds) {
+  const { Appointments } = require('../db');
+  const allowed = new Set(careProfileIds || []);
+  const plans = await TransportPlans.findWhere((p) => allowed.has(p.care_profile_id) && p.status === 'awaiting_family');
+  return Promise.all(plans.map(async (plan) => ({ ...plan, appointment:await Appointments.findOne((a) => a.appointment_id === plan.appointment_id) })));
 }
 
 // ── FR-L10: ครอบครัวไม่ตัดสินใจ → เตือนเพียง 2 จังหวะ คือเหลือ 12 ชม. และ 6 ชม. ──
@@ -285,6 +360,7 @@ async function createBill({ centerId, careProfileId, appointmentId, items, creat
 }
 
 module.exports = {
-  createTransportPlan, familyChooseSelf, familyRequestCenter, centerChoose, centerChangeChoice,
+  createTransportPlan, launchTransportChoice, familyChooseSelf, familyRequestCenter, familyRequestCare2go, centerChoose, centerChangeChoice, getPendingFamilyPlans,
+  bindCare2goOperationsGroup, notifyCare2goOperations, care2goAcknowledge,
   markCare2goUnavailable, getRateCard, updateRateCard, createBill, remindPendingFamilyChoices,
 };

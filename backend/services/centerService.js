@@ -14,10 +14,11 @@ function linkMenuBestEffort(lineUserId) {
 }
 
 // ── FR-A1: ทีมงานสร้างบัญชีศูนย์ ──
-async function createCenter({ name, ownerLineId }) {
+async function createCenter({ name, ownerLineId, address = '', contactPhone = '' }) {
   const center = await Centers.insert({
     center_id: id('CTR'),
     name,
+    address: address || '', contact_phone: contactPhone || '',
     owner_line_id: ownerLineId,
     group_id: null,
     external_api_key: id('EXT'), // ข้อ J4: กุญแจสำหรับระบบภายนอกส่งสัญญาณชีพเข้ามา — แยกต่อศูนย์ เพิกถอนได้เป็นรายศูนย์
@@ -33,6 +34,18 @@ async function createCenter({ name, ownerLineId }) {
   });
   linkMenuBestEffort(ownerLineId);
   return center;
+}
+
+async function updateCenterSettings({ centerId, requesterLineId, address, contactPhone }) {
+  const owner = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner');
+  if (!owner) return { ok:false, reason:'เฉพาะเจ้าของศูนย์เท่านั้นที่แก้ไขข้อมูลติดต่อได้' };
+  const patch = {};
+  if (typeof address === 'string') patch.address = address.trim();
+  if (typeof contactPhone === 'string') patch.contact_phone = contactPhone.trim();
+  const center = await Centers.update((c) => c.center_id === centerId && c.status === 'active', patch);
+  if (!center) return { ok:false, reason:'ไม่พบศูนย์' };
+  await audit('center.settings_updated', requesterLineId, { centerId, changedFields:Object.keys(patch) });
+  return { ok:true, center };
 }
 
 // ── FR-A2, A3: ผูกกลุ่มไลน์งานศูนย์ (ต้องเป็นเจ้าของ/ผู้จัดการเป็นผู้เชิญ) ──
@@ -422,7 +435,7 @@ async function findCenterByApiKey(apiKey) {
 }
 
 module.exports = {
-  createCenter, bindGroupToCenter, findCenterByGroup, appointManager, removeManager, listStaff,
+  createCenter, updateCenterSettings, bindGroupToCenter, findCenterByGroup, appointManager, removeManager, listStaff,
   addResident, updateResident, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
   updateAppointment, cancelAppointment,
   rotateExternalApiKey, findCenterByApiKey,

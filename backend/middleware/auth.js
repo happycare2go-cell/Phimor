@@ -6,7 +6,7 @@
 //    ก่อน Deploy จริง ต้องเปลี่ยน identify() ให้ Verify LINE ID Token จริง
 //    (ตรวจ Signature และวันหมดอายุ ไม่ใช่เชื่อค่าจาก Header ตรงๆ)
 
-const { CenterStaff, Residents, CareProfiles } = require('../db');
+const { CenterStaff, Residents, CareProfiles, CareProfileMembers } = require('../db');
 const { asyncHandler } = require('./asyncHandler');
 
 async function verifyLineIdToken(idToken) {
@@ -88,10 +88,12 @@ function requireFamilyAccess() {
     if (!profile) {
       return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูล' });
     }
-    if (profile.owner_line_id !== req.user.lineUserId) {
+    const member = await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === req.user.lineUserId && m.status === 'active');
+    if (profile.owner_line_id !== req.user.lineUserId && !member) {
       return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
     }
     req.careProfile = profile;
+    req.familyRole = profile.owner_line_id === req.user.lineUserId ? 'owner' : member.role;
     next();
   });
 }

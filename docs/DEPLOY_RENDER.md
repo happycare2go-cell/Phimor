@@ -84,6 +84,7 @@ LIFF_ID_REGISTER=<LIFF ID หน้าลงทะเบียนศูนย์
 LINE_CHANNEL_ACCESS_TOKEN
 LIFF_ID_CENTER_ADMIN
 LIFF_ID_FAMILY
+CARE2GO_GROUP_BIND_CODE=<ตั้งรหัสลับยาว แล้วส่งข้อความนี้ในกลุ่ม Care2Go หลังเชิญพี่หมอ>
 DATABASE_URL
 ```
 

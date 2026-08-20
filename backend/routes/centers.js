@@ -22,6 +22,13 @@ router.get('/center/me', asyncHandler(async (req, res) => {
   res.json({ centers });
 }));
 
+router.patch('/center/settings', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
+  const result = await centerService.updateCenterSettings({ centerId:req.centerId, requesterLineId:req.user.lineUserId,
+    address:req.body.address, contactPhone:req.body.contactPhone });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result.center);
+}));
+
 // GET /api/center/staff — รายชื่อผู้มีสิทธิ์จัดการ (เจ้าของเท่านั้น)
 router.get('/center/staff', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
   const staff = await centerService.listStaff(req.centerId);

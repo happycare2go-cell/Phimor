@@ -28,6 +28,8 @@ services:
         sync: false
       - key: LIFF_ID_FAMILY
         sync: false
+      - key: CARE2GO_GROUP_BIND_CODE
+        sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: GEMINI_API_KEY

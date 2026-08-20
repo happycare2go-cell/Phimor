@@ -160,10 +160,11 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
 
   // บันทึกลง Care Profile ถ้าผูกแล้ว
   let careProfile = null;
+  let transportPlan = null;
   if (resident.care_profile_id) {
     careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
     if (data.appointment) {
-      await Appointments.insert({
+      const appointment = await Appointments.insert({
         appointment_id: id('APT'), care_profile_id: resident.care_profile_id,
         hospital: data.appointment.hospital, datetime: data.appointment.datetime, note: data.appointment.note || '',
         clinic_or_department: data.appointment.clinicOrDepartment || '',
@@ -174,6 +175,8 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
         source: 'center_photo', source_center_id: card.center_id, created_by: confirmedByLineId, created_at: now(),
         status: 'confirmed', confirmed_from_card_id: cardId,
       });
+      const transportService = require('./transportService');
+      transportPlan = await transportService.launchTransportChoice({ appointment, careProfileId:resident.care_profile_id, centerId:card.center_id, notifyFamily:false });
     }
     let medicationSnapshotId = null;
     if ((data.medications || []).length > 0) {
@@ -199,7 +202,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
     const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family' && g.status !== 'inactive');
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
     if (target) {
-      await lineClient.pushMessage(target, [{
+      const messages = [{
         type: 'text',
         text: buildFamilySummaryText({ residentName: resident.full_name, data, confirmedByName }),
         // ข้อ F4: แนบปุ่มแจ้งข้อมูลไม่ถูกต้องไว้กับข้อความนี้เสมอ ผูกกับ Quick Reply ของข้อความสุดท้าย
@@ -209,7 +212,9 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
             action: { type: 'postback', label: '⚠️ ข้อมูลไม่ถูกต้อง', data: `action=report_issue&cardId=${cardId}` },
           }],
         },
-      }]);
+      }];
+      if (transportPlan && data.appointment) messages.push({ type:'text', text:`📅 กรุณาเปิด Family LIFF เพื่อเลือกวิธีเดินทางสำหรับนัดนี้\nhttps://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?view=transport` });
+      await lineClient.pushMessage(target, messages);
       sentToFamily = true;
     } else {
       queuedForLater = true; // ข้อ F3: เก็บไว้ส่งย้อนหลังเมื่อผูกสำเร็จ
