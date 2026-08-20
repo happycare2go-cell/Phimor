@@ -15,7 +15,7 @@ const accessRoute = require('./routes/access');
 
 const app = express();
 
-// 1. เปิดใช้งาน CORS (สำคัญมากสำหรับ LIFF และการข้ามโดเมน)
+// 1. เปิดใช้งาน CORS
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

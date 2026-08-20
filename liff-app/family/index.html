@@ -145,7 +145,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const BACKEND_URL = 'https://phimor-backend.onrender.com'; // ★ Dev แทนที่ด้วย URL จริงตอน Deploy
+const BACKEND_URL = 'https://api.phimor.example.com'; // ★ Dev แทนที่ด้วย URL จริงตอน Deploy
 let LINE_USER_ID = null;
 let currentProfile = null;
 let allProfiles = [];
@@ -282,7 +282,7 @@ async function saveHealthInfo() {
 
 // ── เริ่มต้น ──
 async function main() {
-  await liff.init({ liffId: '2011043561-15JWfKmR' }); // ★ Dev ใส่ LIFF ID จริงตอน Deploy
+  await liff.init({ liffId: 'YOUR_LIFF_ID' }); // ★ Dev ใส่ LIFF ID จริงตอน Deploy
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
