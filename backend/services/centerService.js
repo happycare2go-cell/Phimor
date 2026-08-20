@@ -138,6 +138,7 @@ async function recordStaffFromGroup(groupId, lineUserId) {
 
   const existing = await CenterStaff.findOne((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
   if (existing) {
+    linkMenuBestEffort(lineUserId);
     await setActiveCenterForStaff(lineUserId, center.center_id);
     return existing;
   }
@@ -150,6 +151,8 @@ async function recordStaffFromGroup(groupId, lineUserId) {
     display_name: profile?.displayName || null, picture_url: profile?.pictureUrl || null,
     role: 'staff', assigned_at: now(), auto_registered: true,
   });
+  // พนักงานต้องเปิดหน้ารายชื่อผู้พัก/Clinical Summary ได้ จึงใช้ Rich Menu ศูนย์เช่นเดียวกับผู้จัดการ
+  linkMenuBestEffort(lineUserId);
   await setActiveCenterForStaff(lineUserId, center.center_id);
   return staff;
 }
@@ -188,6 +191,13 @@ async function removeStaffFromGroup(groupId, lineUserId) {
   const context = await StaffContexts.findOne((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
   if (removed && context) await StaffContexts.remove((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
   if (removed) await audit('center.staff_left_group', lineUserId, { centerId: center.center_id, groupId, previousRole: member.role });
+  if (removed) {
+    const remaining = await CenterStaff.findWhere((s) => s.line_user_id === lineUserId);
+    if (remaining.length === 0) {
+      const lineClient = require('../providers/lineClient');
+      lineClient.unlinkRichMenuFromUser(lineUserId).catch((err) => console.error('คืน Rich Menu เริ่มต้นไม่สำเร็จ:', err.message));
+    }
+  }
   return { removed, centerId: center.center_id };
 }
 
@@ -340,7 +350,7 @@ async function getCenterAppointments(centerId) {
 
   const allAppts = await Appointments.findWhere((a) => profileToResident.has(a.care_profile_id));
   const now_ = Date.now();
-  const upcoming = allAppts.filter((a) => new Date(a.datetime).getTime() > now_); // ข้อ G3: ไม่แสดงนัดที่ผ่านแล้ว
+  const upcoming = allAppts.filter((a) => a.status !== 'cancelled' && new Date(a.datetime).getTime() > now_); // นัดที่ยกเลิกต้องไม่แสดง/เตือน
 
   const allPlans = await TransportPlans.findWhere((p) => p.center_id === centerId);
   const planByAppt = new Map(allPlans.map((p) => [p.appointment_id, p]));
@@ -353,12 +363,49 @@ async function getCenterAppointments(centerId) {
       appointmentId: a.appointment_id,
       residentId: resident?.resident_id, residentName: resident?.full_name, room: resident?.room,
       hospital: a.hospital, datetime: a.datetime, note: a.note,
+      clinicOrDepartment: a.clinic_or_department || '', reasonForVisit: a.reason_for_visit || '',
+      relatedCondition: a.related_condition || '', doctorName: a.doctor_name || '', status: a.status || 'confirmed',
       transportStatus: plan ? plan.status : 'not_created',
       needsAttention,
     };
   });
 
   return rows.sort((a, b) => new Date(a.datetime) - new Date(b.datetime)); // ข้อ K1: เรียงตามวันเวลา
+}
+
+async function updateAppointment({ centerId, appointmentId, patch, requesterLineId }) {
+  const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
+  const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
+  const appointment = await require('../db').Appointments.findOne(
+    (a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id) && a.status !== 'cancelled'
+  );
+  if (!appointment) return { ok: false, reason: 'ไม่พบนัดที่ใช้งานอยู่ในสาขานี้' };
+  if (patch.datetime && new Date(patch.datetime).getTime() <= Date.now()) return { ok: false, reason: 'วันเวลานัดต้องเป็นเวลาในอนาคต' };
+  const clean = {};
+  for (const [input, stored] of Object.entries({ hospital:'hospital', datetime:'datetime', note:'note', clinicOrDepartment:'clinic_or_department', reasonForVisit:'reason_for_visit', relatedCondition:'related_condition', doctorName:'doctor_name' })) {
+    if (input in patch) clean[stored] = patch[input];
+  }
+  clean.updated_by = requesterLineId; clean.updated_at = now();
+  // เมื่อแก้วันนัด ให้สิทธิ์ระบบส่งการเตือนตามวันใหม่อีกครั้ง
+  if ('datetime' in patch) { clean.day_before_reminded = false; clean.same_day_reminded = false; }
+  const updated = await require('../db').Appointments.update((a) => a.appointment_id === appointmentId, clean);
+  await audit('appointment.updated', requesterLineId, { centerId, appointmentId, changedFields: Object.keys(clean) });
+  return { ok: true, appointment: updated };
+}
+
+async function cancelAppointment({ centerId, appointmentId, requesterLineId, reason = '' }) {
+  const { Appointments, TransportPlans } = require('../db');
+  const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
+  const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
+  const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id));
+  if (!appointment) return { ok: false, reason: 'ไม่พบนัดในสาขานี้' };
+  if (appointment.status === 'cancelled') return { ok: true, appointment, alreadyCancelled: true };
+  const cancelled = await Appointments.update((a) => a.appointment_id === appointmentId, {
+    status: 'cancelled', cancelled_at: now(), cancelled_by: requesterLineId, cancellation_reason: reason || '',
+  });
+  await TransportPlans.updateAll((p) => p.appointment_id === appointmentId, { status: 'cancelled', cancelled_at: now() });
+  await audit('appointment.cancelled', requesterLineId, { centerId, appointmentId, reason: reason || '' });
+  return { ok: true, appointment: cancelled };
 }
 
 // ── ข้อ J4/หมวดความปลอดภัย: หมุน API Key ของศูนย์ใหม่ (เพิกถอนของเดิมทันที) ──
@@ -377,6 +424,7 @@ async function findCenterByApiKey(apiKey) {
 module.exports = {
   createCenter, bindGroupToCenter, findCenterByGroup, appointManager, removeManager, listStaff,
   addResident, updateResident, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
+  updateAppointment, cancelAppointment,
   rotateExternalApiKey, findCenterByApiKey,
   recordStaffFromGroup, findCenterByStaffUser, listApprovers, canApprove,
   removeStaffFromGroup,

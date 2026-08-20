@@ -45,13 +45,13 @@ router.delete('/center/staff/:targetLineId', requireCenterStaff(['owner']), asyn
 }));
 
 // GET /api/residents — รายชื่อผู้พักของศูนย์ (เจ้าของ/ผู้จัดการ)
-router.get('/residents', requireCenterStaff(), asyncHandler(async (req, res) => {
+router.get('/residents', requireCenterStaff(['owner', 'manager', 'staff']), asyncHandler(async (req, res) => {
   const rows = await centerService.listResidents(req.centerId, { search: req.query.search });
   res.json({ residents: rows });
 }));
 
 // GET /api/center/appointments — ตารางนัดของทุกผู้พักในศูนย์ (ข้อ K1, K2)
-router.get('/center/appointments', requireCenterStaff(), asyncHandler(async (req, res) => {
+router.get('/center/appointments', requireCenterStaff(['owner', 'manager', 'staff']), asyncHandler(async (req, res) => {
   const rows = await centerService.getCenterAppointments(req.centerId);
   res.json({ appointments: rows });
 }));
@@ -86,6 +86,44 @@ router.get('/residents/:residentId/care-profile', requireCenterStaff(['owner', '
   const medicationHistory = await familyService.getMedicationHistory(profile.care_profile_id);
   await audit('care_profile.viewed_by_center', req.user.lineUserId, { centerId: req.centerId, residentId: resident.resident_id, careProfileId: profile.care_profile_id });
   res.json({ profile, medicationHistory });
+}));
+
+// ข้อมูลจำเป็นต่อการดูแลประจำวัน: staff เห็นเฉพาะ summary ไม่เห็นประวัติฉบับเต็ม
+router.get('/residents/:residentId/clinical-summary', requireCenterStaff(['owner', 'manager', 'staff']), asyncHandler(async (req, res) => {
+  const { Residents, CareProfiles, MedicationSnapshots, Appointments, Vitals, audit } = require('../db');
+  const resident = await Residents.findOne((r) => r.resident_id === req.params.residentId && r.center_id === req.centerId && r.status === 'active');
+  if (!resident?.care_profile_id) return res.status(404).json({ error: 'not_linked', message: 'ผู้พักยังไม่ได้ผูก Care Profile' });
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id && p.center_id === req.centerId && p.status === 'linked');
+  if (!profile) return res.status(403).json({ error: 'forbidden', message: 'ศูนย์ไม่มีสิทธิ์เข้าถึง Care Profile นี้' });
+  const snapshots = await MedicationSnapshots.findWhere((s) => s.care_profile_id === profile.care_profile_id);
+  const latestMedication = snapshots.sort((a,b) => new Date(b.recorded_at) - new Date(a.recorded_at))[0] || null;
+  const appointments = await Appointments.findWhere((a) => a.care_profile_id === profile.care_profile_id && a.status !== 'cancelled' && new Date(a.datetime) > new Date());
+  const vitals = await Vitals.findWhere((v) => v.care_profile_id === profile.care_profile_id);
+  const latestVitals = vitals.sort((a,b) => new Date(b.recorded_at) - new Date(a.recorded_at))[0] || null;
+  const summary = {
+    residentId: resident.resident_id, patientName: profile.patient_name, room: resident.room,
+    gender: profile.gender || null, bloodType: profile.blood_type || null,
+    chronicConditions: profile.chronic_conditions || [], drugAllergies: profile.drug_allergies || '',
+    foodAllergies: profile.food_allergies || '', mobilityLimitations: profile.mobility_limitations || '',
+    emergencyContactName: profile.emergency_contact_name || '', emergencyContactPhone: profile.emergency_contact_phone || resident.family_phone || '',
+    currentMedications: latestMedication?.items || [], medicationUpdatedAt: latestMedication?.recorded_at || null,
+    upcomingAppointments: appointments.sort((a,b) => new Date(a.datetime)-new Date(b.datetime)).slice(0,3), latestVitals,
+    profileUpdatedAt: profile._updatedAt || profile.updated_at || null,
+  };
+  await audit('clinical_summary.viewed', req.user.lineUserId, { centerId:req.centerId, residentId:resident.resident_id, role:req.staffRole });
+  res.json({ summary });
+}));
+
+router.patch('/center/appointments/:appointmentId', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const result = await centerService.updateAppointment({ centerId:req.centerId, appointmentId:req.params.appointmentId, patch:req.body, requesterLineId:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result.appointment);
+}));
+
+router.post('/center/appointments/:appointmentId/cancel', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const result = await centerService.cancelAppointment({ centerId:req.centerId, appointmentId:req.params.appointmentId, requesterLineId:req.user.lineUserId, reason:req.body.reason });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result);
 }));
 
 router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {

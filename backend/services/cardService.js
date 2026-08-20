@@ -172,6 +172,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
         doctor_name: data.appointment.doctorName || '',
         // ข้อ J5: บันทึกที่มาให้ครบ — ระบบใด (source) ศูนย์ใด (source_center_id) เมื่อใด (created_at)
         source: 'center_photo', source_center_id: card.center_id, created_by: confirmedByLineId, created_at: now(),
+        status: 'confirmed', confirmed_from_card_id: cardId,
       });
     }
     let medicationSnapshotId = null;

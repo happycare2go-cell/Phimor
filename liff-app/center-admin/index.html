@@ -237,6 +237,7 @@ let LINE_ID_TOKEN = null;
 let CENTER_ID = null;
 let CENTERS = [];
 let residentsCache = [];
+let CURRENT_ROLE = null;
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function openModal(id){ document.getElementById(id).classList.add('show'); }
@@ -282,7 +283,7 @@ function renderResidents() {
           <span class="badge ${r.care_profile_id ? 'badge-linked' : 'badge-pending'}">${r.care_profile_id ? 'ผูกครอบครัวแล้ว' : 'ยังไม่ผูกครอบครัว'}</span>
         </div>
       </div>
-      <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">ข้อมูลสุขภาพ</button>` : ''} <button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button></div>
+      <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">${CURRENT_ROLE==='staff'?'ข้อมูลสำคัญ':'ข้อมูลสุขภาพ'}</button>` : ''} ${CURRENT_ROLE!=='staff'?`<button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>`:''}</div>
     </div>`).join('') + '</div>';
 }
 function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
@@ -317,6 +318,7 @@ function openEditResident(id) {
   openModal('editResidentModal');
 }
 async function viewCareProfile(residentId){
+  if (CURRENT_ROLE === 'staff') return viewClinicalSummary(residentId);
   const data = await api(`/api/residents/${residentId}/care-profile?centerId=${CENTER_ID}`);
   const p=data.profile, gender={female:'หญิง',male:'ชาย',other:'อื่น ๆ'}[p.gender]||'ไม่ระบุ';
   document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8">
@@ -327,6 +329,13 @@ async function viewCareProfile(residentId){
     ข้อจำกัดการเคลื่อนไหว: ${esc(p.mobility_limitations||'ไม่มีข้อมูล')}<br>
     ผู้ติดต่อฉุกเฉิน: ${esc(p.emergency_contact_name||'-')} ${esc(p.emergency_contact_phone||'')}<hr>
     <b>ประวัติรายการยา</b><br>${data.medicationHistory.length?data.medicationHistory.map(s=>`${new Date(s.recorded_at).toLocaleString('th-TH')}: ${s.items.map(i=>esc(i.name)+' '+esc(i.dose||'')).join(', ')}`).join('<br>'):'ยังไม่มีข้อมูล'}</div>`;
+  openModal('careProfileModal');
+}
+async function viewClinicalSummary(residentId){
+  const data=await api(`/api/residents/${residentId}/clinical-summary?centerId=${CENTER_ID}`), s=data.summary;
+  const meds=(s.currentMedications||[]).map(i=>`${esc(i.name||'-')} ${esc(i.dose||'')}`).join(', ')||'ไม่มีข้อมูล';
+  const appts=(s.upcomingAppointments||[]).map(a=>`${new Date(a.datetime).toLocaleString('th-TH')}: ${esc(a.hospital||'-')}`).join('<br>')||'ไม่มีนัด';
+  document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8"><b>${esc(s.patientName)}</b> · ห้อง ${esc(s.room||'-')} · กรุ๊ปเลือด ${esc(s.bloodType||'ไม่ทราบ')}<hr><div style="color:#9B1C1C"><b>🚨 แพ้ยา:</b> ${esc(s.drugAllergies||'ไม่มีข้อมูล')}<br><b>แพ้อาหาร:</b> ${esc(s.foodAllergies||'ไม่มีข้อมูล')}</div><b>โรคประจำตัว:</b> ${esc((s.chronicConditions||[]).join(', ')||'ไม่มีข้อมูล')}<br><b>ข้อจำกัดการเคลื่อนไหว:</b> ${esc(s.mobilityLimitations||'ไม่มีข้อมูล')}<br><b>💊 รายการยาปัจจุบัน:</b> ${meds}<br><b>📅 นัดที่จะถึง:</b><br>${appts}<br><b>📞 ฉุกเฉิน:</b> ${esc(s.emergencyContactName||'-')} ${esc(s.emergencyContactPhone||'')}</div>`;
   openModal('careProfileModal');
 }
 async function saveResidentEdit() {
@@ -362,7 +371,21 @@ async function loadCenterAppointments() {
       <div style="font-weight:600">${esc(a.residentName||'ไม่ทราบชื่อ')}${a.room?' · ห้อง '+esc(a.room):''}</div>
       <div style="font-size:12px;color:var(--gray);margin:2px 0 6px">${esc(a.hospital)} · ${new Date(a.datetime).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'})}</div>
       <span class="chip" style="${a.needsAttention?'background:var(--gold);color:#fff':''}">${statusLabel[a.transportStatus]||a.transportStatus}</span>
+      ${CURRENT_ROLE!=='staff'?`<div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-outline btn-sm" onclick="editAppointment(decodeURIComponent('${encodeURIComponent(JSON.stringify(a))}'))">แก้ไขนัด</button><button class="btn btn-danger btn-sm" onclick="cancelAppointment('${a.appointmentId}')">ยกเลิกนัด</button></div>`:''}
     </div>`).join('');
+}
+async function editAppointment(json){
+  const a=JSON.parse(json); const hospital=prompt('โรงพยาบาล',a.hospital||''); if(hospital===null)return;
+  const datetime=prompt('วันเวลานัด (เช่น 2030-01-31T09:00:00+07:00)',a.datetime||''); if(datetime===null)return;
+  const note=prompt('หมายเหตุ',a.note||''); if(note===null)return;
+  await api(`/api/center/appointments/${a.appointmentId}?centerId=${CENTER_ID}`,{method:'PATCH',body:JSON.stringify({hospital,datetime,note})});
+  toast('แก้ไขนัดแล้ว'); await loadCenterAppointments();
+}
+async function cancelAppointment(id){
+  const reason=prompt('เหตุผลที่ยกเลิกนัด (ถ้ามี)',''); if(reason===null)return;
+  if(!confirm('ยืนยันยกเลิกนัดนี้? ระบบจะหยุดแจ้งเตือนทันที'))return;
+  await api(`/api/center/appointments/${id}/cancel`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID,reason})});
+  toast('ยกเลิกนัดและหยุดการแจ้งเตือนแล้ว'); await loadCenterAppointments();
 }
 
 // ── FR-L ชั้นที่ 2: รอดำเนินการ ──
@@ -436,7 +459,8 @@ async function createStaffBindingCode() {
 async function selectCenter(centerId) {
   CENTER_ID = centerId;
   const center = CENTERS.find(c => c.center_id === centerId);
-  document.getElementById('centerNameLabel').textContent = center.name + ' · ' + (center.myRole === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ');
+  CURRENT_ROLE = center.myRole;
+  document.getElementById('centerNameLabel').textContent = center.name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[center.myRole]||center.myRole);
   document.getElementById('staffTab').style.display = center.myRole === 'owner' ? '' : 'none';
   await loadResidents();
   const activeView = document.querySelector('.tab.active')?.dataset.view;
@@ -570,8 +594,14 @@ async function main() {
   selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${c.myRole === 'owner' ? 'เจ้าของ' : 'ผู้จัดการ'}</option>`).join('');
   selector.style.display = CENTERS.length > 1 ? 'block' : 'none';
   CENTER_ID = CENTERS[0].center_id;
+  CURRENT_ROLE = CENTERS[0].myRole;
   document.getElementById('staffTab').style.display = CENTERS[0].myRole === 'owner' ? '' : 'none';
-  document.getElementById('centerNameLabel').textContent = CENTERS[0].name + ' · ' + (CENTERS[0].myRole === 'owner' ? 'เจ้าของศูนย์' : 'ผู้จัดการ');
+  document.getElementById('centerNameLabel').textContent = CENTERS[0].name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[CENTERS[0].myRole]||CENTERS[0].myRole);
+  if (CURRENT_ROLE === 'staff') {
+    document.querySelector('#view-residents > .card').style.display='none';
+    document.querySelector('.tab[data-view="transport"]').style.display='none';
+    document.querySelector('.tab[data-view="ratecard"]').style.display='none';
+  }
 
   // อ่าน URL Parameter เพื่อ Route ไปหน้าที่ถูกต้อง (ใช้กับปุ่ม Rich Menu และลิงก์แก้ไขการ์ดจาก LINE)
   const view = new URLSearchParams(location.search).get('view');

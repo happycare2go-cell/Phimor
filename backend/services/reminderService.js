@@ -22,6 +22,7 @@ async function sendAppointmentReminders(referenceDate = new Date()) {
   let sent = 0;
 
   for (const appt of all) {
+    if (appt.status === 'cancelled') continue;
     const apptDate = new Date(appt.datetime);
     if (isNaN(apptDate.getTime())) continue;
 
@@ -59,7 +60,7 @@ async function sendWeeklySummary(referenceDate = new Date()) {
     const residents = await Residents.findWhere((r) => r.center_id === center.center_id && r.status === 'active');
     const residentProfileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
 
-    const allAppts = await Appointments.findWhere((a) => residentProfileIds.has(a.care_profile_id));
+    const allAppts = await Appointments.findWhere((a) => residentProfileIds.has(a.care_profile_id) && a.status !== 'cancelled');
     const upcoming = allAppts.filter((a) => {
       const d = new Date(a.datetime);
       return d >= weekStart && d <= weekEnd;
@@ -90,7 +91,7 @@ async function sendTomorrowSummaryToCenters(referenceDate = new Date()) {
     const residents = await Residents.findWhere((r) => r.center_id === center.center_id && r.status === 'active');
     const profileToResident = new Map(residents.filter((r) => r.care_profile_id).map((r) => [r.care_profile_id, r]));
 
-    const allAppts = await Appointments.findWhere((a) => profileToResident.has(a.care_profile_id));
+    const allAppts = await Appointments.findWhere((a) => profileToResident.has(a.care_profile_id) && a.status !== 'cancelled');
     const tomorrowAppts = allAppts.filter((a) => isSameDay(new Date(a.datetime), tomorrow))
       .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
 
