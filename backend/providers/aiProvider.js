@@ -1,71 +1,67 @@
-// providers/aiProvider.js
-// Interface กลางสำหรับเรียก AI อ่านเอกสาร — ของจริงเรียก Anthropic/Gemini
-// ตอนนี้เป็น Mock ที่ตั้งค่าคำตอบล่วงหน้าได้ (สำหรับ Dev ต่อยอด และสำหรับ Test)
-//
-// อ้างอิง: Phimor_Technical_Design.docx หมวด 6 (ข้อกำหนดด้าน AI)
-// - ต้องคืนค่าความมั่นใจ (confidence) เพื่อตัดสินว่าจะถามหรือไม่ (ข้อ D2, D3)
-// - ต้องปฏิเสธเอกสารที่ไม่เกี่ยวข้อง ไม่เดา
-// - ห้ามให้คำแนะนำทางการแพทย์
+const { Anthropic } = require('@anthropic-ai/sdk');
 
-let mockQueue = [];
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || '',
+});
 
-/**
- * ตั้งค่าคำตอบที่จะคืนใน interpretDocument ครั้งถัดไป (ใช้ใน Test เท่านั้น)
- * @param {object} response
- */
-function queueMockResponse(response) {
-  mockQueue.push(response);
-}
-
-function clearMockQueue() {
-  mockQueue = [];
-}
-
-/**
- * อ่านเอกสารทางการแพทย์จากรูปภาพ
- * @param {Buffer} imageBuffer
- * @returns {Promise<{
- *   documentType: 'medical'|'unrelated',
- *   unrelatedNote?: string,
- *   nameGuess: string|null,
- *   nameConfidence: number,        // 0..1
- *   appointment: {hospital, datetime, note}|null,
- *   medications: Array<{name, dose}>,
- *   doctorNote: string|null
- * }>}
- */
 async function interpretDocument(imageBuffer) {
-  if (mockQueue.length > 0) {
-    return mockQueue.shift();
+  try {
+    const base64Image = imageBuffer.toString('base64');
+    
+    const prompt = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
+    โปรดอ่านภาพเอกสารนี้และสกัดข้อมูลออกมาเป็น JSON เท่านั้น โดยมีโครงสร้างดังนี้เป๊ะๆ (ห้ามมีข้อความอื่นนอกจาก JSON):
+    {
+      "documentType": "medical" หรือ "unrelated" (ถ้าไม่ใช่ใบนัด ซองยา หรือผลตรวจ ให้ตอบ unrelated),
+      "unrelatedNote": "เหตุผลสั้นๆ ที่ปฏิเสธ (ถ้าเป็น unrelated)",
+      "nameGuess": "ชื่อ-นามสกุลของผู้ป่วย (ถ้าไม่มีให้ตอบ null)",
+      "nameConfidence": 0.0 ถึง 1.0 (ความมั่นใจ),
+      "appointment": {
+        "hospital": "ชื่อโรงพยาบาล",
+        "datetime": "วันเวลานัดหมายในรูปแบบ ISO 8601 เช่น 2026-08-25T09:00:00 (ถ้าไม่มีเวลาให้สมมติเป็น 09:00:00, ถ้าไม่มีนัดเลยให้เป็น null)",
+        "note": "หมายเหตุการนัด เช่น งดน้ำงดอาหาร"
+      },
+      "medications": [
+        { "name": "ชื่อยา", "dose": "วิธีใช้ยา" }
+      ],
+      "doctorNote": "คำสั่งแพทย์อื่นๆ (ถ้าไม่มีให้ตอบ null)"
+    }`;
+
+    const response = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-20240620",
+      max_tokens: 1024,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/jpeg", data: base64Image }
+            },
+            { type: "text", text: prompt }
+          ]
+        }
+      ]
+    });
+
+    const textResponse = response.content[0].text;
+    const jsonMatch = textResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+    } else {
+        throw new Error("Invalid format from AI");
+    }
+  } catch (error) {
+    console.error("AI Error:", error);
+    return {
+      documentType: 'unrelated',
+      unrelatedNote: 'ระบบ AI ไม่สามารถอ่านเอกสารนี้ได้ หรือรูปภาพไม่ชัดเจน กรุณาลองใหม่อีกครั้งค่ะ',
+      nameGuess: null, nameConfidence: 0, appointment: null, medications: [], doctorNote: null
+    };
   }
-  // ไม่มี Mock ตั้งไว้ — พฤติกรรม Default ปลอดภัยที่สุดคือปฏิเสธ ไม่เดา
-  // (Dev แทนที่ฟังก์ชันนี้ทั้งหมดด้วยการเรียก Anthropic/Gemini จริงตอน Deploy)
-  return {
-    documentType: 'unrelated',
-    unrelatedNote: 'ยังไม่ได้เชื่อมต่อ AI Provider จริง (โหมด Mock ไม่มีคำตอบตั้งไว้)',
-    nameGuess: null,
-    nameConfidence: 0,
-    appointment: null,
-    medications: [],
-    doctorNote: null,
-  };
 }
 
-/**
- * แปลผลตรวจแล็บเป็นภาษาที่เข้าใจง่าย (ฟีเจอร์ Plus — Care Profile ที่ผูกศูนย์เท่านั้น)
- * ต้องปฏิบัติตามกฎเหล็ก: อธิบายค่า+ช่วงปกติเท่านั้น ห้ามวินิจฉัย ห้ามแนะนำการรักษา
- */
-async function interpretLabResult(imageBuffer) {
-  if (mockQueue.length > 0) {
-    return mockQueue.shift();
-  }
-  return {
-    documentType: 'unrelated',
-    extractedValues: [],
-    plainExplanation: 'ยังไม่ได้เชื่อมต่อ AI Provider จริง',
-    hasDangerousValue: false,
-    disclaimer: 'กรุณาปรึกษาแพทย์เพื่อการวินิจฉัยที่ถูกต้อง',
-  };
-}
+async function interpretLabResult(imageBuffer) { return {}; }
+function queueMockResponse() {}
+function clearMockQueue() {}
 
 module.exports = { interpretDocument, interpretLabResult, queueMockResponse, clearMockQueue };
