@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const asyncHandler = require('../middleware/asyncHandler');
+const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
 
 // POST /api/external/register-center (สำหรับสร้างศูนย์ผ่านหน้า LIFF)

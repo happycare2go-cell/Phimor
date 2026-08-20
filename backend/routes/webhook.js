@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const asyncHandler = require('../middleware/asyncHandler');
+const { asyncHandler } = require('../middleware/asyncHandler');
 const lineClient = require('../providers/lineClient');
 const centerService = require('../services/centerService');
 
