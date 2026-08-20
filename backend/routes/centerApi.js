@@ -1,10 +1,10 @@
-// backend/routes/centerApi.js or integrated route fix
+// backend/routes/centerApi.js
 const express = require('express');
 const router = express.Router();
 const { CenterStaff, Centers } = require('../db');
 
-// Root cause fix endpoint for LIFF to get center info dynamically for ANY user
-router.get('/center-profile', async (req, res) => {
+// รองรับทั้งเส้นทาง /api/center/me และ /api/center-profile
+router.get(['/center/me', '/center-profile'], async (req, res) => {
   try {
     const lineUserId = req.query.line_user_id || req.headers['x-line-user-id'];
     
@@ -29,14 +29,15 @@ router.get('/center-profile', async (req, res) => {
 
     const centerData = centerRecords[0];
 
+    // ส่งโครงสร้างข้อมูลให้ตรงกับที่หน้าเว็บ LIFF รอรับ (me.centers[0])
     return res.json({
       success: true,
-      role: userRole,
-      center: {
+      centers: [{
         center_id: centerData.center_id,
         name: centerData.name,
-        status: centerData.status
-      }
+        status: centerData.status,
+        myRole: userRole
+      }]
     });
 
   } catch (err) {
