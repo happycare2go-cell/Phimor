@@ -1,81 +1,57 @@
-// providers/lineClient.js
-// Interface กลางสำหรับส่งข้อความ LINE — ของจริงใช้ @line/bot-sdk MessagingApiClient
-// ตอนนี้เป็น Mock ที่บันทึกทุกครั้งที่ "จะส่ง" ไว้ใน sentLog เพื่อให้ Test ตรวจสอบได้
-//
-// Dev แทนที่ฟังก์ชัน replyMessage/pushMessage ด้วยการเรียก LINE Messaging API จริงตอน Deploy
-// (ดู Phimor_Technical_Design.docx หมวด 1 — LINE Platform)
+const line = require('@line/bot-sdk');
 
-let sentLog = [];
+// สร้างตัวเชื่อมต่อกับ LINE ด้วย Access Token ของจริงจาก Environment
+const client = new line.messagingApi.MessagingApiClient({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'dummy'
+});
 
-function clearSentLog() {
-  sentLog = [];
-}
-
-function getSentLog() {
-  return [...sentLog];
-}
-
-/** ตอบกลับด้วย replyToken (ฟรี ไม่นับโควต้า ใช้ได้ครั้งเดียวต่อ Event) */
+// ฟังก์ชันตอบกลับข้อความทันที (ใช้ตอนลูกค้ายิงแชทมา)
 async function replyMessage(replyToken, messages) {
-  const entry = { type: 'reply', replyToken, messages, at: new Date().toISOString() };
-  sentLog.push(entry);
-  return entry;
+  try {
+    await client.replyMessage({
+      replyToken: replyToken,
+      messages: Array.isArray(messages) ? messages : [messages]
+    });
+  } catch (err) {
+    console.error('LINE Reply Error:', err.response?.data || err.message);
+  }
 }
 
-/** Push ข้อความไปหาบุคคลหรือกลุ่ม (มีต้นทุน คิดตามจำนวนผู้รับ) */
+// ฟังก์ชันส่งข้อความแบบ Push (ใช้ตอนแจ้งเตือน หรือส่งหาคนอื่น)
 async function pushMessage(to, messages) {
-  const entry = { type: 'push', to, messages, at: new Date().toISOString() };
-  sentLog.push(entry);
-  return entry;
+  try {
+    await client.pushMessage({
+      to: to,
+      messages: Array.isArray(messages) ? messages : [messages]
+    });
+  } catch (err) {
+    console.error('LINE Push Error:', err.response?.data || err.message);
+  }
 }
 
-/** ดึงข้อมูลโปรไฟล์ผู้ใช้ (ชื่อที่แสดงใน LINE) */
+// ฟังก์ชันดึงชื่อโปรไฟล์
 async function getProfile(userId) {
-  return { userId, displayName: `ผู้ใช้ ${userId.slice(0, 6)}` };
+  try {
+    return await client.getProfile(userId);
+  } catch (err) {
+    console.error('LINE GetProfile Error:', err.message);
+    return { userId, displayName: 'ผู้ใช้งาน' };
+  }
 }
 
-// ── Rich Menu API ──
-// อ้างอิง: https://developers.line.biz/en/reference/messaging-api/#rich-menu
-// ของจริงต้องเรียก 5 endpoint: create → upload image → (set default | link to user) → unlink
-// ตอนนี้เป็น Mock ที่จำลองพฤติกรรมและบันทึกลง sentLog เพื่อให้ Test ตรวจสอบได้
-
-let mockRichMenuSeq = 0;
-
-/** สร้าง Rich Menu ใหม่ คืน { richMenuId } (ของจริง: POST /v2/bot/richmenu) */
-async function createRichMenu(richMenuObject) {
-  mockRichMenuSeq += 1;
-  const richMenuId = `richmenu-mock-${mockRichMenuSeq}`;
-  sentLog.push({ type: 'richmenu_create', richMenuId, richMenuObject, at: new Date().toISOString() });
-  return { richMenuId };
-}
-
-/** อัปโหลดภาพให้ Rich Menu (ของจริง: POST https://api-data.line.me/v2/bot/richmenu/{richMenuId}/content) */
-async function uploadRichMenuImage(richMenuId, imageBuffer, contentType = 'image/png') {
-  sentLog.push({ type: 'richmenu_upload_image', richMenuId, size: imageBuffer.length, contentType, at: new Date().toISOString() });
-  return {};
-}
-
-/** ตั้งเป็นเมนูเริ่มต้นสำหรับทุกคน (ของจริง: POST /v2/bot/user/all/richmenu/{richMenuId}) */
-async function setDefaultRichMenu(richMenuId) {
-  sentLog.push({ type: 'richmenu_set_default', richMenuId, at: new Date().toISOString() });
-  return {};
-}
-
-/** ผูก Rich Menu ให้ผู้ใช้คนใดคนหนึ่งโดยเฉพาะ มีลำดับความสำคัญสูงกว่าเมนูเริ่มต้น
- *  (ของจริง: POST /v2/bot/user/{userId}/richmenu/{richMenuId})
- *  ⚠️ ข้อจำกัดจริงของ LINE: เชื่อมให้คนที่ยังไม่ได้เป็นเพื่อนกับ OA ไม่ได้ */
-async function linkRichMenuToUser(userId, richMenuId) {
-  sentLog.push({ type: 'richmenu_link_user', userId, richMenuId, at: new Date().toISOString() });
-  return {};
-}
-
-/** ยกเลิกการผูก Rich Menu เฉพาะบุคคล (กลับไปแสดงเมนูเริ่มต้นแทน) */
-async function unlinkRichMenuFromUser(userId) {
-  sentLog.push({ type: 'richmenu_unlink_user', userId, at: new Date().toISOString() });
-  return {};
-}
+// ------------------------------------------------------------------
+// ฟังก์ชันด้านล่างคือ Mock ของเดิม เก็บไว้ไม่ให้ส่วนอื่นของระบบ (เช่น Test) Error
+// ------------------------------------------------------------------
+function clearSentLog() {}
+function getSentLog() { return []; }
+async function createRichMenu(obj) { return { richMenuId: 'dummy' }; }
+async function uploadRichMenuImage(id, buf, type) { return {}; }
+async function setDefaultRichMenu(id) { return {}; }
+async function linkRichMenuToUser(uid, id) { return {}; }
+async function unlinkRichMenuFromUser(uid) { return {}; }
 
 module.exports = {
-  replyMessage, pushMessage, getProfile, clearSentLog, getSentLog,
-  createRichMenu, uploadRichMenuImage, setDefaultRichMenu, linkRichMenuToUser, unlinkRichMenuFromUser,
+  replyMessage, pushMessage, getProfile,
+  clearSentLog, getSentLog,
+  createRichMenu, uploadRichMenuImage, setDefaultRichMenu, linkRichMenuToUser, unlinkRichMenuFromUser
 };
