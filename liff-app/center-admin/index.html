@@ -98,7 +98,7 @@
 
 <!-- ═══ S4: แก้ไขการ์ดก่อนส่ง — เข้าถึงผ่าน ?view=edit-card&cardId=xxx เท่านั้น ไม่อยู่ใน Tab Bar ปกติ ═══
      (ข้อ E3-E8: กรอกค่า AI ไว้ล่วงหน้า + แสดงรูปต้นฉบับ + Date/Time Picker + เปลี่ยนผู้พักได้
-      + กลับไปการ์ดยืนยันเสมอ ไม่ส่งตรง + ไฮไลต์ช่องที่ถูกแก้) -->
+     + กลับไปการ์ดยืนยันเสมอ ไม่ส่งตรง + ไฮไลต์ช่องที่ถูกแก้) -->
 <div class="view" id="view-edit-card">
   <div class="card" id="editCardBanner" style="background:#1C2B64;color:#fff">
     <h3 style="color:#fff;margin:0">ตรวจสอบและแก้ไขก่อนส่ง</h3>
@@ -214,7 +214,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const BACKEND_URL = 'https://api.phimor.example.com'; // ★ Dev แทนที่ด้วย URL จริงตอน Deploy
+const BACKEND_URL = 'https://phimor-liff.onrender.com';
 let LINE_USER_ID = null;
 let CENTER_ID = null;
 let residentsCache = [];
@@ -488,7 +488,7 @@ async function saveCardEdit() {
 
 
 async function main() {
-  await liff.init({ liffId: 'YOUR_LIFF_ID' }); // ★ Dev ใส่ LIFF ID จริงตอน Deploy
+  await liff.init({ liffId: '2011043561-Dyp03JGR' }); 
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
