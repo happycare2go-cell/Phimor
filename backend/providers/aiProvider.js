@@ -1,7 +1,56 @@
 const interpretDocument = async (imageBuffer) => {
   try {
     const apiKey = process.env.GEMINI_API_KEY || '';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    if (!apiKey) throw new Error("GEMINI_API_KEY is empty");
+
+    // 1. ตรวจสอบว่า API Key นี้มีสิทธิ์เข้าถึงโมเดลชื่ออะไรบ้าง (Auto-Discovery)
+    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+    const listRes = await fetch(listUrl);
+    if (!listRes.ok) {
+        const errText = await listRes.text();
+        throw new Error(`Cannot list models: ${listRes.status} ${errText}`);
+    }
+    
+    const listData = await listRes.json();
+    const availableModels = listData.models || [];
+    
+    // พิมพ์รายชื่อโมเดลทั้งหมดที่พบลงใน Log
+    console.log("[Auto-Discover] Found models:", availableModels.map(m => m.name).join(", "));
+
+    // 2. ลำดับความสำคัญของโมเดลที่อยากใช้
+    const priority = [
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-latest",
+        "models/gemini-1.5-pro",
+        "models/gemini-1.5-pro-latest",
+        "models/gemini-pro-vision"
+    ];
+
+    let targetModel = null;
+    for (const p of priority) {
+        if (availableModels.some(m => m.name === p)) {
+            targetModel = p;
+            break;
+        }
+    }
+
+    // ถ้าไม่มีในรายชื่อ Priority เลย ให้สุ่มหยิบ Gemini ตัวไหนก็ได้ที่รองรับ generateContent
+    if (!targetModel) {
+         const fallback = availableModels.find(m => 
+            m.supportedGenerationMethods?.includes("generateContent") && 
+            m.name.includes("gemini")
+        );
+        if (fallback) targetModel = fallback.name;
+    }
+
+    if (!targetModel) {
+         throw new Error("No usable model found. Your API key might not have access to Gemini models.");
+    }
+
+    console.log("[Auto-Discover] Selected model:", targetModel);
+
+    // 3. เริ่มส่งข้อมูลไปยังโมเดลที่หาเจอ
+    const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${apiKey}`;
 
     const prompt = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
     โปรดอ่านภาพเอกสารนี้และสกัดข้อมูลออกมาเป็น JSON เท่านั้น โดยมีโครงสร้างดังนี้เป๊ะๆ (ห้ามมีข้อความอื่นนอกจาก JSON):
@@ -32,7 +81,6 @@ const interpretDocument = async (imageBuffer) => {
       }]
     };
 
-    // ส่งข้อมูลตรงหา Google โดยไม่ต้องใช้ Package ใดๆ ทั้งสิ้น
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -57,7 +105,7 @@ const interpretDocument = async (imageBuffer) => {
     console.error("AI Error:", error.message || error);
     return {
       documentType: 'unrelated',
-      unrelatedNote: 'ระบบ AI ไม่สามารถอ่านเอกสารนี้ได้ หรือรูปภาพไม่ชัดเจน กรุณาลองใหม่อีกครั้งค่ะ',
+      unrelatedNote: `ระบบ AI ขัดข้องชั่วคราว (${error.message.substring(0, 50)}...) กรุณาลองใหม่อีกครั้งค่ะ`,
       nameGuess: null, nameConfidence: 0, appointment: null, medications: [], doctorNote: null
     };
   }
