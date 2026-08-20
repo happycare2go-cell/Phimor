@@ -1,48 +1,66 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const adminAuth = require('./middleware/adminAuth');
-const auth = require('./middleware/auth');
+const cron = require('node-cron');
 
-// นำเข้า Routes
-const adminRoute = require('./routes/admin');
-const externalRoute = require('./routes/external');
-const webhookRoute = require('./routes/webhook');
-const transportRoute = require('./routes/transport');
-const centersRoute = require('./routes/centers');
-const familyRoute = require('./routes/family');
-const cardsRoute = require('./routes/cards');
-const accessRoute = require('./routes/access');
+const webhookRouter = require('./routes/webhook');
+const centersRouter = require('./routes/centers');
+const cardsRouter = require('./routes/cards');
+const familyRouter = require('./routes/family');
+const transportRouter = require('./routes/transport');
+const accessRouter = require('./routes/access');
+const adminRouter = require('./routes/admin');
+const externalRouter = require('./routes/external');
+const reminderService = require('./services/reminderService');
+const cardService = require('./services/cardService');
+const transportService = require('./services/transportService');
+const { TZ } = require('./utils/thaiDate');
 
 const app = express();
 
-// 1. เปิดใช้งาน CORS
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Line-User-Id', 'X-Admin-Key']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Line-User-Id', 'X-Admin-Key', 'X-Center-Api-Key']
 }));
 
-app.use(express.json());
+app.use(webhookRouter);
+app.use(express.json({ limit: '10mb' }));
 
-// 2. จัดลำดับ Router ตามกฎ (Admin และ External ต้องมาก่อน)
-app.use('/api/admin', adminAuth, adminRoute);
-app.use('/api/external', externalRoute); 
-app.use('/webhook', webhookRoute);
+app.use('/api/admin', adminRouter);
+app.use('/api/external', externalRouter);
+app.use('/api', centersRouter);
+app.use('/api', cardsRouter);
+app.use('/api', familyRouter);
+app.use('/api', transportRouter);
+app.use('/api', accessRouter);
 
-// 3. ป้องกัน API ที่เหลือด้วย Auth Middleware
-app.use('/api', auth);
-app.use('/api/transport', transportRoute);
-app.use('/api/centers', centersRoute);
-app.use('/api/family', familyRoute);
-app.use('/api/cards', cardsRoute);
-app.use('/api/access', accessRoute);
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend' }));
 
-// Health Check
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'phimor-backend' });
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'internal_error', message: 'เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง' });
 });
+
+let scheduledTasks = [];
+function startScheduler() {
+  scheduledTasks.push(cron.schedule('*/15 * * * *', () => { cardService.expireOldCards().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 7 * * *', () => { reminderService.sendAppointmentReminders().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 18 * * 0', () => { reminderService.sendWeeklySummary().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 18 * * *', () => { reminderService.sendTomorrowSummaryToCenters().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/30 * * * *', () => { transportService.remindPendingFamilyChoices().catch(console.error); }, { timezone: TZ }));
+  console.log(`ตั้งเวลางานประจำแล้ว ${scheduledTasks.length} งาน (เขตเวลา ${TZ})`);
+}
+function stopScheduler() { scheduledTasks.forEach((t) => t.stop()); scheduledTasks = []; }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`พี่หมอ Backend กำลังทำงานที่พอร์ต ${PORT}`);
+    startScheduler();
+  });
+}
+module.exports = app;
+module.exports.startScheduler = startScheduler;
+module.exports.stopScheduler = stopScheduler;
