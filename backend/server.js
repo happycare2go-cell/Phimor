@@ -30,12 +30,12 @@ app.use(express.json({ limit: '10mb' }));
 
 app.use('/api/admin', adminRouter);
 app.use('/api/external', externalRouter);
+app.use('/api', centerApiRouter); // <-- ย้ายมันขึ้นมาไว้ตรงนี้! (เหนือ centersRouter)
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);
 app.use('/api', familyRouter);
 app.use('/api', transportRouter);
-app.use('/api', accessRouter);
-app.use('/api', centerApiRouter); // <-- เพิ่มเข้ามาใหม่
+app.use('/api', accessRouter); 
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend' }));
 
