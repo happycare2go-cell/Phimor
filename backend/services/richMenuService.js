@@ -28,9 +28,9 @@ const MENU_DEFS = {
       chatBarText: 'เมนูศูนย์',
       areas: [
         { bounds: { x: 0, y: 0, width: 833, height: 1686 },
-          action: { type: 'uri', label: 'จัดการผู้พัก', uri: `https://liff.line.me/${process.env.LIFF_ID_CENTER_ADMIN || 'YOUR_LIFF_ID'}` } },
+          action: { type: 'uri', label: 'จัดการผู้พัก', uri: `https://liff.line.me/${process.env.LIFF_ID_CENTER_ADMIN || 'YOUR_LIFF_ID'}?view=residents&v=2` } },
         { bounds: { x: 833, y: 0, width: 834, height: 1686 },
-          action: { type: 'uri', label: 'รอดำเนินการ', uri: `https://liff.line.me/${process.env.LIFF_ID_CENTER_ADMIN || 'YOUR_LIFF_ID'}?view=transport` } },
+          action: { type: 'uri', label: 'รอดำเนินการ', uri: `https://liff.line.me/${process.env.LIFF_ID_CENTER_ADMIN || 'YOUR_LIFF_ID'}?view=transport&v=2` } },
         { bounds: { x: 1667, y: 0, width: 833, height: 1686 },
           action: { type: 'message', label: 'ติดต่อทีมงาน', text: 'ติดต่อทีมงานพี่หมอ' } },
       ],
