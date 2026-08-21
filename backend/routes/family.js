@@ -7,6 +7,18 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const familyService = require('../services/familyService');
 const { CareProfiles, CareProfileMembers } = require('../db');
 
+const PDF_LINK_TTL_MS = 5 * 60 * 1000;
+const { signPdfToken } = require('../utils/pdfDownloadToken');
+
+function sendPdf(res, result, disposition = 'attachment') {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', disposition + '; filename="' + result.asciiFilename + '"; filename*=UTF-8' + "''" + encodeURIComponent(result.filename));
+  res.send(result.pdfBuffer);
+}
+
 router.use(requireAuth);
 
 // GET /api/invite/:token — ตรวจสอบลิงก์เชิญ
@@ -221,9 +233,21 @@ router.post('/export/pdf', asyncHandler(async (req, res) => {
 
   // ⚠️ HTTP Header ต้องเป็น ASCII เท่านั้น — ชื่อไฟล์ภาษาไทยใส่ตรงๆ ใน Header ไม่ได้ (ทำให้ setHeader Throw Error)
   // ใช้ RFC 5987 (filename*=UTF-8'') สำหรับชื่อจริงที่มี Unicode + fallback ASCII สำหรับ Browser เก่า
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${result.asciiFilename}"; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
-  res.send(result.pdfBuffer);
+  sendPdf(res, result, 'attachment');
+}));
+
+// ออกลิงก์ชั่วคราวเพื่อให้ LIFF เปิด PDF ใน external browser ได้บน iOS/Android
+router.post('/export/pdf-link', asyncHandler(async (req, res) => {
+  const { careProfileId, fromDate, toDate } = req.body;
+  if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) {
+    return res.status(403).json({ error: 'forbidden', message: 'ไม่มีสิทธิ์เข้าถึง Care Profile นี้' });
+  }
+  const expiresAt = Date.now() + PDF_LINK_TTL_MS;
+  const token = signPdfToken({ careProfileId, lineUserId: req.user.lineUserId, fromDate: fromDate || null, toDate: toDate || null, exp: expiresAt });
+  const forwardedProtocol = String(req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const origin = process.env.PUBLIC_BACKEND_URL || `${forwardedProtocol || req.protocol}://${req.get('host')}`;
+  const base = `${origin}/api/export/pdf/download?token=${encodeURIComponent(token)}`;
+  res.json({ previewUrl: base, downloadUrl: `${base}&download=1`, expiresAt: new Date(expiresAt).toISOString() });
 }));
 
 module.exports = router;

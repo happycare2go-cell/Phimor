@@ -277,21 +277,37 @@ async function exportHistoryToPdf(careProfileId, { fromDate, toDate } = {}) {
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
   if (!profile) return { ok: false, reason: 'ไม่พบข้อมูล' };
 
+  const start = fromDate ? new Date(`${fromDate}T00:00:00.000+07:00`) : null;
+  const end = toDate ? new Date(`${toDate}T23:59:59.999+07:00`) : null;
+  if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) {
+    return { ok: false, reason: 'รูปแบบช่วงวันที่ไม่ถูกต้อง' };
+  }
+  if (start && end && start > end) return { ok: false, reason: 'วันที่เริ่มต้องไม่อยู่หลังวันที่สิ้นสุด' };
+
   const { appointments, medications } = await getFullHistory(careProfileId);
   const filteredAppointments = appointments.filter((a) => {
-    if (fromDate && new Date(a.datetime) < new Date(fromDate)) return false;
-    if (toDate && new Date(a.datetime) > new Date(toDate)) return false;
+    const at = new Date(a.datetime);
+    if (start && at < start) return false;
+    if (end && at > end) return false;
     return true;
   });
+  const filteredMedications = medications.filter((m) => {
+    const raw = m.created_at || m.recorded_at;
+    if (!raw) return true; // เก็บข้อมูล legacy ที่ไม่มีเวลาไว้เพื่อไม่ให้ยาสำคัญหายจากรายงาน
+    const at = new Date(raw);
+    if (start && at < start) return false;
+    if (end && at > end) return false;
+    return true;
+  }).sort((a, b) => new Date(b.created_at || b.recorded_at || 0) - new Date(a.created_at || a.recorded_at || 0));
 
   const pdfBuffer = await pdfService.generateHistoryPdf({
-    profile, appointments: filteredAppointments, medications, fromDate, toDate,
+    profile, appointments: filteredAppointments, medications: filteredMedications, fromDate, toDate,
   });
 
   return {
     ok: true,
     pdfBuffer,
-    recordCount: filteredAppointments.length + medications.length,
+    recordCount: filteredAppointments.length + filteredMedications.length,
     filename: `พี่หมอ-${profile.patient_name || 'ประวัติสุขภาพ'}-${Date.now()}.pdf`, // ชื่อไฟล์จริงที่อยากให้ผู้ใช้เห็น (มีภาษาไทยได้)
     asciiFilename: `phimor-history-${careProfileId}-${Date.now()}.pdf`,             // ★ ใช้ใส่ HTTP Header ตรงๆ ต้องเป็น ASCII ล้วนเท่านั้น
   };

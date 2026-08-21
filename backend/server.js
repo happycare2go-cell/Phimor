@@ -7,6 +7,7 @@ const webhookRouter = require('./routes/webhook');
 const centersRouter = require('./routes/centers');
 const cardsRouter = require('./routes/cards');
 const familyRouter = require('./routes/family');
+const pdfDownloadRouter = require('./routes/pdfDownload');
 const transportRouter = require('./routes/transport');
 const accessRouter = require('./routes/access');
 const groupsRouter = require('./routes/groups');
@@ -59,6 +60,7 @@ app.use('/api', (req, res, next) => {
 
 app.use('/api/admin', adminRouter);
 app.use('/api/external', externalRouter);
+app.use('/api/export/pdf/download', pdfDownloadRouter);
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);
 app.use('/api', familyRouter);

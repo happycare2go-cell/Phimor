@@ -1,5 +1,5 @@
 // services/pdfService.js — สร้างไฟล์ PDF จริงสำหรับส่งออกประวัติ (FR-H4)
-// ใช้ pdfkit พร้อม Font ไทย (Loma) ฝังไว้ในโปรเจกต์เอง เพื่อให้ Deploy ที่ไหนก็แสดงภาษาไทยได้แน่นอน
+// ใช้ pdfkit พร้อม Font Sarabun ฝังไว้ในโปรเจกต์เอง เพื่อให้ Deploy ที่ไหนก็แสดงภาษาไทยได้แน่นอน
 // ไม่ต้องพึ่ง Font ที่ติดตั้งไว้ในเครื่อง Server
 
 const PDFDocument = require('pdfkit');
@@ -7,11 +7,12 @@ const path = require('path');
 const fs = require('fs');
 const { formatThaiDateTime } = require('../utils/thaiDate');
 
-const FONT_REGULAR = path.join(__dirname, '../assets/fonts/Loma.otf');
-const FONT_BOLD = path.join(__dirname, '../assets/fonts/Loma-Bold.otf');
+const FONT_REGULAR = path.join(__dirname, '../assets/fonts/Sarabun-Regular.ttf');
+const FONT_BOLD = path.join(__dirname, '../assets/fonts/Sarabun-Bold.ttf');
 
 const NAVY = '#1C2B64';
 const GRAY = '#5A6580';
+const LIGHT_LINE = '#DCE2F0';
 
 function formatThaiDate(iso) {
   return formatThaiDateTime(iso);
@@ -44,61 +45,75 @@ function generateHistoryPdf({ profile, appointments, medications, fromDate, toDa
     doc.registerFont('regular', FONT_REGULAR);
     doc.registerFont('bold', FONT_BOLD);
 
+    const bodyText = (text, options = {}) => doc.font('regular').fontSize(11).fillColor('#000')
+      .text(text, { lineGap: 4, ...options });
+    const sectionTitle = (text) => {
+      doc.moveDown(0.9);
+      doc.font('bold').fontSize(13.5).fillColor(NAVY).text(text, { lineGap: 3 });
+      const y = doc.y + 3;
+      doc.moveTo(48, y).lineTo(doc.page.width - 48, y).lineWidth(0.7).strokeColor(LIGHT_LINE).stroke();
+      doc.y = y + 9;
+    };
+
     // ── หัวเอกสาร ──
-    doc.font('bold').fontSize(20).fillColor(NAVY).text('พี่หมอ — สรุปประวัติสุขภาพ', { align: 'left' });
-    doc.moveDown(0.3);
-    doc.font('bold').fontSize(15).fillColor('#000').text(profile.patient_name || 'ไม่ระบุชื่อ');
+    doc.font('bold').fontSize(20).fillColor(NAVY).text('พี่หมอ - สรุปประวัติสุขภาพ', { align: 'left', lineGap: 4 });
+    doc.moveDown(0.55);
+    doc.font('bold').fontSize(15).fillColor('#000').text(profile.patient_name || 'ไม่ระบุชื่อ', { lineGap: 3 });
     if (fromDate || toDate) {
       doc.font('regular').fontSize(10).fillColor(GRAY)
-        .text(`ช่วงวันที่: ${fromDate ? formatThaiDate(fromDate) : 'เริ่มต้น'} — ${toDate ? formatThaiDate(toDate) : 'ปัจจุบัน'}`);
+        .text(`ช่วงวันที่: ${fromDate ? formatThaiDate(fromDate) : 'เริ่มต้น'} - ${toDate ? formatThaiDate(toDate) : 'ปัจจุบัน'}`, { lineGap: 3 });
     }
-    doc.moveDown(1);
 
     // ── ข้อมูลสุขภาพพื้นฐาน ──
-    doc.font('bold').fontSize(13).fillColor(NAVY).text('ข้อมูลพื้นฐาน');
-    doc.moveDown(0.3);
-    doc.font('regular').fontSize(11).fillColor('#000');
+    sectionTitle('ข้อมูลพื้นฐาน');
     const basics = [
       `กรุ๊ปเลือด: ${profile.blood_type || 'ไม่ทราบ'}`,
       `ส่วนสูง: ${profile.height_cm ? profile.height_cm + ' ซม.' : 'ไม่ระบุ'}`,
       `น้ำหนัก: ${profile.weight_kg ? profile.weight_kg + ' กก.' : 'ไม่ระบุ'}`,
     ];
-    doc.text(basics.join('   |   '));
+    bodyText(basics.join('   |   '));
     if (profile.chronic_conditions?.length) {
-      doc.text(`โรคประจำตัว: ${profile.chronic_conditions.join(', ')}`);
+      bodyText(`โรคประจำตัว: ${profile.chronic_conditions.join(', ')}`);
     }
-    doc.moveDown(1);
+    if (profile.drug_allergies) bodyText(`แพ้ยา: ${profile.drug_allergies}`);
+    if (profile.food_allergies) bodyText(`แพ้อาหาร: ${profile.food_allergies}`);
+    if (profile.mobility_limitations) bodyText(`ข้อจำกัดการเคลื่อนไหว: ${profile.mobility_limitations}`);
+    if (profile.emergency_contact_name || profile.emergency_contact_phone) {
+      bodyText(`ผู้ติดต่อฉุกเฉิน: ${profile.emergency_contact_name || '-'} ${profile.emergency_contact_phone || ''}`.trim());
+    }
 
     // ── ตารางนัดหมาย ──
-    doc.font('bold').fontSize(13).fillColor(NAVY).text('ประวัตินัดหมาย');
-    doc.moveDown(0.3);
+    sectionTitle('ประวัตินัดหมาย');
     if (appointments.length === 0) {
       doc.font('regular').fontSize(11).fillColor(GRAY).text('ไม่มีข้อมูลนัดหมายในช่วงที่เลือก');
     } else {
       appointments.forEach((a, i) => {
-        doc.font('bold').fontSize(11).fillColor('#000').text(`${i + 1}. ${a.hospital}`);
-        doc.font('regular').fontSize(10).fillColor(GRAY).text(`   ${formatThaiDate(a.datetime)}${a.note ? '  ·  ' + a.note : ''}`);
-        doc.moveDown(0.2);
+        doc.font('bold').fontSize(11).fillColor('#000').text(`${i + 1}. ${a.hospital}`, { lineGap: 4 });
+        const cancelled = a.status === 'cancelled' ? ' [ยกเลิก]' : '';
+        doc.font('regular').fontSize(10).fillColor(GRAY).text(`   ${formatThaiDate(a.datetime)}${cancelled}${a.note ? ' - ' + a.note : ''}`, { lineGap: 4 });
+        doc.moveDown(0.45);
       });
     }
-    doc.moveDown(0.8);
-
     // ── รายการยา ──
-    doc.font('bold').fontSize(13).fillColor(NAVY).text('รายการยา');
-    doc.moveDown(0.3);
+    sectionTitle('รายการยา');
     if (medications.length === 0) {
       doc.font('regular').fontSize(11).fillColor(GRAY).text('ไม่มีข้อมูลยาในช่วงที่เลือก');
     } else {
       medications.forEach((m, i) => {
-        doc.font('regular').fontSize(11).fillColor('#000').text(`${i + 1}. ${m.name} — ${m.dose || 'ไม่ระบุวิธีใช้'}`);
+        const date = m.created_at || m.recorded_at;
+        const detail = [m.dose || 'ไม่ระบุวิธีใช้', m.condition ? `สำหรับ ${m.condition}` : '', date ? `บันทึก ${formatThaiDate(date)}` : '']
+          .filter(Boolean).join(' | ');
+        doc.font('bold').fontSize(11).fillColor('#000').text(`${i + 1}. ${m.name}`, { lineGap: 4 });
+        doc.font('regular').fontSize(9.5).fillColor(GRAY).text(`   ${detail}`, { lineGap: 4 });
+        doc.moveDown(0.45);
       });
     }
 
     // ── ท้ายเอกสาร ──
-    doc.moveDown(1.5);
+    doc.moveDown(1.2);
     doc.font('regular').fontSize(9).fillColor(GRAY)
-      .text(`สร้างโดยพี่หมอ เมื่อ ${formatThaiDate(new Date().toISOString())}`, { align: 'left' });
-    doc.text('เอกสารนี้สรุปจากข้อมูลที่ครอบครัวและศูนย์ดูแลบันทึกไว้ กรุณาให้แพทย์ผู้ตรวจเป็นผู้วินิจฉัยขั้นสุดท้าย');
+      .text(`สร้างโดยพี่หมอ เมื่อ ${formatThaiDate(new Date().toISOString())}`, { align: 'left', lineGap: 3 });
+    doc.text('เอกสารนี้สรุปจากข้อมูลที่ครอบครัวและศูนย์ดูแลบันทึกไว้ กรุณาให้แพทย์ผู้ตรวจเป็นผู้วินิจฉัยขั้นสุดท้าย', { lineGap: 3 });
 
     doc.end();
   });

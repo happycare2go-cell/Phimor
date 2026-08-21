@@ -4,6 +4,10 @@ const { test, beforeEach, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
+process.env.NODE_ENV = 'test';
+process.env.ALLOW_INSECURE_LINE_HEADER = 'true';
+process.env.PDF_DOWNLOAD_SECRET = process.env.PDF_DOWNLOAD_SECRET || 'test-pdf-download-secret';
+
 const db = require('../backend/db');
 const familyService = require('../backend/services/familyService');
 
@@ -54,6 +58,36 @@ test('POST /api/export/pdf ผ่าน HTTP จริง ต้องคืน�
 
   const buf = Buffer.from(await res.arrayBuffer());
   assert.strictEqual(buf.slice(0, 4).toString(), '%PDF');
+});
+
+test('ลิงก์ PDF ชั่วคราวเปิดโดยไม่ใช้ Authorization header และเหมาะกับ Safari', async () => {
+  const profile = await familyService.createIndependentProfile({ ownerLineId: 'U_FAMILY', patientName: 'คุณยายทองดี' });
+  await db.Appointments.insert({ appointment_id: 'A1', care_profile_id: profile.care_profile_id, hospital: 'รพ.ทดสอบ', datetime: '2050-01-01T09:00:00+07:00' });
+
+  const issued = await api('/api/export/pdf-link', {
+    method: 'POST', body: JSON.stringify({ careProfileId: profile.care_profile_id, fromDate: '2050-01-01', toDate: '2050-01-01' }),
+  });
+  assert.strictEqual(issued.status, 200);
+  const links = await issued.json();
+  assert.ok(links.previewUrl.includes('/api/export/pdf/download?token='));
+  assert.ok(links.downloadUrl.includes('download=1'));
+
+  const preview = await fetch(links.previewUrl);
+  assert.strictEqual(preview.status, 200);
+  assert.strictEqual(preview.headers.get('content-type'), 'application/pdf');
+  assert.ok(preview.headers.get('content-disposition').startsWith('inline'));
+  assert.strictEqual(preview.headers.get('cache-control'), 'private, no-store, max-age=0');
+  const buf = Buffer.from(await preview.arrayBuffer());
+  assert.strictEqual(buf.slice(0, 4).toString(), '%PDF');
+
+  const download = await fetch(links.downloadUrl);
+  assert.strictEqual(download.status, 200);
+  assert.ok(download.headers.get('content-disposition').startsWith('attachment'));
+});
+
+test('ลิงก์ PDF ที่ถูกแก้ไขต้องถูกปฏิเสธ', async () => {
+  const res = await fetch(`${baseUrl}/api/export/pdf/download?token=invalid.token`);
+  assert.strictEqual(res.status, 401);
 });
 
 test('POST /api/export/pdf โดยคนที่ไม่ใช่เจ้าของ ต้องถูกปฏิเสธ', async () => {
