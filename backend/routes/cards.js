@@ -12,13 +12,29 @@ router.use(requireAuth);
 
 // ตรวจว่าผู้เรียกเป็นพนักงานของศูนย์เจ้าของการ์ดนี้จริง (ผ่านกลุ่มงานศูนย์ที่ผูกไว้)
 const assertCardBelongsToRequesterCenter = asyncHandler(async (req, res, next) => {
-  const { PendingCards, CenterStaff } = require('../db');
+  const { PendingCards, CenterStaff, Centers } = require('../db');
   const card = await PendingCards.findOne((c) => c.card_id === req.params.cardId);
   if (!card) return res.status(404).json({ error: 'not_found', message: 'ไม่พบการ์ด' });
 
   // ต้องเป็นสมาชิกที่ระบบบันทึกไว้จริง ห้ามเชื่อ group id จาก request header
-  const asStaff = await CenterStaff.findOne((s) => s.center_id === card.center_id && s.line_user_id === req.user.lineUserId);
+  const asStaff = await CenterStaff.findOne((s) =>
+    s.center_id === card.center_id &&
+    s.line_user_id === req.user.lineUserId &&
+    (!s.status || s.status === 'active')
+  );
   if (!asStaff) return res.status(403).json({ error: 'forbidden', message: 'ไม่มีสิทธิ์เข้าถึงการ์ดนี้' });
+
+  const center = await Centers.findOne((c) => c.center_id === card.center_id);
+  const subscription = require('../services/subscriptionService').entitlement(center);
+  if (!subscription.allowed) {
+    return res.status(402).json({
+      error: subscription.code,
+      message: subscription.code === 'center_suspended'
+        ? 'ศูนย์นี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ'
+        : 'แพ็กเกจพี่หมอของศูนย์ยังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ',
+      subscription,
+    });
+  }
 
   req.card = card;
   req.cardStaffRole = asStaff.role;

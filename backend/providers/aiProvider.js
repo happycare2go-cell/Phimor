@@ -1,5 +1,5 @@
 const mockQueue = [];
-const interpretDocument = async (imageBuffer) => {
+const interpretDocument = async (imageBuffer, imageMimeType = 'image/jpeg') => {
   if (process.env.NODE_ENV === 'test' && mockQueue.length > 0) return mockQueue.shift();
   try {
     const apiKey = process.env.GEMINI_API_KEY || '';
@@ -79,7 +79,7 @@ const interpretDocument = async (imageBuffer) => {
       contents: [{
         parts: [
           { text: prompt },
-          { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+          { inline_data: { mime_type: imageMimeType, data: base64Image } }
         ]
       }]
     };

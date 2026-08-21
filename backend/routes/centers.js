@@ -153,13 +153,19 @@ router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['
   if (!profile) return res.status(403).json({ error: 'forbidden' });
   let items = req.body.items;
   let source = 'center_manual';
+  let image = null;
+  if (req.body.imageBase64) {
+    image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
+    if (!image.ok) return res.status(image.status).json({ error: image.error, message: image.message });
+  }
   if ((!Array.isArray(items) || items.length === 0) && req.body.imageBase64) {
     const aiProvider = require('../providers/aiProvider');
-    const parsed = await aiProvider.interpretDocument(Buffer.from(req.body.imageBase64, 'base64'));
+    const parsed = await aiProvider.interpretDocument(image.buffer, image.mimeType);
     items = parsed.medications || [];
     source = 'center_image_ai';
     if (!req.body.confirmAi) return res.status(202).json({ status: 'draft_requires_confirmation', items, message: 'กรุณาตรวจสอบและยืนยันรายการยาที่ AI อ่านได้ก่อนบันทึก' });
   }
+  if (image && req.body.confirmAi) source = 'center_image_ai';
   const result = await familyService.recordMedicationSnapshot({
     careProfileId: profile.care_profile_id, items, recordedBy: req.user.lineUserId,
     source, sourceImageBase64: req.body.imageBase64 || null,

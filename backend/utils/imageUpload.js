@@ -1,0 +1,23 @@
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function decodeMedicalImage(imageBase64, imageMimeType = 'image/jpeg') {
+  if (!ALLOWED_IMAGE_TYPES.has(imageMimeType)) {
+    return { ok: false, status: 415, error: 'unsupported_image', message: 'รองรับรูป JPEG, PNG หรือ WebP เท่านั้น กรุณาเลือกรูปใหม่หรือถ่ายภาพหน้าจอก่อนอัปโหลด' };
+  }
+  if (typeof imageBase64 !== 'string' || !imageBase64.trim()) {
+    return { ok: false, status: 400, error: 'invalid_image', message: 'ไม่พบข้อมูลรูปภาพ' };
+  }
+  const clean = imageBase64.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) {
+    return { ok: false, status: 400, error: 'invalid_image', message: 'ข้อมูลรูปภาพไม่ถูกต้อง' };
+  }
+  const buffer = Buffer.from(clean, 'base64');
+  if (!buffer.length) return { ok: false, status: 400, error: 'invalid_image', message: 'รูปภาพว่างเปล่า' };
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    return { ok: false, status: 413, error: 'image_too_large', message: 'รูปภาพมีขนาดใหญ่เกิน 6 MB กรุณาลดขนาดแล้วลองใหม่' };
+  }
+  return { ok: true, buffer, mimeType: imageMimeType };
+}
+
+module.exports = { decodeMedicalImage, MAX_IMAGE_BYTES, ALLOWED_IMAGE_TYPES };

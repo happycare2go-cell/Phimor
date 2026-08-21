@@ -187,6 +187,17 @@
   </div>
 </div>
 
+<div class="modal-bg" id="medicationReviewModal"><div class="modal">
+  <h3>ตรวจสอบรายการยาที่ AI อ่านได้</h3>
+  <p style="font-size:12px;color:var(--gray)">กรุณาตรวจชื่อยา วิธีใช้ และโรค/ภาวะให้ถูกต้องก่อนยืนยัน ระบบจะยังไม่บันทึกจนกดปุ่มยืนยันด้านล่าง</p>
+  <div id="medicationReviewRows"></div>
+  <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="addMedicationReviewRow()">+ เพิ่มรายการยา</button>
+  <div style="display:flex;gap:8px;margin-top:14px">
+    <button class="btn btn-outline" onclick="closeMedicationReview()">ยกเลิก</button>
+    <button class="btn btn-primary" onclick="confirmMedicationReview()">ยืนยันและบันทึก</button>
+  </div>
+</div></div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -197,6 +208,7 @@ let currentProfile = null;
 let allProfiles = [];
 let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
+let medicationDraftImage = null;
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -349,13 +361,51 @@ async function saveMedication() {
   const dose = document.getElementById('medDose').value.trim();
   const file = document.getElementById('medImage').files[0];
   if (!name && !file) return toast('กรุณากรอกชื่อยาหรือเลือกรูป');
-  const imageBase64 = file ? await fileToBase64(file) : null;
+  let image = null;
+  try { image = file ? await normalizeImageFile(file) : null; }
+  catch(e) { return toast(e.message || 'ไม่สามารถเตรียมรูปได้'); }
   const items = name ? [{ name, dose, condition:document.getElementById('medCondition').value.trim() }] : [];
-  await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`, { method:'POST', body: JSON.stringify({ items, imageBase64 }) });
+  const payload = file ? { items:[], imageBase64:image.imageBase64, imageMimeType:image.imageMimeType } : { items };
+  const result = await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`, { method:'POST', body: JSON.stringify(payload) });
+  if (result.status === 'draft_requires_confirmation') {
+    medicationDraftImage = image;
+    document.getElementById('medicationReviewRows').innerHTML = '';
+    (result.items || []).forEach(addMedicationReviewRow);
+    if (!(result.items || []).length) addMedicationReviewRow({ name, dose, condition:document.getElementById('medCondition').value.trim() });
+    document.getElementById('medicationReviewModal').classList.add('show');
+    return toast('AI อ่านรูปแล้ว กรุณาตรวจสอบก่อนบันทึก');
+  }
   toast('บันทึกรายการยารอบนี้แล้ว');
-  document.getElementById('medName').value=''; document.getElementById('medDose').value='';
+  clearMedicationForm();
 }
-function fileToBase64(file){ return new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(String(r.result).split(',')[1]); r.onerror=reject; r.readAsDataURL(file); }); }
+function addMedicationReviewRow(item={}) {
+  const row=document.createElement('div'); row.className='card medication-review-row'; row.style.padding='10px';
+  row.innerHTML=`<label>ชื่อยา</label><input class="review-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="review-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><input class="review-condition" value="${esc(item.condition||'')}"><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
+  document.getElementById('medicationReviewRows').appendChild(row);
+}
+function closeMedicationReview(){ document.getElementById('medicationReviewModal').classList.remove('show'); medicationDraftImage=null; }
+async function confirmMedicationReview(){
+  const items=Array.from(document.querySelectorAll('.medication-review-row')).map(row=>({name:row.querySelector('.review-name').value.trim(),dose:row.querySelector('.review-dose').value.trim(),condition:row.querySelector('.review-condition').value.trim()})).filter(x=>x.name);
+  if(!items.length)return toast('กรุณากรอกชื่อยาอย่างน้อย 1 รายการ');
+  await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`,{method:'POST',body:JSON.stringify({items,imageBase64:medicationDraftImage?.imageBase64||null,imageMimeType:medicationDraftImage?.imageMimeType||null,confirmAi:true})});
+  closeMedicationReview(); clearMedicationForm(); toast('ยืนยันและบันทึกรายการยาแล้ว');
+}
+function clearMedicationForm(){ ['medName','medDose','medCondition'].forEach(id=>document.getElementById(id).value=''); document.getElementById('medImage').value=''; }
+async function normalizeImageFile(file){
+  if(file.type && !file.type.startsWith('image/'))throw new Error('กรุณาเลือกไฟล์รูปภาพ');
+  if(file.size>20*1024*1024)throw new Error('รูปต้นฉบับใหญ่เกิน 20 MB');
+  let bitmap;
+  try { bitmap=await createImageBitmap(file); }
+  catch (_) { bitmap=await loadImageElement(file); }
+  const width=bitmap.width||bitmap.naturalWidth, height=bitmap.height||bitmap.naturalHeight;
+  const scale=Math.min(1,1800/Math.max(width,height));
+  const canvas=document.createElement('canvas'); canvas.width=Math.max(1,Math.round(width*scale)); canvas.height=Math.max(1,Math.round(height*scale));
+  canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height); if(bitmap.close)bitmap.close();
+  const imageBase64=canvas.toDataURL('image/jpeg',.82).split(',')[1];
+  if(Math.ceil(imageBase64.length*3/4)>6*1024*1024)throw new Error('รูปหลังลดขนาดยังใหญ่เกิน 6 MB กรุณาถ่ายใหม่หรือครอปรูป');
+  return {imageBase64,imageMimeType:'image/jpeg'};
+}
+function loadImageElement(file){return new Promise((resolve,reject)=>{const url=URL.createObjectURL(file),img=new Image();img.onload=()=>{URL.revokeObjectURL(url);resolve(img)};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('อุปกรณ์นี้อ่านรูปไม่ได้ กรุณาถ่ายภาพหน้าจอแล้วอัปโหลดภาพนั้น'))};img.src=url})}
 
 // ── F4: ประวัติ + PDF ──
 async function loadHistory() {
