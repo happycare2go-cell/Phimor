@@ -163,6 +163,7 @@ const NotificationOutbox = makeTable('notificationOutbox');
 const WebhookInbox = makeTable('webhookInbox');
 const DataSubjectRequests = makeTable('dataSubjectRequests');
 const PendingFamilyDeliveries = makeTable('pendingFamilyDeliveries');
+const AdminUsers = makeTable('adminUsers');
 
 const rawAuditFindAll = AuditLog.findAll.bind(AuditLog);
 AuditLog.findAll = async () => (await rawAuditFindAll()).sort((a, b) => new Date(a.at || a._createdAt) - new Date(b.at || b._createdAt));
@@ -242,5 +243,6 @@ module.exports = {
   Bills, AccessRequests, AuditLog, Consents, RichMenus, Vitals, CareProfileMembers, CareProfileShareInvites,
   NotificationOutbox, WebhookInbox, DataSubjectRequests,
   PendingFamilyDeliveries,
+  AdminUsers,
   audit, resetAll, initializeDatabase, withTransaction, pingDatabase,
 };

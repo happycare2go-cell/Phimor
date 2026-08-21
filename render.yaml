@@ -35,6 +35,8 @@ services:
         sync: false
       - key: LIFF_ID_REGISTER
         sync: false
+      - key: LIFF_ID_SYSTEM_ADMIN
+        sync: false
       - key: ALLOWED_ORIGINS
         value: "https://phimor-liff.onrender.com"
       - key: CARE2GO_GROUP_BIND_CODE

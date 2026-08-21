@@ -8,11 +8,28 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAdminKey } = require('../middleware/adminAuth');
+const { requireAdminKey, validAdminKey } = require('../middleware/adminAuth');
+const { requireAuth } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
-const { Centers, Residents, CareProfiles, AuditLog, DataSubjectRequests, audit, now } = require('../db');
+const { Centers, Residents, CareProfiles, AuditLog, DataSubjectRequests, AdminUsers, audit, id, now } = require('../db');
 const subscriptionService = require('../services/subscriptionService');
+
+// Bootstrap ครั้งแรกต้องมีทั้ง LINE identity และ ADMIN_API_KEY ปัจจุบัน
+// หลังสำเร็จ LINE account นี้เข้าใช้งานได้ด้วย ID token โดยไม่ต้องกรอก shared key อีก
+router.post('/bootstrap', requireAuth, asyncHandler(async (req, res) => {
+  if (!validAdminKey(req.header('X-Admin-Key'))) {
+    return res.status(401).json({ error: 'unauthorized', message: 'ADMIN_API_KEY ไม่ถูกต้อง' });
+  }
+  let admin = await AdminUsers.findOne((row) => row.line_user_id === req.user.lineUserId);
+  if (admin) {
+    admin = await AdminUsers.update((row) => row.line_user_id === req.user.lineUserId, { status: 'active', updated_at: now() });
+  } else {
+    admin = await AdminUsers.insert({ admin_id: id('ADM'), line_user_id: req.user.lineUserId, role: 'system_admin', status: 'active', created_at: now() });
+  }
+  await audit('admin.bootstrap_completed', req.user.lineUserId, { adminId: admin.admin_id });
+  res.json({ ok: true, admin: { adminId: admin.admin_id, role: admin.role, lineUserId: admin.line_user_id } });
+}));
 
 router.use(requireAdminKey);
 
@@ -33,7 +50,7 @@ router.post('/centers', asyncHandler(async (req, res) => {
   const center = await centerService.createCenter({ name: name.trim(), ownerLineId: ownerLineId.trim() });
   let subscription = subscriptionService.entitlement(center);
   if (subscriptionStartAt && subscriptionEndAt) {
-    const configured = await subscriptionService.setSubscription({ centerId: center.center_id, startsAt: subscriptionStartAt, expiresAt: subscriptionEndAt, packageType: packageType || 'custom', actor: 'admin' });
+    const configured = await subscriptionService.setSubscription({ centerId: center.center_id, startsAt: subscriptionStartAt, expiresAt: subscriptionEndAt, packageType: packageType || 'custom', actor: req.admin.actor });
     if (!configured.ok) return res.status(400).json({ error: 'bad_request', message: configured.reason });
     subscription = configured.entitlement;
   }
@@ -73,7 +90,7 @@ router.get('/centers', asyncHandler(async (req, res) => {
 router.get('/centers/:centerId', asyncHandler(async (req, res) => {
   const details = await subscriptionService.getAdminCenterDetails(req.params.centerId);
   if (!details) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์นี้' });
-  await audit('admin.center_details_viewed', 'admin', { centerId: req.params.centerId });
+  await audit('admin.center_details_viewed', req.admin.actor, { centerId: req.params.centerId });
   res.json(details);
 }));
 
@@ -81,7 +98,7 @@ router.patch('/centers/:centerId/subscription', asyncHandler(async (req, res) =>
   try {
     const result = await subscriptionService.setSubscription({
       centerId: req.params.centerId, startsAt: req.body.startsAt, expiresAt: req.body.expiresAt,
-      packageType: req.body.packageType || 'custom', note: req.body.note || '', actor: 'admin',
+      packageType: req.body.packageType || 'custom', note: req.body.note || '', actor: req.admin.actor,
     });
     if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
     res.json(result);
@@ -93,7 +110,7 @@ router.patch('/centers/:centerId/subscription', asyncHandler(async (req, res) =>
 router.post('/centers/:centerId/transfer-owner', asyncHandler(async (req, res) => {
   const newOwnerLineId = String(req.body.newOwnerLineId || '').trim();
   if (!newOwnerLineId) return res.status(400).json({ error:'bad_request', message:'กรุณาระบุ LINE User ID เจ้าของคนใหม่' });
-  const result = await centerService.transferOwner({ centerId:req.params.centerId, newOwnerLineId, actor:'admin', keepPreviousAsManager:!!req.body.keepPreviousAsManager });
+  const result = await centerService.transferOwner({ centerId:req.params.centerId, newOwnerLineId, actor:req.admin.actor, keepPreviousAsManager:!!req.body.keepPreviousAsManager });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
   res.json(result);
 }));
@@ -107,7 +124,7 @@ router.get('/centers/:centerId/care-profiles', asyncHandler(async (req, res) => 
     const profile = resident.care_profile_id && await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
     rows.push({ resident, profile: profile || null });
   }
-  await audit('admin.care_profiles_viewed', 'admin', { centerId: center.center_id, count: rows.length });
+  await audit('admin.care_profiles_viewed', req.admin.actor, { centerId: center.center_id, count: rows.length });
   res.json({ center: { centerId: center.center_id, name: center.name }, rows });
 }));
 
@@ -123,9 +140,9 @@ router.get('/data-requests', asyncHandler(async (req, res) => {
 
 router.patch('/data-requests/:requestId', asyncHandler(async (req, res) => {
   if (!['in_progress', 'completed', 'rejected'].includes(req.body.status)) return res.status(400).json({ error: 'bad_request' });
-  const request = await DataSubjectRequests.update((r) => r.request_id === req.params.requestId, { status: req.body.status, admin_note: String(req.body.note || '').slice(0, 1000), updated_at: now(), updated_by: 'admin' });
+  const request = await DataSubjectRequests.update((r) => r.request_id === req.params.requestId, { status: req.body.status, admin_note: String(req.body.note || '').slice(0, 1000), updated_at: now(), updated_by: req.admin.actor });
   if (!request) return res.status(404).json({ error: 'not_found' });
-  await audit('privacy.data_request_updated', 'admin', { requestId: request.request_id, status: request.status });
+  await audit('privacy.data_request_updated', req.admin.actor, { requestId: request.request_id, status: request.status });
   res.json(request);
 }));
 
@@ -172,7 +189,7 @@ router.post('/centers/:centerId/status', asyncHandler(async (req, res) => {
   if (!center) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์นี้' });
 
   await Centers.update((c) => c.center_id === req.params.centerId, { status });
-  await audit('center.status_changed', 'admin', { centerId: req.params.centerId, status });
+  await audit('center.status_changed', req.admin.actor, { centerId: req.params.centerId, status });
 
   res.json({
     ok: true, centerId: center.center_id, status,

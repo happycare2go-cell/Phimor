@@ -80,6 +80,7 @@ app.get('/config/liff', (req, res) => res.json({
   familyLiffId: process.env.LIFF_ID_FAMILY || null,
   centerAdminLiffId: process.env.LIFF_ID_CENTER_ADMIN || null,
   registerLiffId: process.env.LIFF_ID_REGISTER || null,
+  systemAdminLiffId: process.env.LIFF_ID_SYSTEM_ADMIN || null,
 }));
 
 app.use((err, req, res, next) => {

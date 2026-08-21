@@ -62,6 +62,25 @@ test('สร้างศูนย์ด้วย Admin Key ที่ถูกต
   assert.strictEqual(centers.length, 1);
 });
 
+test('ผูกบัญชี LINE เป็นผู้ดูแลครั้งแรกด้วย Admin Key แล้วใช้ LINE identity เข้า Admin API ได้', async () => {
+  const lineUserId = 'U_SYSTEM_ADMIN';
+  const bootstrap = await callAdmin('/api/admin/bootstrap', {
+    method: 'POST',
+    headers: { 'X-Admin-Key': REAL_ADMIN_KEY, 'X-Line-User-Id': lineUserId },
+    body: '{}',
+  });
+  assert.strictEqual(bootstrap.status, 200);
+  assert.strictEqual((await db.AdminUsers.findAll()).length, 1);
+
+  const res = await callAdmin('/api/admin/centers', { headers: { 'X-Line-User-Id': lineUserId } });
+  assert.strictEqual(res.status, 200);
+});
+
+test('บัญชี LINE ที่ยังไม่ถูกผูกเป็นผู้ดูแลต้องเข้า Admin API ไม่ได้', async () => {
+  const res = await callAdmin('/api/admin/centers', { headers: { 'X-Line-User-Id': 'U_NOT_ADMIN' } });
+  assert.strictEqual(res.status, 401);
+});
+
 test('สร้างศูนย์โดยไม่ระบุชื่อ ต้องถูกปฏิเสธ 400', async () => {
   const res = await callAdmin('/api/admin/centers', {
     method: 'POST', headers: { 'X-Admin-Key': REAL_ADMIN_KEY },
