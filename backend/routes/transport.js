@@ -21,6 +21,9 @@ router.get('/transport/family/pending', asyncHandler(async (req, res) => {
 router.get('/transport/:planId', asyncHandler(async (req, res) => {
   const plan = await TransportPlans.findOne((p) => p.plan_id === req.params.planId);
   if (!plan) return res.status(404).json({ error: 'not_found' });
+  const familyAllowed = await require('../services/familyService').canAccessProfile(plan.care_profile_id, req.user.lineUserId);
+  const centerAllowed = plan.center_id && await require('../db').CenterStaff.findOne((s) => s.center_id === plan.center_id && s.line_user_id === req.user.lineUserId && (!s.status || s.status === 'active'));
+  if (!familyAllowed && !centerAllowed) return res.status(403).json({ error: 'forbidden', message: 'ไม่มีสิทธิ์ดูแผนการเดินทางนี้' });
   res.json(plan);
 }));
 
@@ -28,7 +31,7 @@ router.get('/transport/:planId', asyncHandler(async (req, res) => {
 router.post('/transport/:planId/family-choice', asyncHandler(async (req, res) => {
   const plan = await TransportPlans.findOne((p) => p.plan_id === req.params.planId);
   if (!plan) return res.status(404).json({ error: 'not_found' });
-  if (!await require('../services/familyService').canAccessProfile(plan.care_profile_id, req.user.lineUserId)) {
+  if (!await require('../services/familyService').hasPermission(plan.care_profile_id, req.user.lineUserId, 'decide_transport')) {
     return res.status(403).json({ error: 'forbidden', message: 'เฉพาะครอบครัวเจ้าของ Care Profile เท่านั้น' });
   }
   const { choice } = req.body;

@@ -13,11 +13,11 @@ router.use(requireAuth);
 
 // GET /api/center/me — ข้อมูลศูนย์ของผู้ใช้ปัจจุบัน
 router.get('/center/me', asyncHandler(async (req, res) => {
-  const staffRows = await CenterStaff.findWhere((s) => s.line_user_id === req.user.lineUserId);
+  const staffRows = await CenterStaff.findWhere((s) => s.line_user_id === req.user.lineUserId && (!s.status || s.status === 'active'));
   if (staffRows.length === 0) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์ที่ท่านมีสิทธิ์' });
   const centers = await Promise.all(staffRows.map(async (s) => {
     const c = await Centers.findOne((x) => x.center_id === s.center_id);
-    return { ...c, myRole: s.role };
+    return { ...c, myRole: s.role, subscription: require('../services/subscriptionService').entitlement(c) };
   }));
   res.json({ centers });
 }));
@@ -46,9 +46,15 @@ router.post('/center/staff', requireCenterStaff(['owner']), asyncHandler(async (
 
 // DELETE /api/center/staff/:id — ถอดถอนผู้จัดการ (เจ้าของเท่านั้น)
 router.delete('/center/staff/:targetLineId', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
-  const result = await centerService.removeManager({ centerId: req.centerId, targetLineId: req.params.targetLineId, requesterLineId: req.user.lineUserId });
+  const result = await centerService.revokeStaff({ centerId: req.centerId, targetLineId: req.params.targetLineId, requesterLineId: req.user.lineUserId, reason: req.body?.reason || '' });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
   res.json({ ok: true });
+}));
+
+router.post('/center/staff/:targetLineId/approve', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
+  const result = await centerService.approveStaff({ centerId: req.centerId, targetLineId: req.params.targetLineId, requesterLineId: req.user.lineUserId, role: req.body.role || 'staff' });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  res.json(result.staff);
 }));
 
 // GET /api/residents — รายชื่อผู้พักของศูนย์ (เจ้าของ/ผู้จัดการ)
@@ -69,9 +75,11 @@ router.post('/residents', requireCenterStaff(), asyncHandler(async (req, res) =>
   if (!fullName || !fullName.trim()) {
     return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุชื่อ-นามสกุลผู้พัก' });
   }
-  const { resident, inviteUrl, inviteExpiresAt, accessRequestSent, accessRequestId } = await centerService.addResident({
+  const result = await centerService.addResident({
     centerId: req.centerId, fullName, aliases, room, familyPhone,
   });
+  if (!result.ok) return res.status(409).json({ error: 'duplicate', message: result.reason, resident: result.duplicate });
+  const { resident, inviteUrl, inviteExpiresAt, accessRequestSent, accessRequestId } = result;
   res.status(201).json({
     residentId: resident.resident_id, status: resident.status, careProfileId: resident.care_profile_id,
     inviteUrl, inviteExpiresAt, accessRequestSent, accessRequestId,
@@ -150,6 +158,7 @@ router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['
     const parsed = await aiProvider.interpretDocument(Buffer.from(req.body.imageBase64, 'base64'));
     items = parsed.medications || [];
     source = 'center_image_ai';
+    if (!req.body.confirmAi) return res.status(202).json({ status: 'draft_requires_confirmation', items, message: 'กรุณาตรวจสอบและยืนยันรายการยาที่ AI อ่านได้ก่อนบันทึก' });
   }
   const result = await familyService.recordMedicationSnapshot({
     careProfileId: profile.care_profile_id, items, recordedBy: req.user.lineUserId,
@@ -161,14 +170,14 @@ router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['
 
 // PATCH /api/residents/:id — แก้ไขข้อมูลผู้พัก (เจ้าของ/ผู้จัดการ)
 router.patch('/residents/:residentId', requireCenterStaff(), asyncHandler(async (req, res) => {
-  const updated = await centerService.updateResident(req.params.residentId, req.body);
+  const updated = await centerService.updateResident(req.centerId, req.params.residentId, req.body);
   if (!updated) return res.status(404).json({ error: 'not_found' });
   res.json(updated);
 }));
 
 // POST /api/residents/:id/discharge — จำหน่ายออก (เจ้าของ/ผู้จัดการ)
 router.post('/residents/:residentId/discharge', requireCenterStaff(), asyncHandler(async (req, res) => {
-  const result = await centerService.dischargeResident(req.params.residentId, req.user.lineUserId);
+  const result = await centerService.dischargeResident(req.centerId, req.params.residentId, req.user.lineUserId);
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
   res.json({ ok: true, familyNotice: result.familyNotice });
 }));

@@ -172,6 +172,7 @@
       <p style="font-size:12px;color:var(--gray)">เจ้าของ Care Profile หลักสร้างลิงก์และส่งให้ญาติ ผู้รับต้องเปิดด้วยบัญชี LINE ของตนเองและยอมรับคำเชิญ</p>
       <button class="btn btn-outline" onclick="createCaregiverInvite()">สร้างลิงก์เชิญญาติ</button>
       <textarea id="caregiverInviteUrl" readonly style="display:none;margin-top:10px"></textarea>
+      <div id="caregiverList" style="margin-top:12px"></div>
     </div>
   </div>
 </div>
@@ -188,7 +189,7 @@ let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
-function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function api(path, opts={}) {
   const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
@@ -255,6 +256,7 @@ async function loadDashboard() {
       </div>`;
     renderUpcoming(currentProfile.upcomingAppointments);
     document.getElementById('caregiverInviteCard').style.display=currentProfile.familyRole==='owner'?'block':'none';
+    if(currentProfile.familyRole==='owner') await loadCaregivers();
     document.getElementById('bloodType').value=p.blood_type||''; document.getElementById('gender').value=p.gender||'';
     document.getElementById('heightCm').value=p.height_cm||''; document.getElementById('weightKg').value=p.weight_kg||'';
     document.getElementById('chronicConditions').value=(p.chronic_conditions||[]).join(', ');
@@ -272,7 +274,7 @@ async function loadDashboard() {
 function selectProfile(id){ currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null; loadDashboard(); }
 async function loadAccessRequests(){
   const data = await api('/api/access-requests');
-  document.getElementById('accessRequestList').innerHTML = data.requests.map(r=>`<div class="card"><h3>ศูนย์ขอเข้าถึงข้อมูลของ ${esc(r.patientName)}</h3><div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="respondAccess('${r.requestId}',true)">อนุญาต</button><button class="btn btn-outline" onclick="respondAccess('${r.requestId}',false)">ไม่อนุญาต</button></div></div>`).join('');
+  document.getElementById('accessRequestList').innerHTML = data.requests.map(r=>`<div class="card"><h3>${esc(r.centerName)} ขอเข้าถึงข้อมูลของ ${esc(r.patientName)}</h3><p style="font-size:12px;color:var(--gray)">สาขา/ที่อยู่: ${esc(r.centerAddress||'-')}<br>เบอร์ติดต่อ: ${esc(r.centerPhone||'-')}<br>ผู้พัก: ${esc(r.residentName||r.patientName)}${r.room?' · ห้อง '+esc(r.room):''}<br>คำขอหมดอายุ: ${r.expiresAt?new Date(r.expiresAt).toLocaleString('th-TH'):'-'}</p><div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="respondAccess('${r.requestId}',true)">อนุญาต</button><button class="btn btn-outline" onclick="respondAccess('${r.requestId}',false)">ไม่อนุญาต</button></div></div>`).join('');
 }
 async function respondAccess(id, approved){ await api(`/api/access-requests/${id}/respond`,{method:'POST',body:JSON.stringify({approved})}); toast(approved?'อนุญาตการเชื่อมต่อแล้ว':'ไม่อนุญาตการเชื่อมต่อ'); await loadDashboard(); }
 function renderUpcoming(list) {
@@ -289,7 +291,7 @@ async function loadPendingTransport(){
   const profileId=currentProfile?.profile?.care_profile_id;
   const list=(data.pending||[]).filter(p=>p.care_profile_id===profileId && p.appointment);
   const card=document.getElementById('transportDecisionCard'); card.style.display=list.length?'block':'none';
-  document.getElementById('pendingTransportList').innerHTML=list.map(p=>`<div class="appt-item"><div class="appt-h">${esc(p.appointment.hospital)}</div><div class="appt-d">${new Date(p.appointment.datetime).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'})}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" onclick="chooseTransport('${p.plan_id}','self')">ไปเอง</button><button class="btn btn-outline" onclick="chooseTransport('${p.plan_id}','request_center')">ให้ศูนย์จัดการ</button></div><button class="btn btn-outline" style="display:none;margin-top:8px" onclick="chooseTransport('${p.plan_id}','care2go')">เรียก Care2Go</button></div>`).join('');
+  document.getElementById('pendingTransportList').innerHTML=list.map(p=>`<div class="appt-item"><div class="appt-h">${esc(p.appointment.hospital)}</div><div class="appt-d">${new Date(p.appointment.datetime).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'})}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" onclick="chooseTransport('${p.plan_id}','self')">ไปเอง</button>${p.center_id?`<button class="btn btn-outline" onclick="chooseTransport('${p.plan_id}','request_center')">ให้ศูนย์จัดการ</button>`:'<span style="font-size:12px;color:var(--gray)">ยังไม่ได้เชื่อมศูนย์</span>'}</div><button class="btn btn-outline" style="display:none;margin-top:8px" onclick="chooseTransport('${p.plan_id}','care2go')">เรียก Care2Go</button></div>`).join('');
 }
 async function chooseTransport(planId,choice){
   const labels={self:'ไปเอง',request_center:'ให้ศูนย์จัดการ',care2go:'เรียก Care2Go'};
@@ -394,6 +396,11 @@ async function createCaregiverInvite(){
   if(navigator.share) await navigator.share({title:'คำเชิญญาติผู้ดูแลร่วม',text:`เชิญดูแล ${currentProfile.profile.patient_name} ร่วมกันในพี่หมอ`,url:result.url}).catch(()=>{});
   else { await navigator.clipboard?.writeText(result.url); toast('สร้างและคัดลอกลิงก์แล้ว'); }
 }
+async function loadCaregivers(){
+  const id=currentProfile.profile.care_profile_id, data=await api(`/api/care-profile/${id}/caregivers`);
+  document.getElementById('caregiverList').innerHTML=(data.members||[]).map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid #eee"><span>ผู้ดูแลร่วม · ${esc(m.line_user_id)}</span><button class="btn btn-outline" onclick="revokeCaregiver('${esc(m.line_user_id)}')">ถอนสิทธิ์</button></div>`).join('')||'<div style="font-size:12px;color:var(--gray)">ยังไม่มีผู้ดูแลร่วม</div>';
+}
+async function revokeCaregiver(lineId){if(!confirm('ถอนสิทธิ์ผู้ดูแลร่วมคนนี้ทันทีหรือไม่'))return;await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/caregivers/${encodeURIComponent(lineId)}`,{method:'DELETE'});toast('ถอนสิทธิ์แล้ว');loadCaregivers()}
 
 // ── เริ่มต้น ──
 async function main() {

@@ -17,7 +17,11 @@ function requireAdminKey(req, res, next) {
     // ป้องกันความผิดพลาดร้ายแรง: ถ้า Deploy จริงแล้วลืมตั้งค่า ต้องปิดกั้นทันที ห้ามเปิดช่องให้ผ่านฟรี
     return res.status(503).json({ error: 'not_configured', message: 'ยังไม่ได้ตั้งค่า ADMIN_API_KEY บน Server' });
   }
-  if (!key || key !== expected) {
+  const crypto = require('crypto');
+  const provided = Buffer.from(String(key || ''));
+  const configured = Buffer.from(String(expected));
+  const valid = provided.length === configured.length && crypto.timingSafeEqual(provided, configured);
+  if (!valid) {
     return res.status(401).json({ error: 'unauthorized', message: 'ไม่มีสิทธิ์เข้าถึง Endpoint นี้' });
   }
   next();

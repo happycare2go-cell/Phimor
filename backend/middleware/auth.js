@@ -6,7 +6,7 @@
 //    ก่อน Deploy จริง ต้องเปลี่ยน identify() ให้ Verify LINE ID Token จริง
 //    (ตรวจ Signature และวันหมดอายุ ไม่ใช่เชื่อค่าจาก Header ตรงๆ)
 
-const { CenterStaff, Residents, CareProfiles, CareProfileMembers } = require('../db');
+const { CenterStaff, Centers, Residents, CareProfiles, CareProfileMembers } = require('../db');
 const { asyncHandler } = require('./asyncHandler');
 
 async function verifyLineIdToken(idToken) {
@@ -54,13 +54,25 @@ function requireCenterStaff(roles = ['owner', 'manager']) {
       return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุศูนย์' });
     }
     const staff = await CenterStaff.findOne(
-      (s) => s.center_id === centerId && s.line_user_id === req.user.lineUserId && roles.includes(s.role)
+      (s) => s.center_id === centerId && s.line_user_id === req.user.lineUserId && roles.includes(s.role) && (!s.status || s.status === 'active')
     );
     if (!staff) {
       return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์จัดการศูนย์นี้' });
     }
+    const center = await Centers.findOne((c) => c.center_id === centerId);
+    const subscription = require('../services/subscriptionService').entitlement(center);
+    if (!subscription.allowed) {
+      const message = subscription.code === 'center_suspended'
+        ? 'ศูนย์นี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ'
+        : subscription.code === 'subscription_not_started'
+          ? 'สิทธิการใช้ระบบของศูนย์ยังไม่เริ่ม กรุณาติดต่อเจ้าหน้าที่'
+          : 'แพ็กเกจพี่หมอของศูนย์หมดอายุแล้ว กรุณาติดต่อเจ้าหน้าที่เพื่อต่ออายุ';
+      return res.status(402).json({ error: subscription.code, message, subscription });
+    }
     req.centerId = centerId;
     req.staffRole = staff.role;
+    req.center = center;
+    req.subscription = subscription;
     next();
   });
 }
@@ -94,6 +106,7 @@ function requireFamilyAccess() {
     }
     req.careProfile = profile;
     req.familyRole = profile.owner_line_id === req.user.lineUserId ? 'owner' : member.role;
+    req.familyPermissions = req.familyRole === 'owner' ? ['*'] : (member.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport']);
     next();
   });
 }
@@ -104,6 +117,8 @@ function requireFamilyAccess() {
  * และข้อ B5: จำหน่ายออกแล้วต้องเพิกถอนสิทธิ์ทันที
  */
 async function centerCanAccessResident(centerId, residentId) {
+  const center = await Centers.findOne((c) => c.center_id === centerId);
+  if (!require('../services/subscriptionService').entitlement(center).allowed) return false;
   const resident = await Residents.findOne((r) => r.resident_id === residentId);
   if (!resident) return false;
   return resident.center_id === centerId && resident.status === 'active';

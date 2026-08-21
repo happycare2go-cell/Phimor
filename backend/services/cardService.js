@@ -73,8 +73,10 @@ async function selectResidentForCard(cardId, residentId) {
   const card = await PendingCards.findOne((c) => c.card_id === cardId);
   if (!card) return { ok: false, reason: 'ไม่พบการ์ด' };
   if (card.status !== 'awaiting_selection') return { ok: false, reason: 'การ์ดนี้ไม่ได้อยู่ในสถานะรอเลือกผู้พัก' };
+  const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === card.center_id && r.status === 'active');
+  if (!resident) return { ok: false, reason: 'ผู้พักไม่ได้อยู่ในสาขาของเอกสารนี้' };
 
-  await PendingCards.update((c) => c.card_id === cardId, { resident_id: residentId, status: 'pending' });
+  await PendingCards.update((c) => c.card_id === cardId && c.status === 'awaiting_selection', { resident_id: residentId, status: 'pending' });
   return { ok: true };
 }
 
@@ -117,6 +119,7 @@ async function patchCard(cardId, { residentId, appointment, medications, doctorN
 // ⚠️ เฉพาะเจ้าของศูนย์และผู้จัดการเท่านั้นที่ยืนยันได้ (พนักงานทั่วไปยืนยันไม่ได้)
 //    เหตุผล: ต้องมีผู้รับผิดชอบชัดเจนต่อข้อมูลที่ส่งถึงครอบครัว และป้องกันการกดยืนยันโดยไม่ตรวจสอบ
 async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
+  return require('../db').withTransaction(`card-confirm:${cardId}`, async () => {
   const card = await PendingCards.findOne((c) => c.card_id === cardId);
   if (!card) return { ok: false, reason: 'ไม่พบการ์ด' };
 
@@ -144,7 +147,8 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
     return { ok: false, reason: 'ยังไม่ทราบว่าเป็นข้อมูลของผู้พักคนใด' };
   }
 
-  const resident = await Residents.findOne((r) => r.resident_id === card.resident_id);
+  const resident = await Residents.findOne((r) => r.resident_id === card.resident_id && r.center_id === card.center_id && r.status === 'active');
+  if (!resident) return { ok:false, reason:'ผู้พักไม่ได้อยู่ในสาขานี้แล้ว กรุณายกเลิกรายการ' };
   const data = card.edited_result || card.ai_result;
 
   // ข้อ G2 ชั้นที่ 2 (Safety Net สุดท้ายก่อนบันทึกจริง)
@@ -222,8 +226,13 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   } else {
     queuedForLater = true;
   }
+  if (queuedForLater) {
+    const delayedMessages = [{ type:'text', text:buildFamilySummaryText({ residentName:resident.full_name, data, confirmedByName }) }];
+    await require('./deliveryService').queueForResident({ residentId:resident.resident_id, cardId, messages:delayedMessages });
+  }
 
   return { ok: true, status: 'confirmed', confirmedBy: confirmedByLineId, confirmedAt: now(), sentToFamily, queuedForLater, submittedBy: card.submitted_by };
+  });
 }
 
 // ── ข้อ F2: ข้อความต้องระบุผู้ตรวจสอบ ──
@@ -250,6 +259,9 @@ async function reportCardIssue(cardId, reporterLineId, note) {
   const { Centers, Residents: R } = require('../db');
   const center = await Centers.findOne((c) => c.center_id === card.center_id);
   const resident = card.resident_id ? await R.findOne((r) => r.resident_id === card.resident_id) : null;
+  if (!resident?.care_profile_id || !await require('./familyService').canAccessProfile(resident.care_profile_id, reporterLineId)) {
+    return { ok:false, reason:'คุณไม่มีสิทธิ์แจ้งปัญหาของ Care Profile นี้' };
+  }
 
   await audit('card.issue_reported', reporterLineId, { cardId, note });
 
@@ -278,6 +290,24 @@ async function findCardsNeedingReminder() {
   );
 }
 
+async function sendPendingCardReminders() {
+  const cards = await findCardsNeedingReminder();
+  let queued = 0;
+  for (const card of cards) {
+    const approvers = await require('./centerService').listApprovers(card.center_id);
+    for (const approver of approvers) {
+      await require('./notificationService').enqueueAndDeliver({
+        dedupeKey:`pending-card:${card.card_id}:${approver.line_user_id}`,
+        to:approver.line_user_id, kind:'pending_card_reminder', meta:{cardId:card.card_id,centerId:card.center_id},
+        messages:[{type:'text',text:'⏳ มีเอกสารทางการแพทย์รอตรวจสอบเกิน 2 ชั่วโมง กรุณาเปิดหน้าศูนย์เพื่อยืนยันหรือแก้ไขค่ะ'}],
+      });
+      queued += 1;
+    }
+    await PendingCards.update((c) => c.card_id === card.card_id && !c.reminder_sent, { reminder_sent:true, reminder_sent_at:now() });
+  }
+  return { cards:cards.length, queued };
+}
+
 // ── เรียกจาก Scheduler ทุกช่วงเวลา: หมดอายุการ์ดที่เกิน 24 ชม. ──
 async function expireOldCards() {
   const all = await PendingCards.findAll();
@@ -291,5 +321,5 @@ async function expireOldCards() {
 
 module.exports = {
   handleIncomingPhoto, selectResidentForCard, getCardForEdit, patchCard, confirmCard,
-  findCardsNeedingReminder, expireOldCards, buildFamilySummaryText, reportCardIssue, isPast,
+  findCardsNeedingReminder, sendPendingCardReminders, expireOldCards, buildFamilySummaryText, reportCardIssue, isPast,
 };

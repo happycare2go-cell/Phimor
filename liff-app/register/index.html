@@ -29,8 +29,10 @@
         const BACKEND_URL = 'https://phimor-backend.onrender.com';
         
         async function main() {
-            // ★ Dev: ใส่ LIFF ID สำหรับหน้าลงทะเบียน
-            await liff.init({ liffId: '2011043561-cC9jBw5t' });
+            const configResponse = await fetch(`${BACKEND_URL}/config/liff`);
+            const config = await configResponse.json();
+            if (!config.registerLiffId) throw new Error('ระบบยังไม่ได้ตั้งค่า LIFF_ID_REGISTER');
+            await liff.init({ liffId: config.registerLiffId });
             if (!liff.isLoggedIn()) {
                 liff.login();
             }
@@ -58,7 +60,7 @@
                 const data = await response.json();
                 if(data.success) {
                     document.getElementById('status').style.color = '#0F6E56';
-                    document.getElementById('status').innerText = '✅ สร้างศูนย์สำเร็จ! คุณสามารถปิดหน้านี้ได้เลย';
+                    document.getElementById('status').innerText = '✅ ลงทะเบียนศูนย์แล้ว กรุณารอเจ้าหน้าที่กำหนดและเปิดสิทธิแพ็กเกจก่อนเริ่มใช้งาน';
                     setTimeout(() => { liff.closeWindow(); }, 2500);
                 } else {
                     document.getElementById('status').style.color = 'red';

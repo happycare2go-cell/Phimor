@@ -9,9 +9,10 @@ services:
     region: singapore          # ใกล้ไทยที่สุดในตัวเลือกของ Render ลด Latency
     plan: starter               # เริ่มจาก Starter พอสำหรับเฟส 1 (8 สาขา) อัปเกรดทีหลังได้
     rootDir: backend
-    buildCommand: npm install
-    startCommand: node server.js
-    healthCheckPath: /health
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    # ใช้ readiness เพื่อไม่สลับ traffic มาที่รุ่นใหม่ถ้า DB/Secret สำคัญยังไม่พร้อม
+    healthCheckPath: /ready
     envVars:
       - key: NODE_ENV
         value: production
@@ -19,6 +20,10 @@ services:
         value: 3000
       - key: ADMIN_API_KEY
         sync: false   # ★ ตั้งเป็นค่าสุ่มยาวๆ ในหน้า Dashboard — ใช้สร้างศูนย์ใหม่ผ่าน /api/admin/centers
+      - key: DATABASE_URL
+        sync: false
+      - key: LINE_LOGIN_CHANNEL_ID
+        sync: false
       # ★ ต้องกรอกค่าจริงในหน้า Dashboard ของ Render หลัง Deploy (ห้ามใส่ค่าจริงในไฟล์นี้)
       - key: LINE_CHANNEL_ACCESS_TOKEN
         sync: false
@@ -28,10 +33,12 @@ services:
         sync: false
       - key: LIFF_ID_FAMILY
         sync: false
+      - key: LIFF_ID_REGISTER
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "https://phimor-liff.onrender.com"
       - key: CARE2GO_GROUP_BIND_CODE
         sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: AI_NAME_MATCH_THRESHOLD
@@ -46,9 +53,22 @@ services:
         value: "30"
       - key: CARE2GO_UNAVAILABLE_DEADLINE_HOURS
         value: "12"
-      - key: GOOGLE_SHEETS_SPREADSHEET_ID
-        sync: false
-      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
-        sync: false
-      - key: GOOGLE_SERVICE_ACCOUNT_KEY
-        sync: false
+      - key: REQUIRE_STAFF_APPROVAL
+        value: "true"
+      - key: REQUIRE_CARE2GO_OPS_BINDING
+        value: "true"
+      - key: MEDICAL_IMAGE_RETENTION_DAYS
+        value: "90"
+  - type: web
+    name: phimor-liff
+    runtime: static
+    rootDir: liff-app
+    buildCommand: ""
+    staticPublishPath: .
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer

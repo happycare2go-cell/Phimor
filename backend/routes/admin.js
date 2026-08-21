@@ -11,14 +11,15 @@ const router = express.Router();
 const { requireAdminKey } = require('../middleware/adminAuth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
-const { Centers, audit } = require('../db');
+const { Centers, Residents, CareProfiles, AuditLog, DataSubjectRequests, audit, now } = require('../db');
+const subscriptionService = require('../services/subscriptionService');
 
 router.use(requireAdminKey);
 
 // POST /api/admin/centers — สร้างบัญชีศูนย์ใหม่ (ข้อ FR-A1)
 // ใช้ระหว่างทีมงานคุยกับเจ้าของศูนย์ตัวต่อตัวตอน Onboarding
 router.post('/centers', asyncHandler(async (req, res) => {
-  const { name, ownerLineId } = req.body;
+  const { name, ownerLineId, subscriptionStartAt, subscriptionEndAt, packageType } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุชื่อศูนย์' });
   }
@@ -30,11 +31,18 @@ router.post('/centers', asyncHandler(async (req, res) => {
   }
 
   const center = await centerService.createCenter({ name: name.trim(), ownerLineId: ownerLineId.trim() });
+  let subscription = subscriptionService.entitlement(center);
+  if (subscriptionStartAt && subscriptionEndAt) {
+    const configured = await subscriptionService.setSubscription({ centerId: center.center_id, startsAt: subscriptionStartAt, expiresAt: subscriptionEndAt, packageType: packageType || 'custom', actor: 'admin' });
+    if (!configured.ok) return res.status(400).json({ error: 'bad_request', message: configured.reason });
+    subscription = configured.entitlement;
+  }
   res.status(201).json({
     centerId: center.center_id,
     name: center.name,
     ownerLineId: center.owner_line_id,
     status: center.status,
+    subscription,
     nextSteps: [
       'ให้เจ้าของศูนย์เพิ่มเพื่อน LINE OA ของพี่หมอก่อน (ถ้ายังไม่ได้เพิ่ม)',
       'ให้เจ้าของศูนย์สร้างกลุ่มไลน์งานศูนย์ แล้วเชิญพี่หมอเข้ากลุ่ม — ระบบจะผูกกลุ่มให้อัตโนมัติ',
@@ -46,12 +54,79 @@ router.post('/centers', asyncHandler(async (req, res) => {
 // GET /api/admin/centers — รายชื่อศูนย์ทั้งหมดในระบบ (ใช้ตรวจสอบ/ค้นหา)
 router.get('/centers', asyncHandler(async (req, res) => {
   const centers = await Centers.findAll();
-  res.json({
-    centers: centers.map((c) => ({
+  const rows = [];
+  for (const c of centers) {
+    const residents = await Residents.findWhere((r) => r.center_id === c.center_id && r.status === 'active');
+    rows.push({
       centerId: c.center_id, name: c.name, ownerLineId: c.owner_line_id,
       status: c.status, groupBound: !!c.group_id, createdAt: c.created_at,
-    })),
+      address: c.address || '', contactPhone: c.contact_phone || '', activeResidentCount: residents.length,
+      subscriptionStartAt: c.subscription_start_at || null, subscriptionEndAt: c.subscription_end_at || null,
+      packageType: c.subscription_package_type || null, subscription: subscriptionService.entitlement(c),
+    });
+  }
+  res.json({
+    centers: rows,
   });
+}));
+
+router.get('/centers/:centerId', asyncHandler(async (req, res) => {
+  const details = await subscriptionService.getAdminCenterDetails(req.params.centerId);
+  if (!details) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์นี้' });
+  await audit('admin.center_details_viewed', 'admin', { centerId: req.params.centerId });
+  res.json(details);
+}));
+
+router.patch('/centers/:centerId/subscription', asyncHandler(async (req, res) => {
+  try {
+    const result = await subscriptionService.setSubscription({
+      centerId: req.params.centerId, startsAt: req.body.startsAt, expiresAt: req.body.expiresAt,
+      packageType: req.body.packageType || 'custom', note: req.body.note || '', actor: 'admin',
+    });
+    if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: 'bad_request', message: error.message });
+  }
+}));
+
+router.post('/centers/:centerId/transfer-owner', asyncHandler(async (req, res) => {
+  const newOwnerLineId = String(req.body.newOwnerLineId || '').trim();
+  if (!newOwnerLineId) return res.status(400).json({ error:'bad_request', message:'กรุณาระบุ LINE User ID เจ้าของคนใหม่' });
+  const result = await centerService.transferOwner({ centerId:req.params.centerId, newOwnerLineId, actor:'admin', keepPreviousAsManager:!!req.body.keepPreviousAsManager });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result);
+}));
+
+router.get('/centers/:centerId/care-profiles', asyncHandler(async (req, res) => {
+  const center = await Centers.findOne((c) => c.center_id === req.params.centerId);
+  if (!center) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์นี้' });
+  const residents = await Residents.findWhere((r) => r.center_id === center.center_id);
+  const rows = [];
+  for (const resident of residents) {
+    const profile = resident.care_profile_id && await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
+    rows.push({ resident, profile: profile || null });
+  }
+  await audit('admin.care_profiles_viewed', 'admin', { centerId: center.center_id, count: rows.length });
+  res.json({ center: { centerId: center.center_id, name: center.name }, rows });
+}));
+
+router.get('/audit', asyncHandler(async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+  const logs = await AuditLog.findAll();
+  res.json({ logs: logs.slice(0, limit) });
+}));
+
+router.get('/data-requests', asyncHandler(async (req, res) => {
+  res.json({ requests: await DataSubjectRequests.findAll() });
+}));
+
+router.patch('/data-requests/:requestId', asyncHandler(async (req, res) => {
+  if (!['in_progress', 'completed', 'rejected'].includes(req.body.status)) return res.status(400).json({ error: 'bad_request' });
+  const request = await DataSubjectRequests.update((r) => r.request_id === req.params.requestId, { status: req.body.status, admin_note: String(req.body.note || '').slice(0, 1000), updated_at: now(), updated_by: 'admin' });
+  if (!request) return res.status(404).json({ error: 'not_found' });
+  await audit('privacy.data_request_updated', 'admin', { requestId: request.request_id, status: request.status });
+  res.json(request);
 }));
 
 // GET /api/admin/centers/:centerId/staff — ดูรายชื่อทีมงานของศูนย์

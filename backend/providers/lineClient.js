@@ -11,27 +11,35 @@ const sentLog = [];
 
 // ฟังก์ชันตอบกลับข้อความทันที (ใช้ตอนลูกค้ายิงแชทมา)
 async function replyMessage(replyToken, messages) {
-  if (process.env.NODE_ENV === 'test') { sentLog.push({ type: 'reply', replyToken, messages: Array.isArray(messages) ? messages : [messages] }); return; }
+  if (process.env.NODE_ENV === 'test') { sentLog.push({ type: 'reply', replyToken, messages: Array.isArray(messages) ? messages : [messages] }); return { ok: true }; }
   try {
     await client.replyMessage({
       replyToken: replyToken,
       messages: Array.isArray(messages) ? messages : [messages]
     });
+    return { ok: true };
   } catch (err) {
     console.error('LINE Reply Error:', err.response?.data || err.message);
+    const error = new Error('ส่งข้อความตอบกลับ LINE ไม่สำเร็จ');
+    error.cause = err;
+    throw error;
   }
 }
 
 // ฟังก์ชันส่งข้อความแบบ Push (ใช้ตอนแจ้งเตือน หรือส่งหาคนอื่น)
 async function pushMessage(to, messages) {
-  if (process.env.NODE_ENV === 'test') { sentLog.push({ type: 'push', to, messages: Array.isArray(messages) ? messages : [messages] }); return; }
+  if (process.env.NODE_ENV === 'test') { sentLog.push({ type: 'push', to, messages: Array.isArray(messages) ? messages : [messages] }); return { ok: true }; }
   try {
     await client.pushMessage({
       to: to,
       messages: Array.isArray(messages) ? messages : [messages]
     });
+    return { ok: true };
   } catch (err) {
     console.error('LINE Push Error:', err.response?.data || err.message);
+    const error = new Error('ส่ง LINE push ไม่สำเร็จ');
+    error.cause = err;
+    throw error;
   }
 }
 

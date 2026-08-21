@@ -15,18 +15,47 @@ const externalRouter = require('./routes/external');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
+const subscriptionService = require('./services/subscriptionService');
+const notificationService = require('./services/notificationService');
+const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
 
 const app = express();
 
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+  next();
+});
+
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || 'https://phimor-liff.onrender.com').split(',').map((s) => s.trim()).filter(Boolean);
+
 app.use(cors({
-  origin: '*',
+  origin(origin, callback) {
+    if (!origin || process.env.NODE_ENV === 'test' || configuredOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('CORS origin not allowed'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Line-User-Id', 'X-Admin-Key', 'X-Center-Api-Key']
 }));
 
 app.use(webhookRouter);
 app.use(express.json({ limit: '10mb' }));
+
+app.use('/api', (req, res, next) => {
+  const limit = process.env.NODE_ENV === 'test' ? 2000 : Number(process.env.API_RATE_LIMIT_PER_5_MINUTES || 300);
+  const key = `${req.ip}:${req.path.startsWith('/admin') ? 'admin' : 'api'}`;
+  const result = require('./utils/rateLimiter').checkAndRecord(key, limit, 5 * 60000);
+  if (!result.allowed) {
+    res.setHeader('Retry-After', Math.ceil(result.retryAfterMs / 1000));
+    return res.status(429).json({ error:'rate_limited', message:'เรียกใช้งานถี่เกินไป กรุณารอสักครู่' });
+  }
+  next();
+});
 
 app.use('/api/admin', adminRouter);
 app.use('/api/external', externalRouter);
@@ -37,7 +66,16 @@ app.use('/api', transportRouter);
 app.use('/api', accessRouter);
 app.use('/api', groupsRouter);
 
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend' }));
+let schedulerHeartbeatAt = null;
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend', now: new Date().toISOString() }));
+app.get('/ready', async (req, res) => {
+  const missing = process.env.NODE_ENV === 'test' ? [] : ['DATABASE_URL','LINE_CHANNEL_ACCESS_TOKEN','LINE_CHANNEL_SECRET','LINE_LOGIN_CHANNEL_ID','LIFF_ID_CENTER_ADMIN','LIFF_ID_FAMILY','LIFF_ID_REGISTER','ADMIN_API_KEY'].filter((key) => !process.env[key]);
+  let database = true; let databaseError = null;
+  try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
+  const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
+  const ready = database && missing.length === 0;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications });
+});
 app.get('/config/liff', (req, res) => res.json({
   familyLiffId: process.env.LIFF_ID_FAMILY || null,
   centerAdminLiffId: process.env.LIFF_ID_CENTER_ADMIN || null,
@@ -52,20 +90,33 @@ app.use((err, req, res, next) => {
 
 let scheduledTasks = [];
 function startScheduler() {
+  const heartbeat = () => { schedulerHeartbeatAt = new Date().toISOString(); };
   scheduledTasks.push(cron.schedule('*/15 * * * *', () => { cardService.expireOldCards().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/15 * * * *', () => { cardService.sendPendingCardReminders().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('0 7 * * *', () => { reminderService.sendAppointmentReminders().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('0 18 * * 0', () => { reminderService.sendWeeklySummary().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('0 18 * * *', () => { reminderService.sendTomorrowSummaryToCenters().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/30 * * * *', () => { transportService.remindPendingFamilyChoices().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 9 * * *', () => { heartbeat(); subscriptionService.sendExpiryReminders().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/2 * * * *', () => { heartbeat(); notificationService.processPending().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => { heartbeat(); webhookRouter.processPendingWebhookEvents?.().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('15 2 * * *', () => { heartbeat(); require('./services/centerService').reconcileAllCenterStaff().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('45 2 * * *', () => { heartbeat(); require('./services/retentionService').purgeExpiredSourceImages().catch(console.error); }, { timezone: TZ }));
+  heartbeat();
   console.log(`ตั้งเวลางานประจำแล้ว ${scheduledTasks.length} งาน (เขตเวลา ${TZ})`);
 }
 function stopScheduler() { scheduledTasks.forEach((t) => t.stop()); scheduledTasks = []; }
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`พี่หมอ Backend กำลังทำงานที่พอร์ต ${PORT}`);
-    startScheduler();
+  db.initializeDatabase().then(() => {
+    app.listen(PORT, () => {
+      console.log(`พี่หมอ Backend กำลังทำงานที่พอร์ต ${PORT}`);
+      startScheduler();
+    });
+  }).catch((error) => {
+    console.error('เริ่มระบบไม่ได้เพราะฐานข้อมูลไม่พร้อม:', error);
+    process.exitCode = 1;
   });
 }
 module.exports = app;

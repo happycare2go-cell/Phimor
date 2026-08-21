@@ -70,6 +70,7 @@
   <div class="sub" id="centerNameLabel">กำลังโหลด...</div>
   <select id="centerSelector" onchange="selectCenter(this.value)" style="display:none;margin-top:10px;background:#fff"></select>
 </div>
+<div id="packageBanner" style="display:none;margin:12px 16px;padding:12px;border-radius:10px;background:#FFF3CD;color:#7A5200;font-size:13px"></div>
 
 <div class="tabs">
   <div class="tab active" data-view="residents">ผู้พัก</div>
@@ -297,7 +298,7 @@ function renderResidents() {
       <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">${CURRENT_ROLE==='staff'?'ข้อมูลสำคัญ':'ข้อมูลสุขภาพ'}</button>` : ''} ${CURRENT_ROLE!=='staff'?`<button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>`:''}</div>
     </div>`).join('') + '</div>';
 }
-function esc(s){ return (s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function addResident() {
   const fullName = document.getElementById('newFullName').value.trim();
@@ -448,11 +449,12 @@ async function loadStaff() {
   const labels = { owner:'เจ้าของศูนย์', manager:'ผู้จัดการ', staff:'พนักงาน' };
   document.getElementById('staffList').innerHTML = data.staff.map(s => `
     <div class="resident-item">
-      <div><div class="resident-name">${esc(s.display_name || s.line_user_id)}</div><div class="resident-meta">${labels[s.role] || s.role}</div></div>
-      ${s.role === 'manager' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.line_user_id}')">ลดเป็นพนักงาน</button>` : ''}
+      <div><div class="resident-name">${esc(s.display_name || s.line_user_id)}</div><div class="resident-meta">${labels[s.role] || s.role}${s.status==='pending'?' · รออนุมัติ':''}${s.status==='revoked'?' · ถอนสิทธิ์แล้ว':''}</div></div>
+      ${s.status==='pending' ? `<button class="btn btn-outline btn-sm" onclick="approveStaff('${s.line_user_id}','staff')">อนุมัติ</button>` : ''}
+      ${s.role !== 'owner' && s.status!=='revoked' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.line_user_id}')">ถอนสิทธิ์</button>` : ''}
     </div>`).join('');
   document.getElementById('newManagerId').innerHTML = '<option value="">เลือกพนักงาน</option>' + data.staff
-    .filter(s => s.role === 'staff')
+    .filter(s => s.role === 'staff' && (!s.status || s.status === 'active'))
     .map(s => `<option value="${esc(s.line_user_id)}">${esc(s.display_name || s.line_user_id)}</option>`).join('');
 }
 async function saveCenterSettings() {
@@ -472,6 +474,10 @@ async function appointManager() {
   toast('แต่งตั้งแล้ว');
   loadStaff();
 }
+async function approveStaff(id, role) {
+  await api(`/api/center/staff/${id}/approve`, { method:'POST', body:JSON.stringify({ centerId:CENTER_ID, role }) });
+  toast('อนุมัติพนักงานแล้ว'); loadStaff();
+}
 
 async function createStaffBindingCode() {
   const result = await api(`/api/center/${CENTER_ID}/group-binding-token`, { method:'POST', body:'{}' });
@@ -485,6 +491,7 @@ async function selectCenter(centerId) {
   CURRENT_ROLE = center.myRole;
   document.getElementById('centerNameLabel').textContent = center.name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[center.myRole]||center.myRole);
   document.getElementById('staffTab').style.display = center.myRole === 'owner' ? '' : 'none';
+  if (!applySubscription(center)) return;
   await loadResidents();
   const activeView = document.querySelector('.tab.active')?.dataset.view;
   if (activeView === 'staff') await loadStaff();
@@ -492,9 +499,25 @@ async function selectCenter(centerId) {
   if (activeView === 'ratecard') await loadRateCard();
 }
 async function removeManager(id) {
+  if (!confirm('ยืนยันถอนสิทธิ์บุคคลนี้จากสาขา ข้อมูลจะเข้าถึงไม่ได้ทันที')) return;
   await api(`/api/center/staff/${id}?centerId=${CENTER_ID}`, { method:'DELETE' });
   toast('ถอดถอนแล้ว');
   loadStaff();
+}
+
+function applySubscription(center) {
+  const banner=document.getElementById('packageBanner'), s=center.subscription||{};
+  if (!s.allowed) {
+    banner.style.display='block';
+    banner.textContent = s.code==='center_suspended' ? 'ศูนย์นี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ' : `แพ็กเกจพี่หมอของสาขานี้ยังไม่พร้อมหรือหมดอายุแล้ว${s.expiresAt?' เมื่อ '+new Date(s.expiresAt).toLocaleDateString('th-TH'):''} กรุณาติดต่อเจ้าหน้าที่`;
+    document.querySelector('.tabs').style.display='none'; document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    return false;
+  }
+  document.querySelector('.tabs').style.display='flex';
+  if (s.needsConfiguration) { banner.style.display='block'; banner.textContent='สาขานี้เป็นข้อมูลเดิมที่ยังไม่ได้กำหนดวันหมดอายุ กรุณาติดต่อผู้ดูแลระบบ'; }
+  else if (s.remainingDays<=3) { banner.style.display='block'; banner.textContent=`แพ็กเกจจะหมดอายุวันที่ ${new Date(s.expiresAt).toLocaleDateString('th-TH')} กรุณาติดต่อเจ้าหน้าที่เพื่อต่ออายุ`; }
+  else banner.style.display='none';
+  return true;
 }
 
 // ── S4: แก้ไขการ์ดก่อนส่ง (ข้อ E3-E8) ──
@@ -614,12 +637,13 @@ async function main() {
   CENTERS = me.centers.filter(Boolean);
   if (CENTERS.length === 0) throw new Error('ไม่พบสาขาที่คุณมีสิทธิ์');
   const selector = document.getElementById('centerSelector');
-  selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${c.myRole === 'owner' ? 'เจ้าของ' : 'ผู้จัดการ'}</option>`).join('');
+  selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${{owner:'เจ้าของ',manager:'ผู้จัดการ',staff:'พนักงาน'}[c.myRole]||c.myRole}</option>`).join('');
   selector.style.display = CENTERS.length > 1 ? 'block' : 'none';
   CENTER_ID = CENTERS[0].center_id;
   CURRENT_ROLE = CENTERS[0].myRole;
   document.getElementById('staffTab').style.display = CENTERS[0].myRole === 'owner' ? '' : 'none';
   document.getElementById('centerNameLabel').textContent = CENTERS[0].name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[CENTERS[0].myRole]||CENTERS[0].myRole);
+  if (!applySubscription(CENTERS[0])) return;
   if (CURRENT_ROLE === 'staff') {
     document.querySelector('#view-residents > .card').style.display='none';
     document.querySelector('.tab[data-view="transport"]').style.display='none';

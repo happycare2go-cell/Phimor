@@ -14,7 +14,7 @@ router.post('/register-center', asyncHandler(async (req, res) => {
   const duplicate = await Centers.findOne((c) => c.owner_line_id === lineUserId && c.name.trim() === centerName.trim() && c.status === 'active');
   if (duplicate) return res.status(409).json({ error: 'ศูนย์ชื่อนี้ถูกลงทะเบียนกับบัญชีของคุณแล้ว', center: duplicate });
   const newCenter = await centerService.createCenter({ name: centerName, ownerLineId: lineUserId, address, contactPhone });
-  res.status(201).json({ success: true, message: 'สร้างศูนย์สำเร็จ', center: newCenter });
+  res.status(201).json({ success: true, message: 'ลงทะเบียนศูนย์สำเร็จ รอผู้ดูแลระบบกำหนดสิทธิแพ็กเกจ', center: newCenter, subscription: require('../services/subscriptionService').entitlement(newCenter) });
 }));
 
 router.post('/vitals', requireCenterApiKey, asyncHandler(async (req, res) => {

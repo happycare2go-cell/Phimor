@@ -211,6 +211,7 @@ Express 4.x ไม่ดักจับ Error จาก `async` Handler โด�
 ```
 docs/RICHMENU_SETUP.md    คู่มือตั้งค่า Rich Menu ผ่าน LINE Official Account Manager
 docs/DEPLOY_RENDER.md     คู่มือ Deploy ขึ้น Render.com แบบละเอียด
+docs/IMPLEMENTATION_5_PHASES.md แผนดำเนินงานและเกณฑ์ตรวจรับทั้ง 5 ระยะ
 render.yaml                Blueprint สำหรับ Deploy อัตโนมัติ
 backend/.env.example       รายการ Environment Variable ทั้งหมดที่ต้องตั้งค่า
 ```

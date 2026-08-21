@@ -5,14 +5,19 @@ const lineClient = require('../providers/lineClient');
 const { formatThaiDateTime } = require('../utils/thaiDate');
 
 function isSameDay(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const key = (d) => new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+  return key(a) === key(b);
 }
 
-async function resolveFamilyTarget(careProfileId) {
+async function resolveFamilyTargets(careProfileId) {
   const gb = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
-  if (gb) return gb.line_group_id;
+  if (gb) return [gb.line_group_id];
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  return profile ? profile.owner_line_id : null;
+  if (!profile) return [];
+  const members = await require('../db').CareProfileMembers.findWhere((m) => m.care_profile_id === careProfileId && m.status === 'active' && m.notification_opt_out !== true);
+  return [...new Set([profile.owner_line_id, ...members.map((m) => m.line_user_id)].filter(Boolean))];
 }
 
 // ── FR-G1: เตือนล่วงหน้า 1 วัน และเช้าวันนัด ──
@@ -34,16 +39,19 @@ async function sendAppointmentReminders(referenceDate = new Date()) {
     const remindKey = `${kind}_reminded`;
     if (appt[remindKey]) continue; // กันเตือนซ้ำ
 
-    const target = await resolveFamilyTarget(appt.care_profile_id);
-    if (target) {
+    const targets = await resolveFamilyTargets(appt.care_profile_id);
+    if (targets.length) {
       const label = kind === 'day_before' ? 'พรุ่งนี้มีนัด' : 'วันนี้มีนัด';
-      await lineClient.pushMessage(target, [{
-        type: 'text',
-        text: `⏰ ${label}: ${appt.hospital} — ${formatThaiDateTime(appt.datetime)}`,
-      }]);
+      for (const target of targets) await require('./notificationService').enqueueAndDeliver({
+        dedupeKey:`appointment-reminder:${appt.appointment_id}:${kind}:${target}`,
+        to:target, kind:'appointment_reminder', meta:{appointmentId:appt.appointment_id,careProfileId:appt.care_profile_id,kind},
+        messages:[{ type: 'text', text: `⏰ ${label}: ${appt.hospital} — ${formatThaiDateTime(appt.datetime)}` }],
+      });
+      await Appointments.update((a) => a.appointment_id === appt.appointment_id && !a[remindKey], {
+        [remindKey]: true, [`${kind}_reminded_at`]: now(),
+      });
       sent++;
     }
-    appt[remindKey] = true; // ทำเครื่องหมายว่าเตือนแล้ว (in-memory เท่านั้น — ของจริงต้อง update ผ่าน DB)
   }
   return { sent };
 }

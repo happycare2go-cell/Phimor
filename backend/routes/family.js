@@ -14,9 +14,10 @@ router.get('/invite/:token', asyncHandler(async (req, res) => {
   const { Invites, Residents } = require('../db');
   const invite = await Invites.findOne((i) => i.invite_token === req.params.token);
   if (!invite) return res.status(404).json({ error: 'not_found', message: 'ลิงก์เชิญไม่ถูกต้อง' });
-  if (invite.used_at) return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญนี้ถูกใช้ไปแล้ว' });
+  if (invite.used_at || invite.status === 'revoked') return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญนี้ถูกใช้หรือยกเลิกแล้ว' });
   if (new Date(invite.expires_at) < new Date()) return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญหมดอายุแล้ว' });
-  const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id);
+  const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id && r.status === 'active' && !r.care_profile_id);
+  if (!resident) return res.status(410).json({ error: 'gone', message: 'ผู้พักรายนี้ถูกเชื่อมแล้วหรือไม่ได้อยู่ในศูนย์นี้' });
   res.json({ residentName: resident?.full_name, centerId: resident?.center_id, expiresAt: invite.expires_at });
 }));
 
@@ -42,6 +43,20 @@ router.post('/consent', asyncHandler(async (req, res) => {
   const { accepted } = req.body;
   const consent = await familyService.recordConsent(req.user.lineUserId, !!accepted);
   res.status(201).json(consent);
+}));
+
+router.post('/consent/withdraw', asyncHandler(async (req, res) => {
+  const consent = await familyService.recordConsent(req.user.lineUserId, false);
+  await require('../db').audit('consent.withdrawn', req.user.lineUserId, { consentId: consent.consent_id });
+  res.json({ ok: true, message: 'บันทึกการถอนความยินยอมแล้ว เจ้าหน้าที่จะดำเนินการตามคำขอข้อมูลต่อไป' });
+}));
+
+router.post('/data-requests', asyncHandler(async (req, res) => {
+  const type = String(req.body.type || 'export');
+  if (!['export', 'delete', 'correct', 'restrict'].includes(type)) return res.status(400).json({ error: 'bad_request', message: 'ประเภทคำขอไม่ถูกต้อง' });
+  const request = await require('../db').DataSubjectRequests.insert({ request_id: require('../db').id('DSR'), line_user_id: req.user.lineUserId, type, status: 'pending', note: String(req.body.note || '').slice(0, 1000), requested_at: require('../db').now() });
+  await require('../db').audit('privacy.data_request_created', req.user.lineUserId, { requestId: request.request_id, type });
+  res.status(201).json(request);
 }));
 
 // POST /api/care-profile/independent — สร้าง Care Profile อิสระเอง (ข้อ N1)
@@ -77,6 +92,30 @@ router.post('/caregiver-invites/:token/accept', asyncHandler(async (req, res) =>
   res.status(201).json(result.member);
 }));
 
+router.get('/care-profile/:careProfileId/caregivers', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (req.familyRole !== 'owner') return res.status(403).json({ error: 'forbidden' });
+  const result = await familyService.listCaregivers(req.params.careProfileId, req.user.lineUserId);
+  res.json(result);
+}));
+
+router.delete('/care-profile/:careProfileId/caregivers/:targetLineId', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  const result = await familyService.revokeCaregiver({ careProfileId: req.params.careProfileId, targetLineId: req.params.targetLineId, requesterLineId: req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  res.json(result);
+}));
+
+router.patch('/care-profile/:careProfileId/caregivers/:targetLineId', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  const result = await familyService.updateCaregiverPermissions({ careProfileId:req.params.careProfileId, targetLineId:req.params.targetLineId, permissions:req.body.permissions, requesterLineId:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result.member);
+}));
+
+router.post('/care-profile/:careProfileId/leave', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (req.familyRole === 'owner') return res.status(400).json({ error: 'bad_request', message: 'เจ้าของหลักต้องโอนสิทธิ์ก่อน จึงออกจาก Care Profile ได้' });
+  const result = await familyService.leaveCareProfile({ careProfileId: req.params.careProfileId, lineUserId: req.user.lineUserId });
+  res.json(result);
+}));
+
 // POST /api/care-profile/:id/bind-group — ผูกกลุ่มไลน์ครอบครัวด้วยตนเอง (ข้อ N1)
 router.post('/care-profile/:careProfileId/bind-group', requireFamilyAccess(), asyncHandler(async (req, res) => {
   const { groupId } = req.body;
@@ -101,6 +140,7 @@ router.get('/init-dashboard', asyncHandler(async (req, res) => {
 
 // PATCH /api/care-profile/:id — แก้ไขข้อมูลสุขภาพ
 router.patch('/care-profile/:careProfileId', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('edit_profile')) return res.status(403).json({ error:'forbidden', message:'ไม่มีสิทธิ์แก้ไขข้อมูลสุขภาพ' });
   const { CareProfiles: CP } = require('../db');
   const allowed = ['gender', 'blood_type', 'height_cm', 'weight_kg', 'chronic_conditions',
     'drug_allergies', 'food_allergies', 'mobility_limitations',
@@ -118,22 +158,37 @@ router.get('/appointments', requireFamilyAccess(), asyncHandler(async (req, res)
 }));
 router.post('/appointments', asyncHandler(async (req, res) => {
   const { careProfileId, hospital, datetime, note } = req.body;
-  if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) return res.status(403).json({ error: 'forbidden' });
+  if (!await familyService.hasPermission(careProfileId, req.user.lineUserId, 'manage_appointments')) return res.status(403).json({ error: 'forbidden' });
   const result = await familyService.addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy: req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason }); // ข้อ G2
   res.status(201).json(result.appointment);
 }));
 
+router.patch('/care-profile/:careProfileId/appointments/:appointmentId', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_appointments')) return res.status(403).json({ error:'forbidden' });
+  const result = await familyService.updateFamilyAppointment({ careProfileId: req.params.careProfileId, appointmentId: req.params.appointmentId, patch: req.body, requesterLineId: req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  res.json(result.appointment);
+}));
+
+router.post('/care-profile/:careProfileId/appointments/:appointmentId/cancel', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_appointments')) return res.status(403).json({ error:'forbidden' });
+  const result = await familyService.cancelFamilyAppointment({ careProfileId: req.params.careProfileId, appointmentId: req.params.appointmentId, requesterLineId: req.user.lineUserId, reason: req.body.reason || '' });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  res.json(result);
+}));
+
 // POST /api/medications
 router.post('/medications', asyncHandler(async (req, res) => {
   const { careProfileId, name, dose } = req.body;
-  if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) return res.status(403).json({ error: 'forbidden' });
+  if (!await familyService.hasPermission(careProfileId, req.user.lineUserId, 'manage_medications')) return res.status(403).json({ error: 'forbidden' });
   const result = await familyService.addMedicationByFamily({ careProfileId, name, dose, createdBy: req.user.lineUserId });
   res.status(201).json(result.medication);
 }));
 
 // เก็บรายการยาเป็น snapshot เพื่อย้อนดูการเปลี่ยนแปลงแต่ละครั้งได้
 router.post('/care-profile/:careProfileId/medication-snapshots', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_medications')) return res.status(403).json({ error:'forbidden' });
   let items = req.body.items;
   let source = 'manual';
   if ((!Array.isArray(items) || items.length === 0) && req.body.imageBase64) {
@@ -141,6 +196,7 @@ router.post('/care-profile/:careProfileId/medication-snapshots', requireFamilyAc
     const parsed = await aiProvider.interpretDocument(Buffer.from(req.body.imageBase64, 'base64'));
     items = parsed.medications || [];
     source = 'image_ai';
+    if (!req.body.confirmAi) return res.status(202).json({ status: 'draft_requires_confirmation', items, message: 'กรุณาตรวจสอบและยืนยันรายการยาที่ AI อ่านได้ก่อนบันทึก' });
   }
   const result = await familyService.recordMedicationSnapshot({
     careProfileId: req.params.careProfileId, items, recordedBy: req.user.lineUserId,

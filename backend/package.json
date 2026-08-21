@@ -1,6 +1,12 @@
 {
   "name": "phimor-backend",
   "version": "1.0.0",
+  "private": true,
+  "engines": { "node": ">=20 <23" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test ../tests/*.test.js"
+  },
   "dependencies": {
     "@line/bot-sdk": "^9.4.2",
     "dotenv": "^16.4.5",

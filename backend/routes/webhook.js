@@ -1,6 +1,7 @@
 const line = require('@line/bot-sdk');
 const blobClient = new line.messagingApi.MessagingApiBlobClient({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'dummy' });
 const express = require('express');
+const { createHash } = require('crypto');
 const router = express.Router();
 
 const centerService = require('../services/centerService');
@@ -10,7 +11,7 @@ const familyService = require('../services/familyService');
 const lineClient = require('../providers/lineClient');
 const flex = require('../flexMessages');
 const rateLimiter = require('../utils/rateLimiter');
-const { Residents, PendingCards, CareProfiles, CenterStaff, Centers } = require('../db');
+const { Residents, PendingCards, CareProfiles, CenterStaff, Centers, WebhookInbox, id, now } = require('../db');
 
 const IMAGE_RATE_LIMIT = Number(process.env.IMAGE_RATE_LIMIT_PER_MINUTE) || 5;
 const webhookParser = (process.env.NODE_ENV === 'test' || process.env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true')
@@ -178,6 +179,8 @@ async function handlePostback(event) {
     if (action === 'center_own' || action === 'center_care2go') {
         const planId = params.get('planId');
         const choice = action === 'center_own' ? 'center_own' : 'care2go';
+        const plan = await require('../db').TransportPlans.findOne((p) => p.plan_id === planId);
+        if (!plan || !await centerService.canApprove(plan.center_id, lineUserId)) return safeReply(event.replyToken, { type: 'text', text: '⚠️ เฉพาะเจ้าของหรือผู้จัดการของสาขานี้เท่านั้นที่ตัดสินใจได้' });
         const result = await transportService.centerChoose(planId, choice, lineUserId, { needs: ['escort', 'vehicle'] });
         return safeReply(event.replyToken, { type: 'text', text: result.ok ? 'บันทึกแล้วค่ะ แจ้งครอบครัวเรียบร้อย' : result.reason });
     }
@@ -190,12 +193,7 @@ async function handlePostback(event) {
     }
 }
 
-router.post('/webhook', webhookParser, async (req, res) => {
-  res.status(200).end();
-  const events = req.body.events || [];
-
-  for (const event of events) {
-    try {
+async function processEvent(event) {
       if (event.type === 'memberLeft') {
         const groupId = event.source.groupId || event.source.roomId;
         const leftMembers = event.left.members;
@@ -229,10 +227,42 @@ router.post('/webhook', webhookParser, async (req, res) => {
         const handledBinding = await handleGroupBindingCode(event);
         if (!handledBinding) await captureStaffFromGroupEvent(event);
       }
+}
+
+function eventKey(event) {
+  if (event.webhookEventId) return event.webhookEventId;
+  return createHash('sha256').update(JSON.stringify({ type:event.type, timestamp:event.timestamp, source:event.source, message:event.message, postback:event.postback?.data, replyToken:event.replyToken })).digest('hex');
+}
+
+async function processPendingWebhookEvents(limit = 50) {
+  const pending = await WebhookInbox.findWhere((e) => ['pending', 'retrying'].includes(e.status));
+  let processed = 0;
+  for (const item of pending.slice(0, limit)) {
+    try {
+      await processEvent(item.event);
+      await WebhookInbox.update((e) => e.inbox_id === item.inbox_id, { status:'processed', processed_at:now(), attempts:Number(item.attempts||0)+1 });
+      processed += 1;
     } catch (err) {
+      const attempts = Number(item.attempts || 0) + 1;
+      await WebhookInbox.update((e) => e.inbox_id === item.inbox_id, { status:attempts>=5?'dead_letter':'retrying', attempts, last_error:String(err.message||err).slice(0,500), last_attempt_at:now() });
       console.error('webhook handler error:', err);
     }
   }
+  return { processed };
+}
+
+router.post('/webhook', webhookParser, async (req, res) => {
+  const events = req.body.events || [];
+  // Persist every event before acknowledging LINE.  A worker can replay a
+  // pending item after a process restart, and webhookEventId prevents doubles.
+  for (const event of events) {
+    const key = eventKey(event);
+    const existing = await WebhookInbox.findOne((e) => e.event_key === key);
+    if (!existing) await WebhookInbox.insert({ inbox_id:id('WH'), event_key:key, event, status:'pending', attempts:0, received_at:now() });
+  }
+  res.status(200).end();
+  await processPendingWebhookEvents();
 });
 
 module.exports = router;
+module.exports.processPendingWebhookEvents = processPendingWebhookEvents;
