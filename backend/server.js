@@ -39,7 +39,7 @@ app.use(cors({
     if (!origin || process.env.NODE_ENV === 'test' || configuredOrigins.includes(origin)) return callback(null, true);
     return callback(new Error('CORS origin not allowed'));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Line-User-Id', 'X-Admin-Key', 'X-Center-Api-Key']
 }));
 
