@@ -271,7 +271,7 @@
         <label class="switch"><input type="checkbox" id="vehicleEnabled"><span class="slider"></span></label>
       </div>
     </div>
-    <div style="margin-top:14px"><button class="btn btn-primary" onclick="saveRateCard()">บันทึกราคา</button></div>
+    <div style="margin-top:14px"><button id="saveRateCardButton" class="btn btn-primary" onclick="saveRateCard()">บันทึกราคา</button></div>
   </div>
 </div>
 
@@ -334,7 +334,11 @@ async function api(path, opts={}) {
     headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) },
   });
   const data = await res.json().catch(()=>({}));
-  if (!res.ok) { toast(data.message || 'เกิดข้อผิดพลาด'); throw new Error(data.message); }
+  if (!res.ok) {
+    const message = data.message || data.error || `เกิดข้อผิดพลาด (HTTP ${res.status})`;
+    toast(message);
+    const error = new Error(message); error.status = res.status; throw error;
+  }
   return data;
 }
 
@@ -555,13 +559,21 @@ async function loadRateCard() {
   document.getElementById('vehiclePrice').value = rc.vehicle_price || '';
 }
 async function saveRateCard() {
-  await api('/api/center/ratecard?centerId=' + CENTER_ID, { method:'PUT', body: JSON.stringify({
-    escortEnabled: document.getElementById('escortEnabled').checked,
-    escortPrice: document.getElementById('escortPrice').value,
-    vehicleEnabled: document.getElementById('vehicleEnabled').checked,
-    vehiclePrice: document.getElementById('vehiclePrice').value,
-  })});
-  toast('บันทึกราคาแล้ว');
+  const escortEnabled = document.getElementById('escortEnabled').checked;
+  const vehicleEnabled = document.getElementById('vehicleEnabled').checked;
+  const escortPrice = document.getElementById('escortPrice').value;
+  const vehiclePrice = document.getElementById('vehiclePrice').value;
+  if ((escortEnabled && escortPrice === '') || (vehicleEnabled && vehiclePrice === '')) return toast('กรุณากรอกราคาของบริการที่เปิดใช้งาน');
+  if (Number(escortPrice || 0) < 0 || Number(vehiclePrice || 0) < 0) return toast('ราคาต้องเป็น 0 หรือมากกว่า');
+  const button = document.getElementById('saveRateCardButton');
+  if (button) { button.disabled = true; button.textContent = 'กำลังบันทึก...'; }
+  try {
+    await api('/api/center/ratecard?centerId=' + encodeURIComponent(CENTER_ID), { method:'POST', body: JSON.stringify({ escortEnabled, escortPrice, vehicleEnabled, vehiclePrice }) });
+    toast('บันทึกราคาแล้ว');
+    await loadRateCard();
+  } finally {
+    if (button) { button.disabled = false; button.textContent = 'บันทึกราคา'; }
+  }
 }
 
 // ── FR-A4: ทีมงาน ──

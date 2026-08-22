@@ -213,13 +213,24 @@ router.get('/center/ratecard', requireCenterStaff(), asyncHandler(async (req, re
   const rc = await transportService.getRateCard(req.centerId);
   res.json(rc);
 }));
-router.put('/center/ratecard', requireCenterStaff(), asyncHandler(async (req, res) => {
+
+const saveRateCard = asyncHandler(async (req, res) => {
   const { escortEnabled, escortPrice, vehicleEnabled, vehiclePrice } = req.body;
+  const escortAmount = Number(escortPrice || 0);
+  const vehicleAmount = Number(vehiclePrice || 0);
+  if (!Number.isFinite(escortAmount) || escortAmount < 0 || !Number.isFinite(vehicleAmount) || vehicleAmount < 0) {
+    return res.status(400).json({ error:'bad_request', message:'ราคาต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป' });
+  }
   const updated = await transportService.updateRateCard(req.centerId, {
-    escort_enabled: !!escortEnabled, escort_price: Number(escortPrice) || 0,
-    vehicle_enabled: !!vehicleEnabled, vehicle_price: Number(vehiclePrice) || 0,
+    escort_enabled: !!escortEnabled, escort_price: escortAmount,
+    vehicle_enabled: !!vehicleEnabled, vehicle_price: vehicleAmount,
   }, req.user.lineUserId);
+  if (!updated) return res.status(500).json({ error:'ratecard_not_saved', message:'ระบบไม่สามารถบันทึกราคาบริการได้ กรุณาลองใหม่' });
   res.json(updated);
-}));
+});
+
+// POST รองรับ LINE in-app browser บางรุ่นที่มีปัญหากับ PUT ส่วน PUT คงไว้เพื่อ backward compatibility
+router.post('/center/ratecard', requireCenterStaff(), saveRateCard);
+router.put('/center/ratecard', requireCenterStaff(), saveRateCard);
 
 module.exports = router;

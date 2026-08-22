@@ -19,6 +19,13 @@ test('เจ้าของคนเดียวมีหลายสาขา�
   assert.notStrictEqual(a.center_id, b.center_id);
 });
 
+test('รายชื่อทีมงานไม่แสดง LINE User คนเดิมซ้ำ แม้มีข้อมูลเก่าซ้ำในฐานข้อมูล', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await db.CenterStaff.insert({ staff_id:'DUP', center_id:center.center_id, line_user_id:'U_OWNER', role:'owner', status:'active' });
+  const staff = await centerService.listStaff(center.center_id);
+  assert.strictEqual(staff.filter((s) => s.line_user_id === 'U_OWNER').length, 1);
+});
+
 test('รหัส STAFF ผูกกลุ่มพนักงานโดยไม่สับสนกับกลุ่มครอบครัว', async () => {
   const center = await centerService.createCenter({ name: 'สาขา A', ownerLineId: 'U_OWNER' });
   const token = await groupBindingService.createStaffBindingToken(center.center_id, 'U_OWNER');

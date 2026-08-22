@@ -144,7 +144,14 @@ async function removeManager({ centerId, targetLineId, requesterLineId }) {
 }
 
 async function listStaff(centerId) {
-  return CenterStaff.findWhere((s) => s.center_id === centerId);
+  const rows = await CenterStaff.findWhere((s) => s.center_id === centerId);
+  const unique = new Map();
+  const rank = (s) => ({ owner:3, manager:2, staff:1 }[s.role] || 0) + ((!s.status || s.status === 'active') ? 10 : 0);
+  for (const row of rows) {
+    const previous = unique.get(row.line_user_id);
+    if (!previous || rank(row) > rank(previous)) unique.set(row.line_user_id, row);
+  }
+  return [...unique.values()];
 }
 
 // ── ทะเบียนพนักงานอัตโนมัติ ──

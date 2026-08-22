@@ -55,3 +55,15 @@ test('ยกเลิกนัดแบบเก็บประวัติแ�
   const reminders = await reminderService.sendAppointmentReminders(new Date('2050-01-01T08:00:00+07:00'));
   assert.strictEqual(reminders.sent,0);
 });
+
+test('owner บันทึกราคาบริการผ่าน POST สำหรับ LINE in-app browser ได้', async () => {
+  const { center } = await setup();
+  const res = await api(`/api/center/ratecard?centerId=${encodeURIComponent(center.center_id)}`, 'U_OWNER', {
+    method:'POST', body:JSON.stringify({ escortEnabled:true, escortPrice:'800', vehicleEnabled:true, vehiclePrice:'1200' }),
+  });
+  assert.strictEqual(res.status, 200);
+  const saved = await res.json();
+  assert.strictEqual(saved.escort_enabled, true);
+  assert.strictEqual(saved.escort_price, 800);
+  assert.strictEqual(saved.vehicle_price, 1200);
+});

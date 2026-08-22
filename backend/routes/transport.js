@@ -17,6 +17,13 @@ router.get('/transport/family/pending', asyncHandler(async (req, res) => {
   res.json({ pending:await transportService.getPendingFamilyPlans(ids) });
 }));
 
+// Keep named collection routes before /transport/:planId. Otherwise Express
+// treats the word "pending" as a plan id and this screen receives a 404.
+router.get('/transport/pending', requireCenterStaff(), asyncHandler(async (req, res) => {
+  const pending = await TransportPlans.findWhere((p) => p.center_id === req.centerId && p.status === 'awaiting_center');
+  res.json({ pending });
+}));
+
 // GET /api/transport/:id — ดูสถานะและประวัติการตัดสินใจ
 router.get('/transport/:planId', asyncHandler(async (req, res) => {
   const plan = await TransportPlans.findOne((p) => p.plan_id === req.params.planId);
@@ -42,12 +49,6 @@ router.post('/transport/:planId/family-choice', asyncHandler(async (req, res) =>
       : { ok: false, reason: 'ตัวเลือกไม่ถูกต้อง' };
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
   res.json(result);
-}));
-
-// GET /api/transport/pending — รายการที่รอศูนย์ตัดสินใจ (เจ้าของ/ผู้จัดการ)
-router.get('/transport/pending', requireCenterStaff(), asyncHandler(async (req, res) => {
-  const pending = await TransportPlans.findWhere((p) => p.center_id === req.centerId && p.status === 'awaiting_center');
-  res.json({ pending });
 }));
 
 // POST /api/transport/:id/center-choice — ศูนย์เลือกชั้นที่ 2 (ข้อ L4-L9) — สองทางเท่านั้น ไม่มีปฏิเสธ
