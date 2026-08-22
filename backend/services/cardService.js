@@ -129,6 +129,11 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   if (!allowed) {
     return { ok: false, reason: 'เฉพาะเจ้าของศูนย์และผู้จัดการเท่านั้นที่ยืนยันข้อมูลได้', forbidden: true };
   }
+  const center = await require('../db').Centers.findOne((c) => c.center_id === card.center_id);
+  const entitlement = require('./subscriptionService').entitlement(center);
+  if (!entitlement.allowed) {
+    return { ok: false, reason: 'สิทธิ์แพ็กเกจของศูนย์ไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ', forbidden: true };
+  }
 
   // ข้อ E9: ยืนยันได้ครั้งเดียว
   if (card.status === 'confirmed') {

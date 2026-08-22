@@ -222,7 +222,7 @@
   </div>
 </div></div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const BACKEND_URL = 'https://phimor-backend.onrender.com';
@@ -235,7 +235,7 @@ let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 
-function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._hideTimer); t._hideTimer=setTimeout(()=>t.classList.remove('show'),Math.max(3200,Math.min(6500,String(msg).length*90))); }
 function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 function renderConditionChoices(id){
   const box=document.getElementById(id);

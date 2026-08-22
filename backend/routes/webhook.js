@@ -127,9 +127,10 @@ async function handlePostback(event) {
         const cardId = params.get('cardId');
         const residentId = params.get('residentId');
         const card = await PendingCards.findOne((c) => c.card_id === cardId);
-        const membership = card ? await CenterStaff.findOne((s) => s.center_id === card.center_id && s.line_user_id === lineUserId) : null;
-        const staffCenter = membership ? await Centers.findOne((c) => c.center_id === card.center_id && c.status === 'active') : null;
-        if (!card || !staffCenter) {
+        const membership = card ? await CenterStaff.findOne((s) => s.center_id === card.center_id && s.line_user_id === lineUserId && (!s.status || s.status === 'active')) : null;
+        const staffCenter = membership ? await Centers.findOne((c) => c.center_id === card.center_id) : null;
+        const entitlement = require('../services/subscriptionService').entitlement(staffCenter);
+        if (!card || !membership || !entitlement.allowed) {
           return safeReply(event.replyToken, { type: 'text', text: '⚠️ คุณไม่มีสิทธิ์เลือกผู้พักสำหรับรายการนี้' });
         }
         const result = await cardService.selectResidentForCard(cardId, residentId);
@@ -142,6 +143,12 @@ async function handlePostback(event) {
 
     if (action === 'confirm_card') {
         const cardId = params.get('cardId');
+        const card = await PendingCards.findOne((c) => c.card_id === cardId);
+        const center = card && await Centers.findOne((c) => c.center_id === card.center_id);
+        const entitlement = require('../services/subscriptionService').entitlement(center);
+        if (!card || !entitlement.allowed) {
+          return safeReply(event.replyToken, { type: 'text', text: '⚠️ ไม่สามารถยืนยันได้ กรุณาตรวจสอบสิทธิ์แพ็กเกจของศูนย์' });
+        }
         const profile = await lineClient.getProfile(lineUserId);
         const result = await cardService.confirmCard(cardId, lineUserId, profile.displayName);
         if (!result.ok) return safeReply(event.replyToken, { type: 'text', text: `⚠️ ${result.reason}` });
@@ -156,8 +163,10 @@ async function handlePostback(event) {
         const cardId = params.get('cardId');
         const card = await PendingCards.findOne((c) => c.card_id === cardId);
         if (card) {
+           const center = await Centers.findOne((c) => c.center_id === card.center_id);
            const allowed = await centerService.canApprove(card.center_id, lineUserId);
-           if (!allowed) return safeReply(event.replyToken, { type: 'text', text: '⚠️ เฉพาะเจ้าของศูนย์และผู้จัดการเท่านั้นที่แก้ไขข้อมูลได้' });
+           const entitlement = require('../services/subscriptionService').entitlement(center);
+           if (!allowed || !entitlement.allowed) return safeReply(event.replyToken, { type: 'text', text: '⚠️ ไม่สามารถแก้ไขได้ กรุณาตรวจสอบบทบาทและสิทธิ์แพ็กเกจของศูนย์' });
         }
         const editUrl = `https://liff.line.me/${process.env.LIFF_ID_CENTER_ADMIN || 'YOUR_LIFF_ID'}?view=edit-card&cardId=${cardId}`;
         return safeReply(event.replyToken, { type: 'text', text: `แก้ไขข้อมูลก่อนส่งได้ที่นี่ค่ะ\n${editUrl}` });

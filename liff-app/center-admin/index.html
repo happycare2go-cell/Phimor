@@ -89,7 +89,7 @@
   <div class="card" id="directCare2goButton" style="display:none">
     <button class="btn btn-primary">เรียก Care2Go: รถรับส่ง / คนเฝ้าไข้โรงพยาบาล</button>
   </div>
-  <div class="card">
+  <div class="card" id="addResidentCard">
     <h3>➕ เพิ่มผู้พักใหม่</h3>
     <label>ชื่อ-นามสกุล (ตามที่ปรากฏบนเอกสารโรงพยาบาล)</label>
     <input type="text" id="newFullName" placeholder="เช่น สมศรี ใจดี">
@@ -105,6 +105,26 @@
 
   <div class="search"><input type="text" id="searchInput" placeholder="ค้นหาชื่อผู้พัก..." oninput="renderResidents()"></div>
   <div id="residentList"></div>
+</div>
+
+<div class="modal-bg" id="appointmentModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appointmentModalTitle">
+    <h3 id="appointmentModalTitle">แก้ไขนัดหมาย</h3>
+    <input type="hidden" id="appointmentEditId">
+    <label for="appointmentHospital">โรงพยาบาล / แผนก</label><input id="appointmentHospital" type="text" required>
+    <div class="row"><div><label for="appointmentDate">วันที่</label><input id="appointmentDate" type="date" required></div><div><label for="appointmentTime">เวลา</label><input id="appointmentTime" type="time" required></div></div>
+    <label for="appointmentNote">หมายเหตุ</label><textarea id="appointmentNote"></textarea>
+    <p id="appointmentError" class="error" role="alert"></p>
+    <div class="row"><button class="btn btn-outline" onclick="closeModal('appointmentModal')">ยกเลิก</button><button class="btn btn-primary" id="saveAppointmentButton" onclick="saveAppointmentEdit()">บันทึก</button></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="cancelAppointmentModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cancelAppointmentTitle">
+    <h3 id="cancelAppointmentTitle">ยืนยันยกเลิกนัด</h3><input type="hidden" id="cancelAppointmentId">
+    <p>ระบบจะหยุดการแจ้งเตือนของนัดนี้ทันที</p><label for="cancelAppointmentReason">เหตุผล (ถ้ามี)</label><textarea id="cancelAppointmentReason"></textarea>
+    <div class="row"><button class="btn btn-outline" onclick="closeModal('cancelAppointmentModal')">กลับ</button><button class="btn btn-danger" id="confirmCancelAppointmentButton" onclick="confirmCancelAppointment()">ยกเลิกนัด</button></div>
+  </div>
 </div>
 
 <!-- ═══ S4: แก้ไขการ์ดก่อนส่ง — เข้าถึงผ่าน ?view=edit-card&cardId=xxx เท่านั้น ไม่อยู่ใน Tab Bar ปกติ ═══
@@ -271,7 +291,7 @@
   <div class="card"><h3>รายชื่อทีมงาน</h3><div id="staffList"></div></div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const BACKEND_URL = 'https://phimor-backend.onrender.com';
@@ -286,7 +306,7 @@ let centerMedicationAwaitingConfirmation = false;
 let centerMedicationConditions = [];
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 
-function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._hideTimer); t._hideTimer=setTimeout(()=>t.classList.remove('show'),Math.max(3200,Math.min(6500,String(msg).length*90))); }
 function openModal(id){ document.getElementById(id).classList.add('show'); }
 function closeModal(id){ document.getElementById(id).classList.remove('show'); }
 function centerConditionOptions(selected=''){
@@ -468,17 +488,24 @@ async function loadCenterAppointments() {
     </div>`).join('');
 }
 async function editAppointment(json){
-  const a=JSON.parse(json); const hospital=prompt('โรงพยาบาล',a.hospital||''); if(hospital===null)return;
-  const datetime=prompt('วันเวลานัด (เช่น 2030-01-31T09:00:00+07:00)',a.datetime||''); if(datetime===null)return;
-  const note=prompt('หมายเหตุ',a.note||''); if(note===null)return;
-  await api(`/api/center/appointments/${a.appointmentId}?centerId=${CENTER_ID}`,{method:'PATCH',body:JSON.stringify({hospital,datetime,note})});
-  toast('แก้ไขนัดแล้ว'); await loadCenterAppointments();
+  const a=JSON.parse(json), dt=new Date(a.datetime);
+  appointmentEditId.value=a.appointmentId; appointmentHospital.value=a.hospital||''; appointmentNote.value=a.note||'';
+  appointmentDate.value=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit'}).format(dt);
+  appointmentTime.value=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit',hour12:false}).format(dt);
+  appointmentError.textContent=''; openModal('appointmentModal');
 }
 async function cancelAppointment(id){
-  const reason=prompt('เหตุผลที่ยกเลิกนัด (ถ้ามี)',''); if(reason===null)return;
-  if(!confirm('ยืนยันยกเลิกนัดนี้? ระบบจะหยุดแจ้งเตือนทันที'))return;
-  await api(`/api/center/appointments/${id}/cancel`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID,reason})});
-  toast('ยกเลิกนัดและหยุดการแจ้งเตือนแล้ว'); await loadCenterAppointments();
+  cancelAppointmentId.value=id; cancelAppointmentReason.value=''; openModal('cancelAppointmentModal');
+}
+async function saveAppointmentEdit(){
+  const hospital=appointmentHospital.value.trim(),date=appointmentDate.value,time=appointmentTime.value;
+  if(!hospital||!date||!time){appointmentError.textContent='กรุณากรอกโรงพยาบาล วันที่ และเวลาให้ครบ';return}
+  const b=saveAppointmentButton;b.disabled=true;b.textContent='กำลังบันทึก...';
+  try{await api(`/api/center/appointments/${appointmentEditId.value}?centerId=${CENTER_ID}`,{method:'PATCH',body:JSON.stringify({hospital,datetime:`${date}T${time}:00+07:00`,note:appointmentNote.value.trim()})});closeModal('appointmentModal');toast('แก้ไขนัดแล้ว');await loadCenterAppointments()}catch(e){appointmentError.textContent=e.message||'บันทึกไม่สำเร็จ'}finally{b.disabled=false;b.textContent='บันทึก'}
+}
+async function confirmCancelAppointment(){
+  const b=confirmCancelAppointmentButton;b.disabled=true;b.textContent='กำลังยกเลิก...';
+  try{await api(`/api/center/appointments/${cancelAppointmentId.value}/cancel`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID,reason:cancelAppointmentReason.value.trim()})});closeModal('cancelAppointmentModal');toast('ยกเลิกนัดและหยุดการแจ้งเตือนแล้ว');await loadCenterAppointments()}finally{b.disabled=false;b.textContent='ยกเลิกนัด'}
 }
 
 // ── FR-L ชั้นที่ 2: รอดำเนินการ ──
@@ -726,7 +753,7 @@ async function main() {
   document.getElementById('centerNameLabel').textContent = CENTERS[0].name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[CENTERS[0].myRole]||CENTERS[0].myRole);
   if (!applySubscription(CENTERS[0])) return;
   if (CURRENT_ROLE === 'staff') {
-    document.querySelector('#view-residents > .card').style.display='none';
+    document.getElementById('addResidentCard').style.display='none';
     document.querySelector('.tab[data-view="transport"]').style.display='none';
     document.querySelector('.tab[data-view="ratecard"]').style.display='none';
   }

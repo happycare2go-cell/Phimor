@@ -22,11 +22,11 @@
         </div>
         <h2 style="color: #1C2B64;">ลงทะเบียนศูนย์ใหม่</h2>
         <p style="color: #5F5E5A; margin-bottom: 20px;">ระบบจะดึง LINE ID ของคุณเพื่อผูกเป็นเจ้าของศูนย์โดยอัตโนมัติ</p>
-        <input type="text" id="centerName" placeholder="ระบุชื่อศูนย์ดูแลของคุณ">
-        <input type="text" id="address" placeholder="ที่อยู่/จุดรับของสาขา">
-        <input type="tel" id="contactPhone" placeholder="เบอร์ติดต่อเจ้าของศูนย์">
-        <button onclick="registerCenter()">ยืนยันเปิดศูนย์</button>
-        <div id="statusBox" class="mascot-callout mascot-callout--compact" style="display:none;text-align:left;margin-top:16px">
+        <input type="text" id="centerName" required autocomplete="organization" placeholder="ระบุชื่อศูนย์ดูแลของคุณ">
+        <input type="text" id="address" required autocomplete="street-address" placeholder="ที่อยู่/จุดรับของสาขา">
+        <input type="tel" id="contactPhone" required inputmode="tel" autocomplete="tel" placeholder="เบอร์ติดต่อเจ้าของศูนย์">
+        <button id="registerButton" onclick="registerCenter()">ยืนยันเปิดศูนย์</button>
+        <div id="statusBox" role="status" aria-live="polite" class="mascot-callout mascot-callout--compact" style="display:none;text-align:left;margin-top:16px">
             <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow" id="statusLabel">สถานะ</span><p id="status" class="mascot-callout__title" style="font-size:15px"></p></div>
             <img id="statusMascot" class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
         </div>
@@ -43,6 +43,7 @@
             await liff.init({ liffId: config.registerLiffId });
             if (!liff.isLoggedIn()) {
                 liff.login();
+                return;
             }
         }
 
@@ -50,7 +51,9 @@
             const centerName = document.getElementById('centerName').value;
             const address = document.getElementById('address').value.trim();
             const contactPhone = document.getElementById('contactPhone').value.trim();
-            if(!centerName || !address || !contactPhone) return alert('กรุณากรอกชื่อ ที่อยู่ และเบอร์ติดต่อให้ครบ');
+            if(!centerName || !address || !contactPhone) return showStatus('กรุณากรอกชื่อ ที่อยู่ และเบอร์ติดต่อให้ครบ',true);
+            if(!/^[0-9+() -]{8,20}$/.test(contactPhone)) return showStatus('กรุณาตรวจสอบเบอร์โทรศัพท์อีกครั้ง',true);
+            const button=document.getElementById('registerButton');button.disabled=true;button.innerText='กำลังสร้างศูนย์...';
 
             document.getElementById('statusBox').style.display = 'flex';
             document.getElementById('status').innerText = 'กำลังสร้างศูนย์...';
@@ -84,12 +87,14 @@
             } catch (err) {
                 console.error(err);
                 document.getElementById('status').style.color = 'red';
-                document.getElementById('status').innerText = '❌ ไม่สามารถเชื่อมต่อระบบได้ (โปรดตรวจสอบ CORS)';
+                document.getElementById('status').innerText = '❌ เชื่อมต่อระบบไม่สำเร็จ กรุณาตรวจสัญญาณอินเทอร์เน็ตแล้วลองใหม่';
                 document.getElementById('statusBox').style.display = 'flex';
                 document.getElementById('statusLabel').innerText = 'เชื่อมต่อไม่สำเร็จ';
                 document.getElementById('statusMascot').src = '../assets/mascot/phimor-important.png';
-            }
+            } finally { const b=document.getElementById('registerButton');b.disabled=false;b.innerText='ยืนยันเปิดศูนย์'; }
         }
+
+        function showStatus(message,isError){document.getElementById('statusBox').style.display='flex';document.getElementById('status').innerText=message;document.getElementById('status').style.color=isError?'#B42318':'#0F6E56';document.getElementById('statusLabel').innerText=isError?'กรุณาตรวจสอบ':'สำเร็จ'}
 
         main();
     </script>
