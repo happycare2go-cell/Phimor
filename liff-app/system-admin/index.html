@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ผู้ดูแลระบบพี่หมอ</title>
+  <link rel="stylesheet" href="../assets/mascot-ui.css">
   <style>
     :root{font-family:system-ui,"Sarabun",sans-serif;color:#16204a;background:#f5f6fa}body{margin:0}.top{background:#1c2b64;color:#fff;padding:18px 5vw}.wrap{max-width:1200px;margin:auto;padding:24px}.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 12px #14204a18}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}input,select,button{font:inherit;padding:10px;border:1px solid #ccd1df;border-radius:8px;box-sizing:border-box}button{background:#1c2b64;color:#fff;border:0;cursor:pointer}.secondary{background:#eef1fa;color:#1c2b64}.danger{background:#9b2c2c}.muted{color:#667085}.ok{color:#087a55}.bad{color:#b42318}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.center{border-top:1px solid #e7e9f0;padding:14px 0}.center:first-child{border-top:0}.pill{border-radius:99px;padding:3px 9px;background:#eef1fa;font-size:12px}dialog{border:0;border-radius:14px;width:min(900px,92vw);max-height:85vh;overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid #eee;padding:8px;vertical-align:top}@media(max-width:600px){.wrap{padding:12px}table{font-size:12px}}
   </style>
@@ -11,10 +12,18 @@
   <div class="top"><h1>ผู้ดูแลระบบพี่หมอ</h1><div>จัดการสาขา สิทธิแพ็กเกจ และตรวจสอบ Care Profile</div></div>
   <main class="wrap">
     <section class="card" id="login">
+      <div class="mascot-callout mascot-callout--important mascot-callout--compact">
+        <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">System Admin</span><h2 class="mascot-callout__title">ยืนยันบัญชีผู้ดูแลระบบอย่างปลอดภัยครับ</h2><p class="mascot-callout__text">ใช้ ADMIN API Key เฉพาะการผูกบัญชีครั้งแรก และไม่ควรส่งคีย์ให้ผู้อื่น</p></div>
+        <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+      </div>
       <h2>ยืนยันผู้ดูแลระบบครั้งแรก</h2><p class="muted">ระบบตรวจบัญชี LINE จาก LIFF อัตโนมัติ กรุณาใส่ ADMIN API Key ครั้งเดียวเพื่อผูกบัญชี LINE นี้เป็นผู้ดูแลระบบ</p>
       <div class="row"><input id="apiKey" type="password" autocomplete="current-password" placeholder="ADMIN API Key" style="flex:1"><button onclick="bootstrapAdmin()">ยืนยันบัญชีนี้</button></div><p id="loginError" class="bad"></p>
     </section>
     <section id="app" hidden>
+      <div class="mascot-callout">
+        <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ภาพรวมระบบ</span><h2 class="mascot-callout__title">ตรวจสาขา แพ็กเกจ และ Care Profile ได้จากศูนย์กลางครับ</h2><p class="mascot-callout__text">รายการใกล้หมดอายุและสาขาที่ยังไม่ได้กำหนดแพ็กเกจควรได้รับการตรวจสอบก่อน</p></div>
+        <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+      </div>
       <div class="card row"><strong style="flex:1">สาขาทั้งหมด</strong><button class="secondary" onclick="loadCenters()">รีเฟรช</button><button class="danger" onclick="logout()">ออกจากระบบ</button></div>
       <div class="card"><div id="summary" class="grid"></div></div>
       <div class="card"><input id="search" placeholder="ค้นหาชื่อศูนย์/เจ้าของ" oninput="render()" style="width:100%"><div id="centers"></div></div>
