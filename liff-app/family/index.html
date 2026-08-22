@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>พี่หมอ</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<link rel="stylesheet" href="../assets/mascot-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -46,6 +47,10 @@
 
 <!-- ═══ F1: หน้ายินยอม PDPA — บังคับผ่านก่อนเข้าหน้าหลัก ═══ -->
 <div class="consent-overlay" id="consentOverlay" style="display:none">
+  <div class="mascot-callout mascot-callout--important">
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ความเป็นส่วนตัวของคุณ</span><h2 class="mascot-callout__title">ก่อนเริ่มใช้งาน มาทำความเข้าใจการดูแลข้อมูลกันครับ</h2><p class="mascot-callout__text">พี่หมอจะใช้ข้อมูลเท่าที่จำเป็น และให้คุณควบคุมสิทธิ์การเข้าถึงได้</p></div>
+    <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+  </div>
   <h2>ก่อนเริ่มใช้งานพี่หมอ</h2>
   <p>พี่หมอเก็บข้อมูลสุขภาพของผู้สูงอายุที่คุณดูแล เพื่อใช้แจ้งเตือนนัดหมาย บันทึกรายการยา และช่วยให้ครอบครัวเห็นข้อมูลตรงกัน</p>
   <p><b>ใครเข้าถึงข้อมูลได้บ้าง:</b> คุณในฐานะเจ้าของข้อมูล และศูนย์ดูแลเฉพาะช่วงที่ยังดูแลอยู่เท่านั้น</p>
@@ -73,6 +78,10 @@
 
   <!-- ═══ F2: หน้าหลัก ═══ -->
   <div class="view active" id="view-home">
+    <div class="mascot-callout">
+      <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">Care Profile</span><h2 class="mascot-callout__title">ข้อมูลสำคัญของคนที่คุณดูแล อยู่ที่นี่ครบในที่เดียวครับ</h2><p class="mascot-callout__text">ตรวจนัดหมาย คำขอจากศูนย์ และข้อมูลที่ต้องดำเนินการต่อได้จากหน้าหลัก</p></div>
+      <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+    </div>
     <div class="card" id="noProfileCard" style="display:none">
       <h3 id="newProfileTitle">ยังไม่มีข้อมูลผู้สูงอายุ</h3>
       <p id="newProfileHelp" style="font-size:13px;color:var(--gray)">สร้างโปรไฟล์เองได้เลย หรือรอลิงก์เชิญจากศูนย์ดูแล</p>
@@ -81,9 +90,10 @@
       <label>เพศ</label><select id="newGender"><option value="">ไม่ระบุ</option><option value="female">หญิง</option><option value="male">ชาย</option><option value="other">อื่น ๆ</option></select>
       <label>กรุ๊ปเลือด</label><select id="newBloodType"><option value="">ไม่ทราบ</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select>
       <div style="display:flex;gap:8px"><div style="flex:1"><label>ส่วนสูง (ซม.)</label><input type="number" id="newHeight"></div><div style="flex:1"><label>น้ำหนัก (กก.)</label><input type="number" id="newWeight"></div></div>
-      <label>โรคประจำตัว (เลือกได้หลายรายการ)</label>
-      <select id="newConditions" multiple size="6"><option>เบาหวาน</option><option>ความดันโลหิตสูง</option><option>ไขมันในเลือดสูง</option><option>โรคหัวใจ</option><option>โรคไต</option><option>โรคตับ</option><option>โรคหลอดเลือดสมอง</option><option>อัลไซเมอร์/สมองเสื่อม</option><option>พาร์กินสัน</option><option>โรคปอด</option><option>มะเร็ง</option></select>
-      <label>โรคอื่น ๆ (คั่นด้วยจุลภาค)</label><input type="text" id="newOtherConditions">
+      <label>โรคประจำตัว (ติ๊กได้หลายรายการ)</label>
+      <div id="newConditions" class="choice-grid"></div>
+      <p class="field-help">เลือกจากรายการมาตรฐานเพื่อให้ข้อมูลตรงกันทั้งครอบครัว ศูนย์ และรายการยา</p>
+      <label>โรคอื่น ๆ (คั่นด้วยจุลภาค)</label><input type="text" id="newOtherConditions" placeholder="กรอกเฉพาะโรคที่ไม่มีในรายการด้านบน">
       <label>แพ้ยา</label><input type="text" id="newDrugAllergies">
       <label>แพ้อาหาร</label><input type="text" id="newFoodAllergies">
       <label>ข้อจำกัดการเคลื่อนไหว</label><textarea id="newMobility"></textarea>
@@ -108,6 +118,10 @@
 
   <!-- ═══ F3: บันทึกเอง ═══ -->
   <div class="view" id="view-record">
+    <div class="mascot-callout mascot-callout--important mascot-callout--compact">
+      <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ตรวจทานก่อนบันทึก</span><h2 class="mascot-callout__title">บันทึกนัดหรือรายการยา แล้วพี่หมอจะช่วยจัดข้อมูลให้ครับ</h2><p class="mascot-callout__text">หากอัปโหลดรูป กรุณาตรวจข้อมูลที่ AI อ่านได้ก่อนกดยืนยันทุกครั้ง</p></div>
+      <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+    </div>
     <div class="card">
       <h3>บันทึกนัดหมาย</h3>
       <label>โรงพยาบาล / แผนก</label>
@@ -126,7 +140,7 @@
       <input type="text" id="medName" placeholder="เช่น Metformin 500mg">
       <label>วิธีใช้</label>
       <input type="text" id="medDose" placeholder="เช่น 1 เม็ด หลังอาหารเช้า">
-      <label>ใช้สำหรับโรค/ภาวะ</label><input type="text" id="medCondition" placeholder="เช่น เบาหวาน">
+      <label>ใช้สำหรับโรค/ภาวะ</label><select id="medCondition"><option value="">ไม่ระบุ/ไม่พบในเอกสาร</option></select>
       <label>หรือถ่าย/อัปโหลดรูปใบรายการยา</label><input type="file" id="medImage" accept="image/*" capture="environment">
       <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveMedication()">บันทึกรายการยารอบนี้</button></div>
     </div>
@@ -134,6 +148,10 @@
 
   <!-- ═══ F4: ประวัติ + PDF ═══ -->
   <div class="view" id="view-history">
+    <div class="mascot-callout mascot-callout--compact">
+      <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ประวัติสุขภาพ</span><h2 class="mascot-callout__title">ค้นย้อนหลังและส่งออก PDF ได้จากหน้านี้ครับ</h2><p class="mascot-callout__text">ไฟล์ดาวน์โหลดมีข้อมูลส่วนบุคคล กรุณาเก็บและส่งต่ออย่างระมัดระวัง</p></div>
+      <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+    </div>
     <div class="card">
       <h3>ส่งออกประวัติ</h3>
       <label>จากวันที่</label><input type="date" id="fromDate">
@@ -155,6 +173,10 @@
 
   <!-- ═══ F5: ข้อมูลสุขภาพ ═══ -->
   <div class="view" id="view-health">
+    <div class="mascot-callout mascot-callout--success mascot-callout--compact">
+      <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ข้อมูลฉุกเฉิน</span><h2 class="mascot-callout__title">ข้อมูลที่ครบ ช่วยให้ครอบครัวและศูนย์ดูแลได้แม่นยำขึ้นครับ</h2><p class="mascot-callout__text">อัปเดตโรคประจำตัว การแพ้ยา และเบอร์ติดต่อทุกครั้งที่มีการเปลี่ยนแปลง</p></div>
+      <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+    </div>
     <div class="card">
       <h3>ข้อมูลสุขภาพ</h3>
       <label>กรุ๊ปเลือด</label>
@@ -168,12 +190,14 @@
       <input type="number" id="heightCm">
       <label>น้ำหนัก (กก.)</label>
       <input type="number" id="weightKg">
-      <label>โรคประจำตัว (คั่นด้วยจุลภาค)</label><textarea id="chronicConditions"></textarea>
+      <label>โรคประจำตัว (ติ๊กได้หลายรายการ)</label><div id="chronicConditions" class="choice-grid"></div>
+      <label>โรคอื่น ๆ (คั่นด้วยจุลภาค)</label><input type="text" id="otherChronicConditions" placeholder="กรอกเฉพาะโรคที่ไม่มีในรายการด้านบน">
       <label>แพ้ยา</label><input type="text" id="drugAllergies">
       <label>แพ้อาหาร</label><input type="text" id="foodAllergies">
       <label>ข้อจำกัดการเคลื่อนไหว</label><textarea id="mobilityLimitations"></textarea>
       <label>ผู้ติดต่อฉุกเฉิน</label><input type="text" id="emergencyContactName">
       <label>เบอร์ผู้ติดต่อฉุกเฉิน</label><input type="tel" id="emergencyContactPhone">
+      <label>เบอร์โทรศัพท์ครอบครัว</label><input type="tel" id="familyPhone">
       <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveHealthInfo()">บันทึก</button></div>
     </div>
     <div class="card"><h3>🔗 ผูกกลุ่มครอบครัว</h3><p style="font-size:12px;color:var(--gray)">สร้างรหัส แล้วส่งรหัสในกลุ่มหลังเชิญพี่หมอเข้ากลุ่ม รหัสมีอายุ 15 นาที</p><button class="btn btn-outline" onclick="createFamilyBindingCode()">สร้างรหัสผูกกลุ่ม</button><div id="familyBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div></div>
@@ -209,9 +233,25 @@ let allProfiles = [];
 let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
+const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderConditionChoices(id){
+  const box=document.getElementById(id);
+  box.innerHTML=STANDARD_CONDITIONS.map((name,index)=>`<label class="choice-chip"><input type="checkbox" value="${esc(name)}" id="${id}-${index}"><span>${esc(name)}</span></label>`).join('');
+}
+function getCheckedConditions(id){return Array.from(document.querySelectorAll(`#${id} input[type=checkbox]:checked`)).map(x=>x.value)}
+function setConditionChoices(id,values,otherId){
+  const selected=new Set(values||[]);
+  document.querySelectorAll(`#${id} input[type=checkbox]`).forEach(x=>{x.checked=selected.has(x.value)});
+  document.getElementById(otherId).value=(values||[]).filter(x=>!STANDARD_CONDITIONS.includes(x)).join(', ');
+}
+function conditionSelectOptions(selected='',profileConditions=[]){
+  const values=[...new Set([...STANDARD_CONDITIONS,...(profileConditions||[]),...(selected?[selected]:[])])];
+  return `<option value="">ไม่ระบุ/ไม่พบในเอกสาร</option>`+values.map(x=>`<option value="${esc(x)}" ${x===selected?'selected':''}>${esc(x)}</option>`).join('');
+}
+function refreshMedicationCondition(){document.getElementById('medCondition').innerHTML=conditionSelectOptions('',currentProfile?.profile?.chronic_conditions||[])}
 
 async function api(path, opts={}) {
   const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
@@ -281,11 +321,13 @@ async function loadDashboard() {
     if(currentProfile.familyRole==='owner') await loadCaregivers();
     document.getElementById('bloodType').value=p.blood_type||''; document.getElementById('gender').value=p.gender||'';
     document.getElementById('heightCm').value=p.height_cm||''; document.getElementById('weightKg').value=p.weight_kg||'';
-    document.getElementById('chronicConditions').value=(p.chronic_conditions||[]).join(', ');
+    setConditionChoices('chronicConditions',p.chronic_conditions||[],'otherChronicConditions');
     document.getElementById('drugAllergies').value=p.drug_allergies||''; document.getElementById('foodAllergies').value=p.food_allergies||'';
     document.getElementById('mobilityLimitations').value=p.mobility_limitations||'';
     document.getElementById('emergencyContactName').value=p.emergency_contact_name||'';
     document.getElementById('emergencyContactPhone').value=p.emergency_contact_phone||'';
+    document.getElementById('familyPhone').value=p.family_phone||'';
+    refreshMedicationCondition();
   } else {
     document.getElementById('profileSummary').innerHTML = '';
     document.getElementById('upcomingList').innerHTML = '<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>';
@@ -324,7 +366,7 @@ async function chooseTransport(planId,choice){
 async function createIndependentProfile() {
   const patientName = document.getElementById('newProfileName').value.trim();
   if (!patientName) return toast('กรุณากรอกชื่อ');
-  const selected = Array.from(document.getElementById('newConditions').selectedOptions).map(o=>o.value);
+  const selected = getCheckedConditions('newConditions');
   const other = document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean);
   await api('/api/care-profile/independent', { method:'POST', body: JSON.stringify({
     patientName, gender:document.getElementById('newGender').value, bloodType:document.getElementById('newBloodType').value,
@@ -337,7 +379,7 @@ async function createIndependentProfile() {
   toast('สร้างโปรไฟล์แล้ว');
   await loadDashboard();
 }
-function collectProfileForm(){ const selected=Array.from(document.getElementById('newConditions').selectedOptions).map(o=>o.value); const other=document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean); return { gender:document.getElementById('newGender').value,bloodType:document.getElementById('newBloodType').value,heightCm:document.getElementById('newHeight').value,weightKg:document.getElementById('newWeight').value,chronicConditions:[...selected,...other],drugAllergies:document.getElementById('newDrugAllergies').value,foodAllergies:document.getElementById('newFoodAllergies').value,mobilityLimitations:document.getElementById('newMobility').value,emergencyContactName:document.getElementById('newEmergencyName').value,emergencyContactPhone:document.getElementById('newEmergencyPhone').value }; }
+function collectProfileForm(){ const selected=getCheckedConditions('newConditions'); const other=document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean); return { gender:document.getElementById('newGender').value,bloodType:document.getElementById('newBloodType').value,heightCm:document.getElementById('newHeight').value,weightKg:document.getElementById('newWeight').value,chronicConditions:[...selected,...other],drugAllergies:document.getElementById('newDrugAllergies').value,foodAllergies:document.getElementById('newFoodAllergies').value,mobilityLimitations:document.getElementById('newMobility').value,emergencyContactName:document.getElementById('newEmergencyName').value,emergencyContactPhone:document.getElementById('newEmergencyPhone').value,familyPhone:document.getElementById('newFamilyPhone').value }; }
 async function acceptInvite(){ if(!INVITE_TOKEN)return; await api('/api/invite/'+encodeURIComponent(INVITE_TOKEN)+'/accept',{method:'POST',body:JSON.stringify(collectProfileForm())}); INVITE_TOKEN=null; history.replaceState({},'',location.pathname); toast('เชื่อม Care Profile กับศูนย์แล้ว'); await loadDashboard(); }
 
 // ── F3: บันทึกเอง ──
@@ -380,7 +422,7 @@ async function saveMedication() {
 }
 function addMedicationReviewRow(item={}) {
   const row=document.createElement('div'); row.className='card medication-review-row'; row.style.padding='10px';
-  row.innerHTML=`<label>ชื่อยา</label><input class="review-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="review-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><input class="review-condition" value="${esc(item.condition||'')}"><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
+  row.innerHTML=`<label>ชื่อยา</label><input class="review-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="review-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><select class="review-condition">${conditionSelectOptions(item.condition||'',currentProfile?.profile?.chronic_conditions||[])}</select><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
   document.getElementById('medicationReviewRows').appendChild(row);
 }
 function closeMedicationReview(){ document.getElementById('medicationReviewModal').classList.remove('show'); medicationDraftImage=null; }
@@ -453,12 +495,13 @@ async function saveHealthInfo() {
     gender: document.getElementById('gender').value,
     height_cm: document.getElementById('heightCm').value,
     weight_kg: document.getElementById('weightKg').value,
-    chronic_conditions: document.getElementById('chronicConditions').value.split(',').map(s=>s.trim()).filter(Boolean),
+    chronic_conditions: [...getCheckedConditions('chronicConditions'),...document.getElementById('otherChronicConditions').value.split(',').map(s=>s.trim()).filter(Boolean)],
     drug_allergies: document.getElementById('drugAllergies').value,
     food_allergies: document.getElementById('foodAllergies').value,
     mobility_limitations: document.getElementById('mobilityLimitations').value,
     emergency_contact_name: document.getElementById('emergencyContactName').value,
     emergency_contact_phone: document.getElementById('emergencyContactPhone').value,
+    family_phone: document.getElementById('familyPhone').value,
   })});
   toast('บันทึกแล้ว');
   await loadDashboard();
@@ -502,6 +545,7 @@ async function main() {
     }
   }
 }
+renderConditionChoices('newConditions'); renderConditionChoices('chronicConditions'); refreshMedicationCondition();
 main().catch(err => { console.error(err); toast('เชื่อมต่อไม่สำเร็จ'); });
 </script>
 </body>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>พี่หมอ — จัดการศูนย์</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<link rel="stylesheet" href="../assets/mascot-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --red:#D64545; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -81,6 +82,10 @@
 
 <!-- ═══ S2: รายชื่อผู้พัก ═══ -->
 <div class="view active" id="view-residents">
+  <div class="mascot-callout">
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ภาพรวมสาขา</span><h2 class="mascot-callout__title">ดูแลผู้พักและข้อมูลสุขภาพสำคัญได้จากหน้านี้ครับ</h2><p class="mascot-callout__text">เลือกผู้พักเพื่อดู Clinical Summary แก้ข้อมูล หรือบันทึกรายการยา</p></div>
+    <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+  </div>
   <div class="card" id="directCare2goButton" style="display:none">
     <button class="btn btn-primary">เรียก Care2Go: รถรับส่ง / คนเฝ้าไข้โรงพยาบาล</button>
   </div>
@@ -106,6 +111,10 @@
      (ข้อ E3-E8: กรอกค่า AI ไว้ล่วงหน้า + แสดงรูปต้นฉบับ + Date/Time Picker + เปลี่ยนผู้พักได้
      + กลับไปการ์ดยืนยันเสมอ ไม่ส่งตรง + ไฮไลต์ช่องที่ถูกแก้) -->
 <div class="view" id="view-edit-card">
+  <div class="mascot-callout mascot-callout--important mascot-callout--compact">
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ต้องตรวจสอบ</span><h2 class="mascot-callout__title">เทียบข้อมูลกับเอกสารต้นฉบับก่อนส่งให้ครอบครัวครับ</h2><p class="mascot-callout__text">แก้ไขเฉพาะข้อมูลที่ไม่ตรง แล้วบันทึกเพื่อกลับไปยืนยันอีกครั้ง</p></div>
+    <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+  </div>
   <div class="card" id="editCardBanner" style="background:#1C2B64;color:#fff">
     <h3 style="color:#fff;margin:0">ตรวจสอบและแก้ไขก่อนส่ง</h3>
     <div style="font-size:12px;opacity:.85;margin-top:4px">แก้เฉพาะช่องที่ผิด ช่องที่แก้แล้วจะมีป้าย "แก้ไขแล้ว" กำกับไว้</div>
@@ -190,6 +199,10 @@
 
 <!-- ═══ FR-K1, K2: ตารางนัดของทุกผู้พักในศูนย์ + FR-L ชั้นที่ 2: รอศูนย์ตัดสินใจ ═══ -->
 <div class="view" id="view-transport">
+  <div class="mascot-callout mascot-callout--important mascot-callout--compact">
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">นัดและการเดินทาง</span><h2 class="mascot-callout__title">รายการที่ต้องตัดสินใจจะแสดงเด่นไว้ให้ครับ</h2><p class="mascot-callout__text">ตรวจวันนัดและเลือกว่าศูนย์จัดการเองหรือส่งต่อ Care2Go</p></div>
+    <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+  </div>
   <div class="card">
     <h3>📅 นัดที่กำลังจะถึงทั้งศูนย์</h3>
     <div id="centerApptList"></div>
@@ -202,6 +215,10 @@
 
 <!-- ═══ FR-M: ราคาบริการของศูนย์ ═══ -->
 <div class="view" id="view-ratecard">
+  <div class="mascot-callout mascot-callout--compact">
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">บริการของสาขา</span><h2 class="mascot-callout__title">กำหนดราคาและบริการที่สาขารับจัดการได้ครับ</h2><p class="mascot-callout__text">รายการที่ปิดไว้จะเสนอทางเลือก Care2Go ให้แทน</p></div>
+    <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+  </div>
   <div class="card">
     <h3>ราคาบริการของศูนย์</h3>
     <p style="font-size:12px;color:var(--gray);margin-top:-4px">ถ้าปิดรายการใด ระบบจะเสนอให้ใช้บริการ Care2Go สำหรับรายการนั้นแทน</p>
@@ -227,6 +244,10 @@
 
 <!-- ═══ FR-A4: ทีมงาน ═══ -->
 <div class="view" id="view-staff">
+  <div class="mascot-callout mascot-callout--success mascot-callout--compact">
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ทีมงานและสิทธิ์</span><h2 class="mascot-callout__title">จัดการผู้จัดการ พนักงาน และกลุ่มของสาขาได้ที่นี่ครับ</h2><p class="mascot-callout__text">ถอนสิทธิ์ผู้ที่ออกจากงานทันที เพื่อหยุดการเข้าถึงข้อมูลผู้พัก</p></div>
+    <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+  </div>
   <div class="card">
     <h3>📍 ข้อมูลสาขาสำหรับประสาน Care2Go</h3>
     <label>ที่อยู่/จุดรับของสาขา</label>
@@ -262,10 +283,16 @@ let residentsCache = [];
 let CURRENT_ROLE = null;
 let centerMedicationDraftImage = null;
 let centerMedicationAwaitingConfirmation = false;
+let centerMedicationConditions = [];
+const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function openModal(id){ document.getElementById(id).classList.add('show'); }
 function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+function centerConditionOptions(selected=''){
+  const values=[...new Set([...STANDARD_CONDITIONS,...centerMedicationConditions,...(selected?[selected]:[])])];
+  return `<option value="">ไม่ระบุ/ไม่พบในเอกสาร</option>`+values.map(x=>`<option value="${esc(x)}" ${x===selected?'selected':''}>${esc(x)}</option>`).join('');
+}
 
 async function api(path, opts={}) {
   const res = await fetch(BACKEND_URL + path, {
@@ -345,6 +372,7 @@ async function viewCareProfile(residentId){
   if (CURRENT_ROLE === 'staff') return viewClinicalSummary(residentId);
   const data = await api(`/api/residents/${residentId}/care-profile?centerId=${CENTER_ID}`);
   const p=data.profile, gender={female:'หญิง',male:'ชาย',other:'อื่น ๆ'}[p.gender]||'ไม่ระบุ';
+  centerMedicationConditions=p.chronic_conditions||[];
   document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8">
     <b>${esc(p.patient_name)}</b><br>เพศ: ${gender}<br>กรุ๊ปเลือด: ${esc(p.blood_type||'ไม่ทราบ')}<br>
     ส่วนสูง: ${p.height_cm||'-'} ซม. · น้ำหนัก: ${p.weight_kg||'-'} กก.<br>
@@ -394,7 +422,7 @@ function openCenterMedication(residentId){
 }
 function addCenterMedicationRow(item={}){
   const row=document.createElement('div'); row.className='card center-med-row'; row.style.padding='10px';
-  row.innerHTML=`<label>ชื่อยา</label><input class="center-med-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="center-med-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><input class="center-med-condition" value="${esc(item.condition||'')}"><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
+  row.innerHTML=`<label>ชื่อยา</label><input class="center-med-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="center-med-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><select class="center-med-condition">${centerConditionOptions(item.condition||'')}</select><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
   document.getElementById('centerMedicationRows').appendChild(row);
 }
 function collectCenterMedications(){return Array.from(document.querySelectorAll('.center-med-row')).map(row=>({name:row.querySelector('.center-med-name').value.trim(),dose:row.querySelector('.center-med-dose').value.trim(),condition:row.querySelector('.center-med-condition').value.trim()})).filter(x=>x.name)}

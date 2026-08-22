@@ -6,6 +6,7 @@
     <title>เปิดระบบศูนย์ดูแลพี่หมอ</title>
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../assets/mascot-ui.css">
     <style>
         body { font-family: 'Sarabun', sans-serif; padding: 20px; text-align: center; background-color: #F8F7F3;}
         .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-top: 50px; max-width: 400px; margin-left: auto; margin-right: auto;}
@@ -15,13 +16,20 @@
 </head>
 <body>
     <div class="container">
+        <div class="mascot-callout mascot-callout--compact" style="text-align:left">
+            <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">เริ่มต้นใช้งาน</span><h1 class="mascot-callout__title">เปิดสาขาใหม่ แล้วพี่หมอจะช่วยจัดระบบให้ครับ</h1><p class="mascot-callout__text">บัญชี LINE ที่ลงทะเบียนจะได้รับบทบาทเจ้าของสาขาโดยอัตโนมัติ</p></div>
+            <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
+        </div>
         <h2 style="color: #1C2B64;">ลงทะเบียนศูนย์ใหม่</h2>
         <p style="color: #5F5E5A; margin-bottom: 20px;">ระบบจะดึง LINE ID ของคุณเพื่อผูกเป็นเจ้าของศูนย์โดยอัตโนมัติ</p>
         <input type="text" id="centerName" placeholder="ระบุชื่อศูนย์ดูแลของคุณ">
         <input type="text" id="address" placeholder="ที่อยู่/จุดรับของสาขา">
         <input type="tel" id="contactPhone" placeholder="เบอร์ติดต่อเจ้าของศูนย์">
         <button onclick="registerCenter()">ยืนยันเปิดศูนย์</button>
-        <p id="status" style="color: #0F6E56; margin-top: 15px; font-weight: bold;"></p>
+        <div id="statusBox" class="mascot-callout mascot-callout--compact" style="display:none;text-align:left;margin-top:16px">
+            <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow" id="statusLabel">สถานะ</span><p id="status" class="mascot-callout__title" style="font-size:15px"></p></div>
+            <img id="statusMascot" class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+        </div>
     </div>
 
     <script>
@@ -44,7 +52,10 @@
             const contactPhone = document.getElementById('contactPhone').value.trim();
             if(!centerName || !address || !contactPhone) return alert('กรุณากรอกชื่อ ที่อยู่ และเบอร์ติดต่อให้ครบ');
 
+            document.getElementById('statusBox').style.display = 'flex';
             document.getElementById('status').innerText = 'กำลังสร้างศูนย์...';
+            document.getElementById('statusLabel').innerText = 'กำลังตรวจสอบ';
+            document.getElementById('statusMascot').src = '../assets/mascot/phimor-review.png';
             document.getElementById('status').style.color = '#DEB14E';
 
             try {
@@ -61,15 +72,22 @@
                 if(data.success) {
                     document.getElementById('status').style.color = '#0F6E56';
                     document.getElementById('status').innerText = '✅ ลงทะเบียนศูนย์แล้ว กรุณารอเจ้าหน้าที่กำหนดและเปิดสิทธิแพ็กเกจก่อนเริ่มใช้งาน';
+                    document.getElementById('statusLabel').innerText = 'ลงทะเบียนสำเร็จ';
+                    document.getElementById('statusMascot').src = '../assets/mascot/phimor-important.png';
                     setTimeout(() => { liff.closeWindow(); }, 2500);
                 } else {
                     document.getElementById('status').style.color = 'red';
                     document.getElementById('status').innerText = '❌ เกิดข้อผิดพลาด: ' + data.error;
+                    document.getElementById('statusLabel').innerText = 'ข้อมูลยังไม่สำเร็จ';
+                    document.getElementById('statusMascot').src = '../assets/mascot/phimor-important.png';
                 }
             } catch (err) {
                 console.error(err);
                 document.getElementById('status').style.color = 'red';
                 document.getElementById('status').innerText = '❌ ไม่สามารถเชื่อมต่อระบบได้ (โปรดตรวจสอบ CORS)';
+                document.getElementById('statusBox').style.display = 'flex';
+                document.getElementById('statusLabel').innerText = 'เชื่อมต่อไม่สำเร็จ';
+                document.getElementById('statusMascot').src = '../assets/mascot/phimor-important.png';
             }
         }
 

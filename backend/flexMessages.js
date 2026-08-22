@@ -1,5 +1,19 @@
 // flexMessages.js — สร้าง Flex Message ตาม Phimor_Technical_Design.docx หมวด 4 (S5) และหมวด 6
 
+const DEFAULT_PUBLIC_LIFF_BASE_URL = 'https://phimor-liff.onrender.com';
+
+function mascotHero(filename, backgroundColor = '#F5F7FA') {
+  const baseUrl = (process.env.PUBLIC_LIFF_BASE_URL || DEFAULT_PUBLIC_LIFF_BASE_URL).replace(/\/$/, '');
+  return {
+    type: 'image',
+    url: `${baseUrl}/assets/mascot/${filename}`,
+    size: 'full',
+    aspectRatio: '20:13',
+    aspectMode: 'fit',
+    backgroundColor,
+  };
+}
+
 // ── S5: การ์ดยืนยันก่อนส่งให้ครอบครัว — ชื่อผู้พักต้องใหญ่ที่สุด (ข้อ E1) ──
 function confirmCardFlex({ cardId, residentName, room, data }) {
   const bodyContents = [
@@ -34,6 +48,7 @@ function confirmCardFlex({ cardId, residentName, room, data }) {
     altText: `ตรวจสอบก่อนส่งให้ครอบครัว — ${residentName}`,
     contents: {
       type: 'bubble',
+      hero: mascotHero('phimor-review.png', '#EAF2FF'),
       header: {
         type: 'box', layout: 'vertical', backgroundColor: '#1C2B64', paddingAll: 'md',
         contents: [{ type: 'text', text: 'ตรวจสอบก่อนส่งให้ครอบครัว', color: '#FFFFFF', weight: 'bold', size: 'sm' }],
@@ -71,6 +86,7 @@ function transportFamilyChoiceFlex({ planId, hospital, datetime }) {
     altText: 'เลือกวิธีเดินทางไปพบแพทย์',
     contents: {
       type: 'bubble',
+      hero: mascotHero('phimor-important.png', '#FFF7DC'),
       body: {
         type: 'box', layout: 'vertical', spacing: 'sm',
         contents: [
@@ -93,7 +109,7 @@ function transportFamilyChoiceFlex({ planId, hospital, datetime }) {
 
 function care2goOperationsRequestFlex({planId,residentName,destination,origin,datetime,contact,requestedByType,needs,note}) {
   const labels={vehicle:'รถรับส่ง',escort:'คนเฝ้าไข้'};
-  return {type:'flex',altText:'มีคำขอบริการ Care2Go ใหม่',contents:{type:'bubble',body:{type:'box',layout:'vertical',spacing:'sm',contents:[
+  return {type:'flex',altText:'มีคำขอบริการ Care2Go ใหม่',contents:{type:'bubble',hero:mascotHero('phimor-care2go.png','#EAF2FF'),body:{type:'box',layout:'vertical',spacing:'sm',contents:[
     {type:'text',text:'🚐 คำขอบริการ Care2Go',weight:'bold',size:'lg',color:'#1C2B64'},
     {type:'text',text:`ผู้รับบริการ: ${residentName}`,wrap:true,size:'sm'},{type:'text',text:`ต้นทาง: ${origin}`,wrap:true,size:'sm'},
     {type:'text',text:`ปลายทาง: ${destination}`,wrap:true,size:'sm'},{type:'text',text:`วันเวลา: ${datetime}`,wrap:true,size:'sm'},
@@ -113,6 +129,7 @@ function transportCenterChoiceFlex({ planId, residentName, room, hospital, datet
     altText: 'ญาติขอให้ศูนย์จัดการเรื่องการเดินทาง',
     contents: {
       type: 'bubble',
+      hero: mascotHero('phimor-important.png', '#FFF7DC'),
       body: {
         type: 'box', layout: 'vertical', spacing: 'sm',
         contents: [
