@@ -69,12 +69,21 @@ test('ศูนย์สร้าง Care Profile ก่อน แล้วญ�
   assert.strictEqual(created.ok, true);
   assert.strictEqual(created.profile.owner_line_id, null);
   const invite = await centerService.getOrCreateResidentInvite({ centerId:center.center_id, residentId:resident.resident_id });
-  const token = new URL(invite.inviteUrl).searchParams.get('invite');
+  const token = new URL(invite.inviteUrl).searchParams.get('token');
   const claimed = await familyService.acceptInvite(token, 'U_FAMILY');
   assert.strictEqual(claimed.ok, true);
   assert.strictEqual(claimed.careProfile.owner_line_id, 'U_FAMILY');
   assert.strictEqual(claimed.careProfile.blood_type, 'O+');
   assert.deepStrictEqual(claimed.careProfile.chronic_conditions, ['เบาหวาน']);
+});
+
+test('ลิงก์เชิญที่สร้างซ้ำใช้ query token ตรงกับ Family LIFF', async () => {
+  const center = await centerService.createCenter({ name: 'ศูนย์', ownerLineId: 'U_OWNER' });
+  const { resident } = await centerService.addResident({ centerId: center.center_id, fullName: 'คุณทดสอบ' });
+  const result = await centerService.getOrCreateResidentInvite({ centerId: center.center_id, residentId: resident.resident_id });
+  const url = new URL(result.inviteUrl);
+  assert.ok(url.searchParams.get('token'));
+  assert.strictEqual(url.searchParams.get('invite'), null);
 });
 
 test('Care Profile เก็บข้อมูลสุขภาพครบและรายการยาเป็น snapshot ย้อนหลังได้', async () => {

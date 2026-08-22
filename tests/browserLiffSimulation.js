@@ -1,0 +1,152 @@
+// Real Chromium simulation for LIFF screens. LINE and backend are intercepted;
+// no production data or real LINE account is used.
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+function browserExecutable(chromium) {
+  const candidates = [
+    process.env.PHIMOR_CHROMIUM_EXECUTABLE,
+    process.platform === 'win32' && 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    process.platform === 'win32' && 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    process.platform === 'win32' && 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.platform === 'win32' && 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    chromium.executablePath(),
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function playwright() {
+  try { return require('playwright'); }
+  catch (firstError) {
+    const custom = process.env.PHIMOR_PLAYWRIGHT_MODULE;
+    if (custom) return require(custom);
+    throw new Error('Playwright is required. Run npm install --save-dev playwright && npx playwright install chromium');
+  }
+}
+
+const LIFF_MOCK = `<script>window.liff={init:async()=>{},isLoggedIn:()=>true,login:()=>{},logout:()=>{},getIDToken:()=> 'SIMULATED_ID_TOKEN',getProfile:async()=>({userId:'U_SIMULATED',displayName:'ผู้ใช้จำลอง'}),isInClient:()=>true,closeWindow:()=>{},openWindow:()=>{}};</script>`;
+
+function localHtml(name) {
+  return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
+    .replace(/<script[^>]+static\.line-scdn\.net\/liff\/edge\/2\/sdk\.js[^>]*><\/script>/, LIFF_MOCK);
+}
+
+async function mockBackend(page, handler) {
+  await page.route('**/*', async (route) => {
+    const request = route.request();
+    if (!request.url().startsWith('https://phimor-backend.onrender.com')) return route.abort();
+    const result = await handler(new URL(request.url()), request);
+    return route.fulfill({ status: result?.status || 200, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
+  });
+}
+
+async function familyConsentJourney(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  let consent = false;
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return { familyLiffId: 'SIM_FAMILY' };
+    if (url.pathname === '/api/consent/check') return { hasConsent: consent };
+    if (url.pathname === '/api/consent') { consent = true; return { consent_id: 'C1', accepted: true }; }
+    if (url.pathname === '/api/init-dashboard') return { profiles: [] };
+    if (url.pathname === '/api/access-requests') return { requests: [] };
+    if (url.pathname === '/api/transport/family/pending') return { pending: [] };
+    return { status: 404, body: { message: `unmocked ${url.pathname}` } };
+  });
+  await page.setContent(localHtml('family'), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#consentOverlay')).display !== 'none');
+  await page.getByRole('button', { name: 'ยอมรับและเริ่มใช้งาน' }).click();
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  assert.match(await page.locator('#profileLabel').textContent(), /ยังไม่มีข้อมูล/);
+  await page.close();
+}
+
+async function centerPendingJourney(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/api/center/me') return { centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
+    if (url.pathname === '/api/residents') return { residents: [] };
+    if (url.pathname === '/api/center/appointments') return { appointments: [] };
+    if (url.pathname === '/api/transport/pending') return { pending: [] };
+    return { status: 404, body: { message: `unmocked ${url.pathname}` } };
+  });
+  await page.setContent(localHtml('center-admin'), { waitUntil: 'domcontentloaded' });
+  await page.locator('.tab[data-view="transport"]').click();
+  await page.waitForSelector('#transportList .empty');
+  assert.strictEqual((await page.locator('#transportList').textContent()).trim(), 'ไม่มีรายการรอดำเนินการ');
+  assert.ok(!(await page.locator('#toast').textContent()).includes('ผิดพลาด'));
+  await page.close();
+}
+
+async function centerPendingFailureIsVisible(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/api/center/me') return { centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
+    if (url.pathname === '/api/residents') return { residents: [] };
+    if (url.pathname === '/api/center/appointments') return { appointments: [] };
+    if (url.pathname === '/api/transport/pending') return { status:500, body:{ message:'ระบบเดินทางจำลองขัดข้อง' } };
+    return { status:404, body:{ message:`unmocked ${url.pathname}` } };
+  });
+  await page.setContent(localHtml('center-admin'), { waitUntil:'domcontentloaded' });
+  await page.locator('.tab[data-view="transport"]').click();
+  await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('ระบบเดินทางจำลองขัดข้อง'));
+  assert.match(await page.locator('#toast').textContent(), /ระบบเดินทางจำลองขัดข้อง/);
+  await page.close();
+}
+
+async function registerJourney(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return { registerLiffId: 'SIM_REGISTER' };
+    if (url.pathname === '/api/external/register-center') return { success:true, centerId:'CTR1' };
+    return { status:404, body:{ message:`unmocked ${url.pathname}` } };
+  });
+  await page.setContent(localHtml('register'), { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: 'ยืนยันเปิดศูนย์' }).click();
+  assert.match(await page.locator('#status').textContent(), /กรุณากรอก/);
+  await page.locator('#centerName').fill('ศูนย์จำลอง');
+  await page.locator('#address').fill('กรุงเทพฯ');
+  await page.locator('#contactPhone').fill('0812345678');
+  await page.getByRole('button', { name: 'ยืนยันเปิดศูนย์' }).click();
+  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('ลงทะเบียนศูนย์แล้ว'));
+  await page.close();
+}
+
+async function adminSubscriptionJourney(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  let saved = false;
+  const center = { centerId:'CTR1',name:'ศูนย์จำลอง',ownerLineId:'U_OWNER',status:'active',address:'กรุงเทพฯ',activeResidentCount:1,subscriptionStartAt:null,subscriptionEndAt:null,packageType:null,subscription:{allowed:false,code:'subscription_unconfigured'} };
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return { systemAdminLiffId:'SIM_ADMIN' };
+    if (url.pathname === '/api/admin/centers' && request.method()==='GET') return { centers:[center] };
+    if (url.pathname === '/api/admin/centers/CTR1/subscription') { saved=true; center.subscriptionStartAt='2030-01-01';center.subscriptionEndAt='2030-12-31';center.packageType='annual';center.subscription={allowed:true,remainingDays:365}; return { ok:true }; }
+    return { status:404, body:{message:`unmocked ${url.pathname}`} };
+  });
+  await page.setContent(localHtml('system-admin'), { waitUntil:'domcontentloaded' });
+  await page.waitForSelector('#app:not([hidden])');
+  await page.getByRole('button', { name:'ปรับสิทธิ' }).click();
+  await page.locator('#subscriptionStart').fill('2030-12-31');
+  await page.locator('#subscriptionEnd').fill('2030-01-01');
+  await page.locator('#subscriptionSaveButton').click();
+  assert.match(await page.locator('#subscriptionError').textContent(), /ต้องอยู่หลัง/);
+  await page.locator('#subscriptionStart').fill('2030-01-01');
+  await page.locator('#subscriptionEnd').fill('2030-12-31');
+  await page.locator('#subscriptionSaveButton').click();
+  await page.waitForFunction(() => !document.querySelector('#subscriptionDialog').open);
+  assert.strictEqual(saved, true);
+  await page.close();
+}
+
+(async () => {
+  const { chromium } = playwright();
+  const executablePath = browserExecutable(chromium);
+  if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
+  const browser = await chromium.launch({ headless:true, executablePath });
+  const results=[];
+  for (const [name, run] of Object.entries({ familyConsentJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney })) {
+    try { await run(browser); results.push(`PASS ${name}`); }
+    catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
+  }
+  await browser.close();
+  console.log(results.join('\n'));
+})().catch((error) => { console.error(error); process.exit(1); });

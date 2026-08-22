@@ -92,6 +92,11 @@ app.use((err, req, res, next) => {
 });
 
 let scheduledTasks = [];
+function schedulerReferenceDate() {
+  if (process.env.STAGING_MODE !== 'true') return new Date();
+  const offsetMinutes = Number(process.env.STAGING_CLOCK_OFFSET_MINUTES || 0);
+  return new Date(Date.now() + (Number.isFinite(offsetMinutes) ? offsetMinutes : 0) * 60000);
+}
 function startScheduler() {
   const heartbeat = () => { schedulerHeartbeatAt = new Date().toISOString(); };
   scheduledTasks.push(cron.schedule('*/15 * * * *', () => { cardService.expireOldCards().catch(console.error); }, { timezone: TZ }));
@@ -105,6 +110,19 @@ function startScheduler() {
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => { heartbeat(); webhookRouter.processPendingWebhookEvents?.().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('15 2 * * *', () => { heartbeat(); require('./services/centerService').reconcileAllCenterStaff().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('45 2 * * *', () => { heartbeat(); require('./services/retentionService').purgeExpiredSourceImages().catch(console.error); }, { timezone: TZ }));
+  // Staging only: run time-sensitive jobs every minute with an optional clock
+  // offset. Production never enters this branch.
+  if (process.env.STAGING_MODE === 'true') {
+    scheduledTasks.push(cron.schedule('* * * * *', () => {
+      const referenceDate = schedulerReferenceDate();
+      heartbeat();
+      Promise.all([
+        reminderService.sendAppointmentReminders(referenceDate),
+        reminderService.sendTomorrowSummaryToCenters(referenceDate),
+        subscriptionService.sendExpiryReminders(referenceDate),
+      ]).catch(console.error);
+    }, { timezone: TZ }));
+  }
   heartbeat();
   console.log(`ตั้งเวลางานประจำแล้ว ${scheduledTasks.length} งาน (เขตเวลา ${TZ})`);
 }
@@ -125,3 +143,4 @@ if (require.main === module) {
 module.exports = app;
 module.exports.startScheduler = startScheduler;
 module.exports.stopScheduler = stopScheduler;
+module.exports.schedulerReferenceDate = schedulerReferenceDate;

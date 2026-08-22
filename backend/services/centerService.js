@@ -232,7 +232,7 @@ async function getOrCreateResidentInvite({ centerId, residentId }) {
   }
   let invite = await Invites.findOne((i) => i.resident_id === residentId && i.status === 'active' && !i.used_at && new Date(i.expires_at) > new Date());
   if (!invite) invite = await Invites.insert({ invite_token:id('INV'), resident_id:residentId, expires_at:new Date(Date.now()+INVITE_EXPIRY_DAYS*86400000).toISOString(), used_at:null, status:'active', revoked_at:null });
-  return { ok:true, inviteUrl:`https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?invite=${invite.invite_token}`, inviteExpiresAt:invite.expires_at };
+  return { ok:true, inviteUrl:`https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?token=${encodeURIComponent(invite.invite_token)}`, inviteExpiresAt:invite.expires_at };
 }
 
 async function approveStaff({ centerId, targetLineId, requesterLineId, role = 'staff' }) {

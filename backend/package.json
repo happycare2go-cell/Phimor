@@ -5,7 +5,11 @@
   "engines": { "node": ">=20 <23" },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test ../tests/*.test.js"
+    "test": "node scripts/run-tests.js",
+    "test:flows": "node scripts/run-tests.js journey",
+    "test:ui": "node scripts/run-tests.js ui",
+    "test:browser": "node ../tests/browserLiffSimulation.js",
+    "test:ai-golden": "node scripts/run-ai-golden.js"
   },
   "dependencies": {
     "@line/bot-sdk": "^9.4.2",

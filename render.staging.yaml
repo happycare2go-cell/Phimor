@@ -1,0 +1,61 @@
+# Separate Blueprint for non-production verification. Do not point LINE users
+# or production LIFF endpoints at these services.
+databases:
+  - name: phimor-db-staging
+    region: singapore
+    plan: starter
+
+services:
+  - type: web
+    name: phimor-backend-staging
+    runtime: node
+    region: singapore
+    plan: starter
+    rootDir: backend
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: STAGING_MODE
+        value: "true"
+      - key: STAGING_CLOCK_OFFSET_MINUTES
+        value: "0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: phimor-db-staging
+          property: connectionString
+      - key: ALLOWED_ORIGINS
+        value: https://phimor-liff-staging.onrender.com
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: LINE_LOGIN_CHANNEL_ID
+        sync: false
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LIFF_ID_CENTER_ADMIN
+        sync: false
+      - key: LIFF_ID_FAMILY
+        sync: false
+      - key: LIFF_ID_REGISTER
+        sync: false
+      - key: LIFF_ID_SYSTEM_ADMIN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CARE2GO_GROUP_BIND_CODE
+        sync: false
+      - key: REQUIRE_STAFF_APPROVAL
+        value: "true"
+      - key: REQUIRE_CARE2GO_OPS_BINDING
+        value: "true"
+
+  - type: web
+    name: phimor-liff-staging
+    runtime: static
+    rootDir: liff-app
+    buildCommand: ""
+    staticPublishPath: .

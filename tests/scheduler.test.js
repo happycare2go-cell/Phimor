@@ -27,3 +27,18 @@ test('เริ่มและหยุด Scheduler ได้โดยไม่
   server.startScheduler();
   server.stopScheduler();
 });
+
+test('Staging clock เร่งเวลาได้ แต่ Production ไม่รับค่า offset', () => {
+  const server = require('../backend/server');
+  const originalMode = process.env.STAGING_MODE;
+  const originalOffset = process.env.STAGING_CLOCK_OFFSET_MINUTES;
+  process.env.STAGING_MODE = 'true';
+  process.env.STAGING_CLOCK_OFFSET_MINUTES = '1440';
+  const accelerated = server.schedulerReferenceDate().getTime();
+  assert.ok(accelerated - Date.now() > 1439 * 60000);
+  process.env.STAGING_MODE = 'false';
+  const production = server.schedulerReferenceDate().getTime();
+  assert.ok(Math.abs(production - Date.now()) < 1000);
+  if (originalMode === undefined) delete process.env.STAGING_MODE; else process.env.STAGING_MODE = originalMode;
+  if (originalOffset === undefined) delete process.env.STAGING_CLOCK_OFFSET_MINUTES; else process.env.STAGING_CLOCK_OFFSET_MINUTES = originalOffset;
+});

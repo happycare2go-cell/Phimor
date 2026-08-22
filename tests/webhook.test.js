@@ -3,6 +3,8 @@
 const { test, beforeEach, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const crypto = require('node:crypto');
+const lineSdk = require('@line/bot-sdk');
 
 const db = require('../backend/db');
 const centerService = require('../backend/services/centerService');
@@ -41,6 +43,31 @@ test('GET /health ต้องตอบ 200', async () => {
   assert.strictEqual(res.status, 200);
   const body = await res.json();
   assert.strictEqual(body.status, 'ok');
+});
+
+test('LINE Verify ส่ง events ว่างมา ต้องตอบ 200 โดยไม่สร้าง inbox', async () => {
+  const res = await postWebhook([]);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual((await db.WebhookInbox.findAll()).length, 0);
+});
+
+test('ลายเซ็น LINE แบบ HMAC-SHA256 ถูกต้องผ่าน และ body ที่ถูกแก้ต้องไม่ผ่าน', () => {
+  const secret = 'test-channel-secret';
+  const rawBody = JSON.stringify({ destination:'U_TEST', events:[] });
+  const signature = crypto.createHmac('sha256', secret).update(rawBody).digest('base64');
+  assert.strictEqual(lineSdk.validateSignature(rawBody, secret, signature), true);
+  assert.strictEqual(lineSdk.validateSignature(rawBody + ' ', secret, signature), false);
+  assert.strictEqual(lineSdk.validateSignature(rawBody, secret, 'invalid-signature'), false);
+});
+
+test('LINE redelivery ที่มี webhookEventId เดิมต้องบันทึกและประมวลผลครั้งเดียว', async () => {
+  const event = { webhookEventId:'EVT_DUPLICATE', type:'message', replyToken:'RT_DUP',
+    message:{ type:'text', text:'สวัสดี' }, source:{ type:'group', groupId:'G_UNKNOWN', userId:'U_TEST' } };
+  assert.strictEqual((await postWebhook([event])).status, 200);
+  assert.strictEqual((await postWebhook([event])).status, 200);
+  const rows = await db.WebhookInbox.findWhere((row) => row.event_key === 'EVT_DUPLICATE');
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].attempts, 1);
 });
 
 test('Flow เต็มผ่าน HTTP: พนักงานทักในกลุ่ม → ส่งรูปส่วนตัว → ผู้จัดการยืนยัน → ครอบครัวได้รับ', async () => {

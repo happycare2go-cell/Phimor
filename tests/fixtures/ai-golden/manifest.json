@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "privacy": "synthetic-or-anonymized-only",
+  "cases": [
+    {
+      "id": "negative-rich-menu-not-medical",
+      "description": "ภาพเมนูระบบต้องไม่ถูกตีความเป็นเอกสารแพทย์",
+      "image": "backend/assets/richmenu/family.png",
+      "mimeType": "image/png",
+      "expected": { "documentType": "unrelated" }
+    }
+  ]
+}
