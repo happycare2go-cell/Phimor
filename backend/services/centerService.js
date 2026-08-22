@@ -1,6 +1,6 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
-const { Centers, CenterStaff, StaffContexts, Residents, Invites, GroupBindings, audit, id, now, withTransaction } = require('../db');
+const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, audit, id, now, withTransaction } = require('../db');
 const richMenuService = require('./richMenuService');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
@@ -157,7 +157,20 @@ async function recordStaffFromGroup(groupId, lineUserId) {
 
   const existing = await CenterStaff.findOne((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
   if (existing) {
-    if (existing.status === 'pending' || existing.status === 'revoked') return existing;
+    if (existing.status === 'revoked') {
+      const requireApproval = process.env.REQUIRE_STAFF_APPROVAL === 'true' || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_STAFF_APPROVAL !== 'false');
+      const restored = await CenterStaff.update((s) => s.staff_id === existing.staff_id, {
+        role: 'staff', status: requireApproval ? 'pending' : 'active',
+        rejoined_group_at: now(), revoked_at: null, revoked_by: null, revoke_reason: null,
+      });
+      await audit('center.staff_rejoined', lineUserId, { centerId: center.center_id, requiresApproval: requireApproval });
+      if (!requireApproval) {
+        linkMenuBestEffort(lineUserId);
+        await setActiveCenterForStaff(lineUserId, center.center_id);
+      }
+      return restored;
+    }
+    if (existing.status === 'pending') return existing;
     linkMenuBestEffort(lineUserId);
     await setActiveCenterForStaff(lineUserId, center.center_id);
     return existing;
@@ -176,6 +189,43 @@ async function recordStaffFromGroup(groupId, lineUserId) {
   if (requireApproval) await audit('center.staff_pending_approval', lineUserId, { centerId: center.center_id, groupId });
   else { linkMenuBestEffort(lineUserId); await setActiveCenterForStaff(lineUserId, center.center_id); }
   return staff;
+}
+
+async function createCenterManagedCareProfile({ centerId, residentId, profileData = {}, requesterLineId }) {
+  return withTransaction(`center-care-profile:${residentId}`, async () => {
+    const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === centerId && r.status === 'active');
+    if (!resident) return { ok:false, reason:'ไม่พบผู้พักในสาขานี้' };
+    if (resident.care_profile_id) return { ok:false, reason:'ผู้พักรายนี้มี Care Profile แล้ว' };
+    const profile = await CareProfiles.insert({
+      care_profile_id:id('CP'), owner_line_id:null, patient_name:resident.full_name,
+      center_id:centerId, family_phone:profileData.familyPhone || resident.family_phone || null,
+      status:'linked', managed_by_center:true,
+      gender:profileData.gender || null, blood_type:profileData.bloodType || null,
+      height_cm:profileData.heightCm ? Number(profileData.heightCm) : null,
+      weight_kg:profileData.weightKg ? Number(profileData.weightKg) : null,
+      chronic_conditions:Array.isArray(profileData.chronicConditions) ? profileData.chronicConditions : [],
+      drug_allergies:profileData.drugAllergies || '', food_allergies:profileData.foodAllergies || '',
+      mobility_limitations:profileData.mobilityLimitations || '',
+      emergency_contact_name:profileData.emergencyContactName || '',
+      emergency_contact_phone:profileData.emergencyContactPhone || '',
+      created_by_center_user_id:requesterLineId, created_at:now(),
+    });
+    await Residents.update((r) => r.resident_id === residentId && !r.care_profile_id, { care_profile_id:profile.care_profile_id, link_status:'center_managed' });
+    await audit('care_profile.created_by_center', requesterLineId, { centerId, residentId, careProfileId:profile.care_profile_id });
+    return { ok:true, profile };
+  });
+}
+
+async function getOrCreateResidentInvite({ centerId, residentId }) {
+  const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === centerId && r.status === 'active');
+  if (!resident) return { ok:false, reason:'ไม่พบผู้พักในสาขานี้' };
+  if (resident.care_profile_id) {
+    const profile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
+    if (profile?.owner_line_id) return { ok:false, reason:'Care Profile นี้มีเจ้าของครอบครัวแล้ว' };
+  }
+  let invite = await Invites.findOne((i) => i.resident_id === residentId && i.status === 'active' && !i.used_at && new Date(i.expires_at) > new Date());
+  if (!invite) invite = await Invites.insert({ invite_token:id('INV'), resident_id:residentId, expires_at:new Date(Date.now()+INVITE_EXPIRY_DAYS*86400000).toISOString(), used_at:null, status:'active', revoked_at:null });
+  return { ok:true, inviteUrl:`https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?invite=${invite.invite_token}`, inviteExpiresAt:invite.expires_at };
 }
 
 async function approveStaff({ centerId, targetLineId, requesterLineId, role = 'staff' }) {
@@ -535,7 +585,7 @@ module.exports = {
   rotateExternalApiKey, findCenterByApiKey,
   recordStaffFromGroup, findCenterByStaffUser, listApprovers, canApprove,
   removeStaffFromGroup,
-  approveStaff, revokeStaff,
+  approveStaff, revokeStaff, createCenterManagedCareProfile, getOrCreateResidentInvite,
   transferOwner, reconcileAllCenterStaff,
   setActiveCenterForStaff, listCentersByStaffUser,
 };

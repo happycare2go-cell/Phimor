@@ -28,7 +28,9 @@ router.get('/invite/:token', asyncHandler(async (req, res) => {
   if (!invite) return res.status(404).json({ error: 'not_found', message: 'ลิงก์เชิญไม่ถูกต้อง' });
   if (invite.used_at || invite.status === 'revoked') return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญนี้ถูกใช้หรือยกเลิกแล้ว' });
   if (new Date(invite.expires_at) < new Date()) return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญหมดอายุแล้ว' });
-  const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id && r.status === 'active' && !r.care_profile_id);
+  const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id && r.status === 'active');
+  const existingProfile = resident?.care_profile_id && await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
+  if (existingProfile?.owner_line_id) return res.status(410).json({ error: 'gone', message: 'ผู้พักรายนี้มีเจ้าของ Care Profile แล้ว' });
   if (!resident) return res.status(410).json({ error: 'gone', message: 'ผู้พักรายนี้ถูกเชื่อมแล้วหรือไม่ได้อยู่ในศูนย์นี้' });
   res.json({ residentName: resident?.full_name, centerId: resident?.center_id, expiresAt: invite.expires_at });
 }));

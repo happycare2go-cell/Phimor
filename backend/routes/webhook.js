@@ -178,11 +178,7 @@ async function handlePostback(event) {
     }
 
     if (action === 'care2go_ack' || action === 'care2go_confirm') {
-        const groupId=event.source?.groupId;
-        const binding=groupId && await require('../db').GroupBindings.findOne((g)=>g.kind==='care2go_ops'&&g.line_group_id===groupId&&g.status!=='inactive');
-        if(!binding) return safeReply(event.replyToken,{type:'text',text:'⚠️ ปุ่มนี้ใช้ได้เฉพาะในกลุ่มปฏิบัติการ Care2Go'});
-        const result=await transportService.care2goAcknowledge(params.get('planId'),lineUserId,action==='care2go_confirm');
-        return safeReply(event.replyToken,{type:'text',text:result.ok?(action==='care2go_confirm'?'✅ ยืนยันจัดบริการและแจ้งผู้ร้องขอแล้ว':'✅ รับเรื่องแล้ว'):`⚠️ ${result.reason}`});
+        return safeReply(event.replyToken,{type:'text',text:'ℹ️ ปุ่มจากการ์ดรุ่นเก่าไม่ใช้แล้ว กรุณาโทรประสานผู้ติดต่อจากรายละเอียดในการ์ดโดยตรงค่ะ'});
     }
 
     if (action === 'center_own' || action === 'center_care2go') {

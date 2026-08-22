@@ -186,6 +186,10 @@ async function centerChoose(planId, choice, requesterLineId, { needs = [], note 
   if (!await require('./centerService').canApprove(plan.center_id, requesterLineId)) {
     return { ok: false, reason: 'เฉพาะเจ้าของศูนย์หรือผู้จัดการของสาขานี้เท่านั้นที่ตัดสินใจได้' };
   }
+  const center = await require('../db').Centers.findOne((c) => c.center_id === plan.center_id);
+  if (!require('./subscriptionService').entitlement(center).allowed) {
+    return { ok:false, reason:'แพ็กเกจของศูนย์ไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบก่อนดำเนินการ' };
+  }
   if (choice === 'care2go' && (process.env.REQUIRE_CARE2GO_OPS_BINDING === 'true' || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_CARE2GO_OPS_BINDING !== 'false'))) {
     const ops = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
     if (!ops) return { ok: false, reason: 'ยังไม่ได้ผูกกลุ่มปฏิบัติการ Care2Go จึงยังส่งคำขอไม่ได้' };

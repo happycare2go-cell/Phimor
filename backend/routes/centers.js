@@ -86,6 +86,18 @@ router.post('/residents', requireCenterStaff(), asyncHandler(async (req, res) =>
   });
 }));
 
+router.post('/residents/:residentId/care-profile', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const result = await centerService.createCenterManagedCareProfile({ centerId:req.centerId, residentId:req.params.residentId, profileData:req.body || {}, requesterLineId:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.status(201).json(result.profile);
+}));
+
+router.post('/residents/:residentId/invite', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const result = await centerService.getOrCreateResidentInvite({ centerId:req.centerId, residentId:req.params.residentId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result);
+}));
+
 // รายละเอียดสุขภาพเปิดให้เฉพาะ owner/manager เท่านั้น พนักงานทั่วไปไม่มี endpoint สำหรับอ่านข้อมูลนี้
 router.get('/residents/:residentId/care-profile', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
   const { Residents, CareProfiles, audit } = require('../db');

@@ -62,6 +62,7 @@
   .back-link{color:var(--navy);font-size:13px;cursor:pointer;margin-bottom:10px;display:inline-block}
   .doc-thumb{width:100%;border-radius:10px;margin-bottom:12px;background:#eee;max-height:220px;object-fit:contain}
   .edited-flag{background:#FFF6E4;padding:2px 6px;border-radius:5px;font-size:10px;color:#8A6D1F;margin-left:6px}
+  .choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:7px}.choice-chip{display:flex;gap:7px;align-items:center;border:1px solid #D9DFEC;border-radius:9px;padding:8px;font-size:12px}.choice-chip input{width:auto;margin:0}
 </style>
 </head>
 <body>
@@ -71,6 +72,18 @@
   <div class="sub" id="centerNameLabel">กำลังโหลด...</div>
   <select id="centerSelector" onchange="selectCenter(this.value)" style="display:none;margin-top:10px;background:#fff"></select>
 </div>
+
+<div class="modal-bg" id="createCareProfileModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="createCareProfileTitle">
+  <h3 id="createCareProfileTitle">สร้าง Care Profile โดยศูนย์</h3><p class="empty">บันทึกข้อมูลจำเป็นก่อนได้ เมื่อญาติเปิดลิงก์ภายหลัง ข้อมูลชุดนี้จะถูกส่งต่อให้ญาติเป็นเจ้าของโดยไม่ต้องสร้างใหม่</p>
+  <input type="hidden" id="cpResidentId"><div class="row"><div><label>เพศ</label><select id="cpGender"><option value="">ไม่ระบุ</option><option value="female">หญิง</option><option value="male">ชาย</option><option value="other">อื่นๆ</option></select></div><div><label>กรุ๊ปเลือด</label><select id="cpBloodType"><option value="">ไม่ทราบ</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div></div>
+  <div class="row"><div><label>ส่วนสูง (ซม.)</label><input id="cpHeight" type="number" min="30" max="250"></div><div><label>น้ำหนัก (กก.)</label><input id="cpWeight" type="number" min="1" max="500" step="0.1"></div></div>
+  <label>โรคประจำตัว</label><div id="cpConditions" class="choice-grid"></div><label>โรคอื่น (คั่นด้วยจุลภาค)</label><input id="cpOtherConditions">
+  <label>แพ้ยา</label><textarea id="cpDrugAllergies"></textarea><label>แพ้อาหาร</label><textarea id="cpFoodAllergies"></textarea><label>ข้อจำกัดการเคลื่อนไหว</label><textarea id="cpMobility"></textarea>
+  <div class="row"><div><label>ผู้ติดต่อฉุกเฉิน</label><input id="cpEmergencyName"></div><div><label>เบอร์ฉุกเฉิน</label><input id="cpEmergencyPhone" type="tel" inputmode="tel"></div></div><label>เบอร์ครอบครัว</label><input id="cpFamilyPhone" type="tel" inputmode="tel">
+  <p id="cpError" class="error" role="alert"></p><div class="row"><button class="btn btn-outline" onclick="closeModal('createCareProfileModal')">ยกเลิก</button><button id="cpSaveButton" class="btn btn-primary" onclick="saveCenterCareProfile()">สร้าง Care Profile</button></div>
+</div></div>
+
+<div class="modal-bg" id="confirmActionModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmActionTitle"><h3 id="confirmActionTitle">ยืนยันการดำเนินการ</h3><p id="confirmActionMessage" style="line-height:1.7"></p><div class="row"><button class="btn btn-outline" onclick="finishConfirm(false)">กลับ</button><button class="btn btn-danger" id="confirmActionButton" onclick="finishConfirm(true)">ยืนยัน</button></div></div></div>
 <div id="packageBanner" style="display:none;margin:12px 16px;padding:12px;border-radius:10px;background:#FFF3CD;color:#7A5200;font-size:13px"></div>
 
 <div class="tabs">
@@ -350,13 +363,16 @@ function renderResidents() {
     <div class="resident-item">
       <div>
         <div class="resident-name">${esc(r.full_name)} ${r.room ? '· ห้อง '+esc(r.room):''}</div>
-        <div class="resident-meta">
-          <span class="badge ${r.care_profile_id ? 'badge-linked' : 'badge-pending'}">${r.care_profile_id ? 'ผูกครอบครัวแล้ว' : 'ยังไม่ผูกครอบครัว'}</span>
-        </div>
+        <div class="resident-meta"><span class="badge ${r.care_profile_id ? 'badge-linked' : 'badge-pending'}">${r.link_status==='center_managed'?'ศูนย์สร้าง Care Profile · รอญาติรับสิทธิ์':r.care_profile_id?'ผูกครอบครัวแล้ว':'ยังไม่มี Care Profile'}</span></div>
       </div>
-      <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">${CURRENT_ROLE==='staff'?'ข้อมูลสำคัญ':'ข้อมูลสุขภาพ'}</button>` : ''} ${CURRENT_ROLE!=='staff'?`<button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>`:''}</div>
+      <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">${CURRENT_ROLE==='staff'?'ข้อมูลสำคัญ':'ข้อมูลสุขภาพ'}</button>` : ''} ${CURRENT_ROLE!=='staff'&&!r.care_profile_id?`<button class="btn btn-primary btn-sm" onclick="openCreateCareProfile('${r.resident_id}')">สร้าง Care Profile</button>`:''} ${CURRENT_ROLE!=='staff'&&(!r.care_profile_id||r.link_status==='center_managed')?`<button class="btn btn-outline btn-sm" onclick="showFamilyInvite('${r.resident_id}')">ลิงก์ให้ญาติ</button>`:''} ${CURRENT_ROLE!=='staff'?`<button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>`:''}</div>
     </div>`).join('') + '</div>';
 }
+function openCreateCareProfile(residentId){const r=residentsCache.find(x=>x.resident_id===residentId);cpResidentId.value=residentId;cpFamilyPhone.value=r?.family_phone||'';cpConditions.innerHTML=STANDARD_CONDITIONS.map((name,i)=>`<label class="choice-chip"><input type="checkbox" value="${esc(name)}"><span>${esc(name)}</span></label>`).join('');['cpGender','cpBloodType','cpHeight','cpWeight','cpOtherConditions','cpDrugAllergies','cpFoodAllergies','cpMobility','cpEmergencyName','cpEmergencyPhone'].forEach(id=>document.getElementById(id).value='');cpError.textContent='';openModal('createCareProfileModal')}
+async function saveCenterCareProfile(){const selected=[...cpConditions.querySelectorAll('input:checked')].map(x=>x.value),other=cpOtherConditions.value.split(',').map(x=>x.trim()).filter(Boolean);const b=cpSaveButton;b.disabled=true;b.textContent='กำลังสร้าง...';try{await api(`/api/residents/${cpResidentId.value}/care-profile`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID,gender:cpGender.value,bloodType:cpBloodType.value,heightCm:cpHeight.value,weightKg:cpWeight.value,chronicConditions:[...selected,...other],drugAllergies:cpDrugAllergies.value.trim(),foodAllergies:cpFoodAllergies.value.trim(),mobilityLimitations:cpMobility.value.trim(),emergencyContactName:cpEmergencyName.value.trim(),emergencyContactPhone:cpEmergencyPhone.value.trim(),familyPhone:cpFamilyPhone.value.trim()})});closeModal('createCareProfileModal');toast('สร้าง Care Profile แล้ว สามารถส่งลิงก์ให้ญาติรับสิทธิ์ภายหลังได้');await loadResidents()}catch(e){cpError.textContent=e.message||'สร้าง Care Profile ไม่สำเร็จ'}finally{b.disabled=false;b.textContent='สร้าง Care Profile'}}
+async function showFamilyInvite(residentId){const result=await api(`/api/residents/${residentId}/invite`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID})});const inviteBox=document.getElementById('inviteResult');inviteBox.style.display='block';inviteBox.innerHTML=`ลิงก์สำหรับครอบครัว (หมดอายุ ${new Date(result.inviteExpiresAt).toLocaleDateString('th-TH')}):<br><b>${esc(result.inviteUrl)}</b><br><button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText('${esc(result.inviteUrl)}');toast('คัดลอกลิงก์แล้ว')">คัดลอกลิงก์</button>`;inviteBox.scrollIntoView({behavior:'smooth',block:'center'})}
+
+let confirmResolver=null;function askConfirm(title,message,buttonText='ยืนยัน'){confirmActionTitle.textContent=title;confirmActionMessage.textContent=message;confirmActionButton.textContent=buttonText;openModal('confirmActionModal');return new Promise(resolve=>{confirmResolver=resolve})}function finishConfirm(value){closeModal('confirmActionModal');const resolve=confirmResolver;confirmResolver=null;if(resolve)resolve(value)}
 function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function addResident() {
@@ -424,7 +440,7 @@ async function saveResidentEdit() {
   await loadResidents();
 }
 async function dischargeResident() {
-  if (!confirm('ยืนยันจำหน่ายผู้พักออกจากศูนย์? ศูนย์จะเข้าถึงข้อมูลไม่ได้อีก')) return;
+  if (!await askConfirm('จำหน่ายผู้พักออกจากศูนย์','เมื่อยืนยัน ศูนย์จะไม่สามารถเข้าถึง Care Profile ของผู้พักรายนี้ได้อีก แต่ข้อมูลจะยังอยู่กับครอบครัว','จำหน่ายออก')) return;
   const id = document.getElementById('editResidentId').value;
   await api(`/api/residents/${id}/discharge`, { method:'POST', body: JSON.stringify({ centerId: CENTER_ID }) });
   closeModal('editResidentModal');
@@ -607,7 +623,7 @@ async function selectCenter(centerId) {
   if (activeView === 'ratecard') await loadRateCard();
 }
 async function removeManager(id) {
-  if (!confirm('ยืนยันถอนสิทธิ์บุคคลนี้จากสาขา ข้อมูลจะเข้าถึงไม่ได้ทันที')) return;
+  if (!await askConfirm('ถอนสิทธิ์บุคลากร','บุคคลนี้จะไม่สามารถเข้าถึงข้อมูลของสาขาได้ทันที หากกลับมาทำงาน สามารถเข้ากลุ่มและรออนุมัติใหม่ได้','ถอนสิทธิ์')) return;
   await api(`/api/center/staff/${id}?centerId=${CENTER_ID}`, { method:'DELETE' });
   toast('ถอดถอนแล้ว');
   loadStaff();

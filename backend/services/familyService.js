@@ -72,7 +72,20 @@ async function acceptInvite(token, lineUserId, profileData = {}) {
 
   const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id);
   if (!resident || resident.status !== 'active') return { ok: false, reason: 'ผู้พักไม่ได้อยู่ในศูนย์นี้แล้ว' };
-  if (resident.care_profile_id) return { ok: false, reason: 'ผู้พักรายนี้ผูก Care Profile แล้ว กรุณาเปิด Family LIFF เพื่อตรวจสอบ' };
+  if (resident.care_profile_id) {
+    const existingProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
+    if (!existingProfile || existingProfile.owner_line_id) return { ok: false, reason: 'ผู้พักรายนี้ผูก Care Profile แล้ว กรุณาเปิด Family LIFF เพื่อตรวจสอบ' };
+    const claimed = await CareProfiles.update((p) => p.care_profile_id === existingProfile.care_profile_id && !p.owner_line_id, {
+      owner_line_id:lineUserId, family_phone:profileData.familyPhone || existingProfile.family_phone || resident.family_phone || null,
+      family_claimed_at:now(), managed_by_center:false,
+    });
+    await Residents.update((r) => r.resident_id === resident.resident_id, { link_status:'linked' });
+    await Invites.update((i) => i.invite_token === token && !i.used_at, { used_at:now(), used_by:lineUserId, status:'used' });
+    await AccessRequests.updateAll((r) => r.resident_id === resident.resident_id && r.status === 'pending', { status:'superseded', responded_at:now() });
+    await audit('family.center_managed_profile_claimed', lineUserId, { residentId:resident.resident_id, careProfileId:claimed.care_profile_id });
+    await require('./deliveryService').deliverPendingForResident(resident.resident_id, claimed.care_profile_id);
+    return { ok:true, careProfile:claimed };
+  }
 
   const profile = await CareProfiles.insert({
     care_profile_id: id('CP'),

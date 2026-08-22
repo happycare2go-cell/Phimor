@@ -40,10 +40,17 @@
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-end}
   .modal-bg.show{display:flex}
   .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
+  .modal-actions{display:flex;gap:8px;margin-top:16px}.modal-actions .btn{flex:1}
   .badge-tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;background:var(--ice);color:var(--navy)}
 </style>
 </head>
 <body>
+
+<div class="modal-bg" id="confirmActionModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmActionTitle">
+  <h3 id="confirmActionTitle" style="color:var(--navy);margin-top:0">ยืนยันการดำเนินการ</h3>
+  <p id="confirmActionMessage" style="line-height:1.7;color:var(--gray)"></p>
+  <div class="modal-actions"><button class="btn btn-outline" onclick="finishConfirm(false)">กลับ</button><button class="btn btn-primary" id="confirmActionButton" onclick="finishConfirm(true)">ยืนยัน</button></div>
+</div></div>
 
 <!-- ═══ F1: หน้ายินยอม PDPA — บังคับผ่านก่อนเข้าหน้าหลัก ═══ -->
 <div class="consent-overlay" id="consentOverlay" style="display:none">
@@ -234,6 +241,16 @@ let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
+let confirmResolver=null;
+function askConfirm(title,message,buttonText='ยืนยัน'){
+  confirmActionTitle.textContent=title;confirmActionMessage.textContent=message;confirmActionButton.textContent=buttonText;
+  document.getElementById('confirmActionModal').classList.add('show');
+  return new Promise(resolve=>{confirmResolver=resolve});
+}
+function finishConfirm(value){
+  document.getElementById('confirmActionModal').classList.remove('show');
+  const resolve=confirmResolver;confirmResolver=null;if(resolve)resolve(value);
+}
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._hideTimer); t._hideTimer=setTimeout(()=>t.classList.remove('show'),Math.max(3200,Math.min(6500,String(msg).length*90))); }
 function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -300,7 +317,7 @@ async function loadDashboard() {
   }
   if (SHARE_TOKEN) {
     const invite = await api('/api/caregiver-invites/' + encodeURIComponent(SHARE_TOKEN));
-    if (confirm(`ยอมรับคำเชิญเป็นญาติผู้ดูแลร่วมของ ${invite.patientName} หรือไม่`)) {
+    if (await askConfirm('รับสิทธิ์ผู้ดูแลร่วม', `ยืนยันรับสิทธิ์ดูแล ${invite.patientName} คุณจะสามารถดูและช่วยอัปเดตข้อมูล Care Profile นี้ได้`, 'รับสิทธิ์')) {
       await api('/api/caregiver-invites/'+encodeURIComponent(SHARE_TOKEN)+'/accept',{method:'POST',body:'{}'});
       SHARE_TOKEN=null; history.replaceState({},'',location.pathname); toast('เพิ่ม Care Profile ในบัญชีของคุณแล้ว'); return loadDashboard();
     }
@@ -359,7 +376,7 @@ async function loadPendingTransport(){
 }
 async function chooseTransport(planId,choice){
   const labels={self:'ไปเอง',request_center:'ให้ศูนย์จัดการ',care2go:'เรียก Care2Go'};
-  if(!confirm(`ยืนยันว่าเลือก “${labels[choice]}” ใช่หรือไม่`))return;
+  if(!await askConfirm('ยืนยันวิธีเดินทาง', `คุณเลือก “${labels[choice]}” ระบบจะบันทึกตัวเลือกนี้ให้ศูนย์ดำเนินการต่อ`, 'ยืนยันตัวเลือก'))return;
   await api(`/api/transport/${planId}/family-choice`,{method:'POST',body:JSON.stringify({choice})}); toast('บันทึกวิธีเดินทางแล้ว'); await loadDashboard();
 }
 
@@ -518,7 +535,7 @@ async function loadCaregivers(){
   const id=currentProfile.profile.care_profile_id, data=await api(`/api/care-profile/${id}/caregivers`);
   document.getElementById('caregiverList').innerHTML=(data.members||[]).map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid #eee"><span>ผู้ดูแลร่วม · ${esc(m.line_user_id)}</span><button class="btn btn-outline" onclick="revokeCaregiver('${esc(m.line_user_id)}')">ถอนสิทธิ์</button></div>`).join('')||'<div style="font-size:12px;color:var(--gray)">ยังไม่มีผู้ดูแลร่วม</div>';
 }
-async function revokeCaregiver(lineId){if(!confirm('ถอนสิทธิ์ผู้ดูแลร่วมคนนี้ทันทีหรือไม่'))return;await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/caregivers/${encodeURIComponent(lineId)}`,{method:'DELETE'});toast('ถอนสิทธิ์แล้ว');loadCaregivers()}
+async function revokeCaregiver(lineId){if(!await askConfirm('ถอนสิทธิ์ผู้ดูแลร่วม','ผู้ดูแลรายนี้จะเปิดดูหรือแก้ไข Care Profile นี้ไม่ได้ทันที แต่สามารถเชิญกลับมาใหม่ภายหลังได้','ถอนสิทธิ์'))return;await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/caregivers/${encodeURIComponent(lineId)}`,{method:'DELETE'});toast('ถอนสิทธิ์แล้ว');loadCaregivers()}
 
 // ── เริ่มต้น ──
 async function main() {

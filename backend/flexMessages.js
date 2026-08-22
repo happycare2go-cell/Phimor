@@ -100,14 +100,13 @@ function transportFamilyChoiceFlex({ planId, hospital, datetime }) {
         contents: [
           { type: 'button', style: 'secondary', action: { type: 'postback', label: 'เราไปเอง', data: `action=transport_self&planId=${planId}` } },
           { type: 'button', style: 'primary', color: '#1C2B64', action: { type: 'postback', label: 'ให้ศูนย์จัดการให้', data: `action=transport_request_center&planId=${planId}` } },
-          { type: 'button', style: 'primary', color: '#3A4E96', action: { type: 'postback', label: 'เรียก Care2Go', data: `action=transport_care2go&planId=${planId}` } },
         ],
       },
     },
   };
 }
 
-function care2goOperationsRequestFlex({planId,residentName,destination,origin,datetime,contact,requestedByType,needs,note}) {
+function care2goOperationsRequestFlex({residentName,destination,origin,datetime,contact,requestedByType,needs,note}) {
   const labels={vehicle:'รถรับส่ง',escort:'คนเฝ้าไข้'};
   return {type:'flex',altText:'มีคำขอบริการ Care2Go ใหม่',contents:{type:'bubble',hero:mascotHero('phimor-care2go.png','#EAF2FF'),body:{type:'box',layout:'vertical',spacing:'sm',contents:[
     {type:'text',text:'🚐 คำขอบริการ Care2Go',weight:'bold',size:'lg',color:'#1C2B64'},
@@ -116,9 +115,8 @@ function care2goOperationsRequestFlex({planId,residentName,destination,origin,da
     {type:'text',text:`บริการ: ${(needs||[]).map(n=>labels[n]||n).join(', ')}`,wrap:true,size:'sm'},
     {type:'text',text:`ผู้ร้องขอ: ${requestedByType==='center'?'ศูนย์':'ญาติ'} · โทร ${contact}`,wrap:true,size:'sm'},
     ...(note?[{type:'text',text:`หมายเหตุ: ${note}`,wrap:true,size:'xs'}]:[]),
-  ]},footer:{type:'box',layout:'vertical',spacing:'sm',contents:[
-    {type:'button',style:'primary',action:{type:'postback',label:'รับเรื่องแล้ว',data:`action=care2go_ack&planId=${planId}`}},
-    {type:'button',style:'primary',color:'#0F6E56',action:{type:'postback',label:'ยืนยันจัดบริการได้',data:`action=care2go_confirm&planId=${planId}`}},
+    {type:'separator',margin:'md'},
+    {type:'text',text:'กรุณาโทรประสานผู้ติดต่อโดยตรง',weight:'bold',color:'#0F6E56',wrap:true,margin:'md',size:'sm'},
   ]}}};
 }
 

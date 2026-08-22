@@ -39,6 +39,37 @@ test('พนักงานออกจากกลุ่มแล้วสิ�
   assert.ok(await db.CenterStaff.findOne((s) => s.line_user_id === 'U_OWNER' && s.role === 'owner'));
 });
 
+test('พนักงานที่ถูกถอนสิทธิ์กลับเข้ากลุ่มเดิมได้ แต่ต้องรออนุมัติใหม่', async () => {
+  process.env.REQUIRE_STAFF_APPROVAL = 'true';
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await centerService.bindGroupToCenter({ centerId:center.center_id, groupId:'G_STAFF', requesterLineId:'U_OWNER' });
+  await db.CenterStaff.insert({ staff_id:'STF_RETURN', center_id:center.center_id, line_user_id:'U_RETURN', role:'staff', status:'active' });
+  assert.strictEqual((await centerService.revokeStaff({ centerId:center.center_id, targetLineId:'U_RETURN', requesterLineId:'U_OWNER' })).ok, true);
+  const rejoined = await centerService.recordStaffFromGroup('G_STAFF', 'U_RETURN');
+  assert.strictEqual(rejoined.status, 'pending');
+  assert.strictEqual((await centerService.approveStaff({ centerId:center.center_id, targetLineId:'U_RETURN', requesterLineId:'U_OWNER' })).ok, true);
+  assert.strictEqual((await db.CenterStaff.findOne((s) => s.staff_id === 'STF_RETURN')).status, 'active');
+  delete process.env.REQUIRE_STAFF_APPROVAL;
+});
+
+test('ศูนย์สร้าง Care Profile ก่อน แล้วญาติรับสิทธิ์ภายหลังโดยข้อมูลเดิมไม่หาย', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  const { resident } = await centerService.addResident({ centerId:center.center_id, fullName:'คุณยาย', familyPhone:'0811111111' });
+  const created = await centerService.createCenterManagedCareProfile({
+    centerId:center.center_id, residentId:resident.resident_id, requesterLineId:'U_OWNER',
+    profileData:{ bloodType:'O+', chronicConditions:['เบาหวาน'], drugAllergies:'Penicillin' },
+  });
+  assert.strictEqual(created.ok, true);
+  assert.strictEqual(created.profile.owner_line_id, null);
+  const invite = await centerService.getOrCreateResidentInvite({ centerId:center.center_id, residentId:resident.resident_id });
+  const token = new URL(invite.inviteUrl).searchParams.get('invite');
+  const claimed = await familyService.acceptInvite(token, 'U_FAMILY');
+  assert.strictEqual(claimed.ok, true);
+  assert.strictEqual(claimed.careProfile.owner_line_id, 'U_FAMILY');
+  assert.strictEqual(claimed.careProfile.blood_type, 'O+');
+  assert.deepStrictEqual(claimed.careProfile.chronic_conditions, ['เบาหวาน']);
+});
+
 test('Care Profile เก็บข้อมูลสุขภาพครบและรายการยาเป็น snapshot ย้อนหลังได้', async () => {
   const profile = await familyService.createIndependentProfile({
     ownerLineId: 'U_FAMILY', patientName: 'คุณยาย', gender: 'female', bloodType: 'O+',
