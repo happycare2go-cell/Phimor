@@ -48,3 +48,16 @@ test('หน้าใช้งานบนมือถือมี viewport แ�
     assert.strictEqual(emptyButtons.length, 0, `${name}: button without text or aria-label`);
   }
 });
+
+test('ลิงก์เชิญและรหัสผูกกลุ่มมีปุ่ม Copy สีดำพร้อมข้อความส่งต่อ', () => {
+  for (const [name, html] of [['family', pages.family], ['center', pages.center]]) {
+    assert.match(html, /\.btn-copy\{background:#111;color:#fff/, `${name}: black Copy style missing`);
+    assert.match(html, />Copy<\/button>/, `${name}: Copy button missing`);
+    assert.match(html, /copyForwardText\s*\(/, `${name}: copy helper missing`);
+    assert.match(html, /document\.execCommand\('copy'\)/, `${name}: LINE WebView clipboard fallback missing`);
+  }
+  assert.match(pages.family, /LAST_FAMILY_BINDING_TEXT/);
+  assert.match(pages.family, /LAST_CAREGIVER_INVITE_TEXT/);
+  assert.match(pages.center, /LAST_STAFF_BINDING_TEXT/);
+  assert.match(pages.center, /LAST_FAMILY_INVITE_TEXT/);
+});

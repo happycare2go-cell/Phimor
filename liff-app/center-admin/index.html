@@ -28,6 +28,7 @@
   .btn-primary{background:var(--navy);color:#fff;width:100%}
   .btn-gold{background:var(--gold);color:var(--navy);width:100%}
   .btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+  .btn-copy{background:#111;color:#fff;border:1px solid #111}
   .btn-danger{background:#FCEBEB;color:var(--red);border:1px solid var(--red)}
   .btn-sm{padding:6px 12px;font-size:12px;border-radius:7px}
   .row{display:flex;gap:8px}
@@ -374,7 +375,8 @@ function renderResidents() {
 }
 function openCreateCareProfile(residentId){const r=residentsCache.find(x=>x.resident_id===residentId);cpResidentId.value=residentId;cpFamilyPhone.value=r?.family_phone||'';cpConditions.innerHTML=STANDARD_CONDITIONS.map((name,i)=>`<label class="choice-chip"><input type="checkbox" value="${esc(name)}"><span>${esc(name)}</span></label>`).join('');['cpGender','cpBloodType','cpHeight','cpWeight','cpOtherConditions','cpDrugAllergies','cpFoodAllergies','cpMobility','cpEmergencyName','cpEmergencyPhone'].forEach(id=>document.getElementById(id).value='');cpError.textContent='';openModal('createCareProfileModal')}
 async function saveCenterCareProfile(){const selected=[...cpConditions.querySelectorAll('input:checked')].map(x=>x.value),other=cpOtherConditions.value.split(',').map(x=>x.trim()).filter(Boolean);const b=cpSaveButton;b.disabled=true;b.textContent='กำลังสร้าง...';try{await api(`/api/residents/${cpResidentId.value}/care-profile`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID,gender:cpGender.value,bloodType:cpBloodType.value,heightCm:cpHeight.value,weightKg:cpWeight.value,chronicConditions:[...selected,...other],drugAllergies:cpDrugAllergies.value.trim(),foodAllergies:cpFoodAllergies.value.trim(),mobilityLimitations:cpMobility.value.trim(),emergencyContactName:cpEmergencyName.value.trim(),emergencyContactPhone:cpEmergencyPhone.value.trim(),familyPhone:cpFamilyPhone.value.trim()})});closeModal('createCareProfileModal');toast('สร้าง Care Profile แล้ว สามารถส่งลิงก์ให้ญาติรับสิทธิ์ภายหลังได้');await loadResidents()}catch(e){cpError.textContent=e.message||'สร้าง Care Profile ไม่สำเร็จ'}finally{b.disabled=false;b.textContent='สร้าง Care Profile'}}
-async function showFamilyInvite(residentId){const result=await api(`/api/residents/${residentId}/invite`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID})});const inviteBox=document.getElementById('inviteResult');inviteBox.style.display='block';inviteBox.innerHTML=`ลิงก์สำหรับครอบครัว (หมดอายุ ${new Date(result.inviteExpiresAt).toLocaleDateString('th-TH')}):<br><b>${esc(result.inviteUrl)}</b><br><button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText('${esc(result.inviteUrl)}');toast('คัดลอกลิงก์แล้ว')">คัดลอกลิงก์</button>`;inviteBox.scrollIntoView({behavior:'smooth',block:'center'})}
+let LAST_FAMILY_INVITE_TEXT='';
+async function showFamilyInvite(residentId){const result=await api(`/api/residents/${residentId}/invite`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID})});const resident=residentsCache.find(r=>r.resident_id===residentId),center=CENTERS.find(c=>c.center_id===CENTER_ID);LAST_FAMILY_INVITE_TEXT=`พี่หมอ: ขอเชิญครอบครัวเชื่อม Care Profile ของ ${resident?.full_name||'ผู้รับการดูแล'} กับ ${center?.name||'ศูนย์ดูแล'}\nเปิดลิงก์นี้ด้วย LINE ของญาติ:\n${result.inviteUrl}\nลิงก์หมดอายุวันที่ ${new Date(result.inviteExpiresAt).toLocaleDateString('th-TH')}`;const inviteBox=document.getElementById('inviteResult');inviteBox.style.display='block';inviteBox.innerHTML=`ลิงก์สำหรับครอบครัว (หมดอายุ ${new Date(result.inviteExpiresAt).toLocaleDateString('th-TH')}):<br><b>${esc(result.inviteUrl)}</b><br><button class="btn btn-copy btn-sm" style="margin-top:8px" onclick="copyForwardText(LAST_FAMILY_INVITE_TEXT)">Copy</button>`;inviteBox.scrollIntoView({behavior:'smooth',block:'center'})}
 
 let confirmResolver=null;function askConfirm(title,message,buttonText='ยืนยัน'){confirmActionTitle.textContent=title;confirmActionMessage.textContent=message;confirmActionButton.textContent=buttonText;openModal('confirmActionModal');return new Promise(resolve=>{confirmResolver=resolve})}function finishConfirm(value){closeModal('confirmActionModal');const resolve=confirmResolver;confirmResolver=null;if(resolve)resolve(value)}
 function esc(s){ return String(s??'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -392,9 +394,10 @@ async function addResident() {
   document.getElementById('newPhone').value = '';
   const inviteBox = document.getElementById('inviteResult');
   inviteBox.style.display = 'block';
+  if (!result.accessRequestSent) LAST_FAMILY_INVITE_TEXT=`พี่หมอ: ขอเชิญครอบครัวเชื่อม Care Profile ของ ${fullName} กับ ${CENTERS.find(c=>c.center_id===CENTER_ID)?.name||'ศูนย์ดูแล'}\nเปิดลิงก์นี้ด้วย LINE ของญาติ:\n${result.inviteUrl}\nลิงก์หมดอายุวันที่ ${new Date(result.inviteExpiresAt).toLocaleDateString('th-TH')}`;
   inviteBox.innerHTML = result.accessRequestSent
     ? `พบ Care Profile เดิมและส่งคำขออนุญาตแล้ว<br>รหัสคำขอ: ${esc(result.accessRequestId||'-')}`
-    : `ลิงก์เชิญสำหรับครอบครัว:<br><b>${esc(result.inviteUrl)}</b><br><button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText('${result.inviteUrl}')">คัดลอกลิงก์</button>`;
+    : `ลิงก์เชิญสำหรับครอบครัว:<br><b>${esc(result.inviteUrl)}</b><br><button class="btn btn-copy btn-sm" style="margin-top:8px" onclick="copyForwardText(LAST_FAMILY_INVITE_TEXT)">Copy</button>`;
   toast(result.accessRequestSent ? 'ส่งคำขอไปยังเจ้าของ Care Profile แล้ว' : 'เพิ่มผู้พักแล้ว — ส่งลิงก์ให้ญาติได้เลย');
   await loadResidents();
 }
@@ -617,8 +620,20 @@ async function approveStaff(id, role) {
 
 async function createStaffBindingCode() {
   const result = await api(`/api/center/${CENTER_ID}/group-binding-token`, { method:'POST', body:'{}' });
-  document.getElementById('staffBindingCode').textContent = result.code;
-  toast('คัดลอกรหัสนี้ไปส่งในกลุ่มพนักงาน');
+  const center=CENTERS.find(c=>c.center_id===CENTER_ID);
+  LAST_STAFF_BINDING_TEXT=`พี่หมอ: รหัสผูกกลุ่มพนักงานของ ${center?.name||'สาขานี้'}\n${result.code}\n\nหลังเชิญพี่หมอเข้ากลุ่มแล้ว เจ้าของหรือผู้จัดการที่สร้างรหัสต้องส่งข้อความนี้ในกลุ่มด้วยบัญชี LINE เดิมภายใน 15 นาที`;
+  document.getElementById('staffBindingCode').innerHTML=`<div>${esc(result.code)}</div><button class="btn btn-copy btn-sm" style="margin-top:8px" onclick="copyForwardText(LAST_STAFF_BINDING_TEXT)">Copy</button>`;
+  toast('สร้างรหัสแล้ว กด Copy เพื่อนำข้อความไปวางในกลุ่ม');
+}
+
+let LAST_STAFF_BINDING_TEXT='';
+async function copyForwardText(text){
+  if(!text)return toast('ยังไม่มีข้อความให้คัดลอก');
+  try{
+    if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);
+    else{const box=document.createElement('textarea');box.value=text;box.setAttribute('readonly','');box.style.position='fixed';box.style.opacity='0';document.body.appendChild(box);box.select();if(!document.execCommand('copy'))throw new Error('copy_failed');box.remove()}
+    toast('คัดลอกข้อความแล้ว พร้อมส่งต่อ');
+  }catch(_){window.prompt('กดค้างเพื่อคัดลอกข้อความนี้',text)}
 }
 
 async function selectCenter(centerId) {

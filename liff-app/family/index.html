@@ -26,6 +26,7 @@
   .btn-primary{background:var(--navy);color:#fff}
   .btn-gold{background:var(--gold);color:var(--navy)}
   .btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+  .btn-copy{background:#111;color:#fff;border:1px solid #111}
   .empty{text-align:center;padding:36px 20px;color:var(--gray);font-size:13px}
   .appt-item{padding:12px 0;border-bottom:1px solid #EEF1F8}
   .appt-item:last-child{border:none}
@@ -213,6 +214,7 @@
       <p style="font-size:12px;color:var(--gray)">เจ้าของ Care Profile หลักสร้างลิงก์และส่งให้ญาติ ผู้รับต้องเปิดด้วยบัญชี LINE ของตนเองและยอมรับคำเชิญ</p>
       <button class="btn btn-outline" onclick="createCaregiverInvite()">สร้างลิงก์เชิญญาติ</button>
       <textarea id="caregiverInviteUrl" readonly style="display:none;margin-top:10px"></textarea>
+      <button id="copyCaregiverInviteButton" class="btn btn-copy" style="display:none;margin-top:8px" onclick="copyForwardText(LAST_CAREGIVER_INVITE_TEXT)">Copy</button>
       <div id="caregiverList" style="margin-top:12px"></div>
     </div>
   </div>
@@ -523,11 +525,21 @@ async function saveHealthInfo() {
   toast('บันทึกแล้ว');
   await loadDashboard();
 }
-async function createFamilyBindingCode(){ if(!currentProfile)return toast('ยังไม่มีโปรไฟล์'); const id=currentProfile.profile.care_profile_id; const result=await api(`/api/care-profile/${id}/group-binding-token`,{method:'POST',body:'{}'}); document.getElementById('familyBindingCode').textContent=result.code; toast('คัดลอกรหัสนี้ไปส่งในกลุ่มครอบครัว'); }
+let LAST_FAMILY_BINDING_TEXT='',LAST_CAREGIVER_INVITE_TEXT='';
+async function copyForwardText(text){
+  if(!text)return toast('ยังไม่มีข้อความให้คัดลอก');
+  try{
+    if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(text);
+    else{const box=document.createElement('textarea');box.value=text;box.setAttribute('readonly','');box.style.position='fixed';box.style.opacity='0';document.body.appendChild(box);box.select();if(!document.execCommand('copy'))throw new Error('copy_failed');box.remove()}
+    toast('คัดลอกข้อความแล้ว พร้อมส่งต่อ');
+  }catch(_){window.prompt('กดค้างเพื่อคัดลอกข้อความนี้',text)}
+}
+async function createFamilyBindingCode(){ if(!currentProfile)return toast('ยังไม่มีโปรไฟล์'); const id=currentProfile.profile.care_profile_id; const result=await api(`/api/care-profile/${id}/group-binding-token`,{method:'POST',body:'{}'}); LAST_FAMILY_BINDING_TEXT=`พี่หมอ: รหัสผูกกลุ่มครอบครัวของ ${currentProfile.profile.patient_name}\n${result.code}\n\nหลังเชิญพี่หมอเข้ากลุ่มแล้ว เจ้าของ Care Profile ที่สร้างรหัสต้องส่งข้อความนี้ในกลุ่มด้วยบัญชี LINE เดิมภายใน 15 นาที`; document.getElementById('familyBindingCode').innerHTML=`<div>${esc(result.code)}</div><button class="btn btn-copy" style="margin-top:8px" onclick="copyForwardText(LAST_FAMILY_BINDING_TEXT)">Copy</button>`; toast('สร้างรหัสแล้ว กด Copy เพื่อนำข้อความไปวางในกลุ่ม'); }
 async function createCaregiverInvite(){
   if(!currentProfile||currentProfile.familyRole!=='owner')return toast('เฉพาะเจ้าของ Care Profile หลักเท่านั้น');
   const result=await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/caregiver-invites`,{method:'POST',body:'{}'});
-  const box=document.getElementById('caregiverInviteUrl'); box.value=result.url; box.style.display='block';
+  LAST_CAREGIVER_INVITE_TEXT=`พี่หมอ: ${currentProfile.profile.patient_name} เชิญคุณเป็นญาติผู้ดูแลร่วม\nเปิดลิงก์นี้ด้วยบัญชี LINE ของคุณเพื่อรับสิทธิ์:\n${result.url}`;
+  const box=document.getElementById('caregiverInviteUrl'); box.value=result.url; box.style.display='block'; document.getElementById('copyCaregiverInviteButton').style.display='block';
   if(navigator.share) await navigator.share({title:'คำเชิญญาติผู้ดูแลร่วม',text:`เชิญดูแล ${currentProfile.profile.patient_name} ร่วมกันในพี่หมอ`,url:result.url}).catch(()=>{});
   else { await navigator.clipboard?.writeText(result.url); toast('สร้างและคัดลอกลิงก์แล้ว'); }
 }
