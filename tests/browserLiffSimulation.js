@@ -26,16 +26,20 @@ function playwright() {
 }
 
 const LIFF_MOCK = `<script>window.liff={init:async()=>{},isLoggedIn:()=>true,login:()=>{},logout:()=>{},getIDToken:()=> 'SIMULATED_ID_TOKEN',getProfile:async()=>({userId:'U_SIMULATED',displayName:'ผู้ใช้จำลอง'}),isInClient:()=>true,closeWindow:()=>{},openWindow:()=>{}};</script>`;
+const SIMULATED_BACKEND_URL = 'https://phimor-backend.onrender.com';
+const RUNTIME_CONFIG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'runtime-config.js'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
-    .replace(/<script[^>]+static\.line-scdn\.net\/liff\/edge\/2\/sdk\.js[^>]*><\/script>/, LIFF_MOCK);
+    .replace(/<script[^>]+static\.line-scdn\.net\/liff\/edge\/2\/sdk\.js[^>]*><\/script>/, LIFF_MOCK)
+    .replace('<script src="../environment.js"></script>', `<script>window.PHIMOR_PUBLIC_BACKEND_URL=${JSON.stringify(SIMULATED_BACKEND_URL)};</script>`)
+    .replace('<script src="../runtime-config.js"></script>', `<script>${RUNTIME_CONFIG_SOURCE}</script>`);
 }
 
 async function mockBackend(page, handler) {
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (!request.url().startsWith('https://phimor-backend.onrender.com')) return route.abort();
+    if (!request.url().startsWith(SIMULATED_BACKEND_URL)) return route.abort();
     const result = await handler(new URL(request.url()), request);
     return route.fulfill({ status: result?.status || 200, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
   });
@@ -45,7 +49,7 @@ async function familyConsentJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   let consent = false;
   await mockBackend(page, async (url) => {
-    if (url.pathname === '/config/liff') return { familyLiffId: 'SIM_FAMILY' };
+    if (url.pathname === '/config/liff') return { publicBackendUrl: SIMULATED_BACKEND_URL, familyLiffId: 'SIM_FAMILY' };
     if (url.pathname === '/api/consent/check') return { hasConsent: consent };
     if (url.pathname === '/api/consent') { consent = true; return { consent_id: 'C1', accepted: true }; }
     if (url.pathname === '/api/init-dashboard') return { profiles: [] };

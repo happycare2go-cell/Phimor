@@ -39,6 +39,8 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         value: "https://phimor-liff.onrender.com"
+      - key: PUBLIC_BACKEND_URL
+        value: "https://phimor-backend.onrender.com"
       - key: CARE2GO_GROUP_BIND_CODE
         sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
       - key: GEMINI_API_KEY
@@ -65,8 +67,11 @@ services:
     name: phimor-liff
     runtime: static
     rootDir: liff-app
-    buildCommand: ""
+    buildCommand: node scripts/write-runtime-config.js
     staticPublishPath: .
+    envVars:
+      - key: PUBLIC_BACKEND_URL
+        value: "https://phimor-backend.onrender.com"
     headers:
       - path: /*
         name: X-Content-Type-Options

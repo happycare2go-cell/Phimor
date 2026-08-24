@@ -9,6 +9,8 @@ services:
   - type: web
     name: phimor-backend-staging
     runtime: node
+    branch: feature/phimor-v2-foundation
+    autoDeploy: false
     region: singapore
     plan: starter
     rootDir: backend
@@ -28,6 +30,8 @@ services:
           property: connectionString
       - key: ALLOWED_ORIGINS
         value: https://phimor-liff-staging.onrender.com
+      - key: PUBLIC_BACKEND_URL
+        value: https://phimor-backend-staging.onrender.com
       - key: ADMIN_API_KEY
         sync: false
       - key: LINE_LOGIN_CHANNEL_ID
@@ -46,6 +50,28 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_MODEL_DOCUMENT
+        value: ""
+      - key: AI_MODEL_EXPLANATION
+        value: ""
+      - key: AI_TIMEOUT_MS
+        value: "15000"
+      - key: AI_MAX_RETRIES
+        value: "1"
+      - key: PLUS_ENABLED
+        value: "false"
+      - key: PLUS_INTERNAL_ENTITLEMENT_ONLY
+        value: "true"
+      - key: PLUS_AI_EXPLANATION_ENABLED
+        value: "false"
+      - key: PLUS_MEDICATION_DIFF_ENABLED
+        value: "false"
+      - key: PLUS_PHARMACIST_ESCALATION_ENABLED
+        value: "false"
+      - key: PLUS_RATE_LIMIT_PER_5_MINUTES
+        value: "10"
       - key: CARE2GO_GROUP_BIND_CODE
         sync: false
       - key: REQUIRE_STAFF_APPROVAL
@@ -56,6 +82,11 @@ services:
   - type: web
     name: phimor-liff-staging
     runtime: static
+    branch: feature/phimor-v2-foundation
+    autoDeploy: false
     rootDir: liff-app
-    buildCommand: ""
+    buildCommand: node scripts/write-runtime-config.js
     staticPublishPath: .
+    envVars:
+      - key: PUBLIC_BACKEND_URL
+        value: https://phimor-backend-staging.onrender.com

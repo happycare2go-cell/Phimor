@@ -30,9 +30,16 @@ for (const [text, expected] of cases) {
 
 test('medication escalation returns pharmacist action', async () => {
   const result = await classifyPlusIntent({ text: 'กินยาสองตัวนี้ด้วยกันได้ไหม' });
-  const decision = evaluatePlusSafety(result);
+  const decision = evaluatePlusSafety(result, { pharmacistEscalationEnabled: true });
   assert.equal(decision.action, 'pharmacist_escalation');
   assert.equal(decision.reasonCode, 'MEDICATION_ADVICE_REQUIRES_PROFESSIONAL');
+});
+
+test('disabled pharmacist feature returns generic medical escalation and never allows AI', async () => {
+  const result = await classifyPlusIntent({ text: 'กินยาสองตัวนี้ด้วยกันได้ไหม' });
+  const decision = evaluatePlusSafety(result, { pharmacistEscalationEnabled: false });
+  assert.equal(decision.action, 'medical_escalation');
+  assert.doesNotMatch(decision.message, /เภสัชกร/);
 });
 
 test('diagnosis and treatment return medical escalation', async () => {
@@ -46,6 +53,7 @@ test('risky deterministic intent stops before generative answer provider', async
   let answerCalls = 0;
   const result = await runPlusSafetyGate({
     text: 'เพิ่มเป็น 2 เม็ดได้ไหม',
+    pharmacistEscalationEnabled: true,
     generateAnswer: async () => { answerCalls += 1; return 'must not happen'; },
   });
   assert.equal(result.action, 'pharmacist_escalation');
@@ -88,7 +96,7 @@ test('classifier failure fails safe without exposing its error', async () => {
 test('frontend flags cannot override server-side safety policy', async () => {
   const result = await classifyPlusIntent({ text: 'ควรหยุดยานี้ไหม', frontendAllowsAI: true });
   const decision = evaluatePlusSafety({ ...result, frontendAllowsAI: true });
-  assert.equal(decision.action, 'pharmacist_escalation');
+  assert.equal(decision.action, 'medical_escalation');
 });
 
 test('structured classifier uses classification-only task and versioned prompt', async () => {

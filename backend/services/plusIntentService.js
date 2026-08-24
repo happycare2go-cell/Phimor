@@ -100,7 +100,7 @@ async function classifyPlusIntent({ text, contextHint = null, classifier = null 
   }
 }
 
-function evaluatePlusSafety(intentResult) {
+function evaluatePlusSafety(intentResult, { pharmacistEscalationEnabled = false } = {}) {
   if (!intentResult || !ALL_INTENTS.has(intentResult.intent)) {
     return { action: 'needs_review', intent: intentResult?.intent || null, reasonCode: intentResult?.reasonCode || 'UNSUPPORTED_INTENT', message: 'ไม่สามารถดำเนินการคำขอนี้โดยอัตโนมัติได้' };
   }
@@ -109,11 +109,14 @@ function evaluatePlusSafety(intentResult) {
   }
   if (ESCALATION_INTENTS.includes(intentResult.intent)) {
     const medication = ['medication_advice', 'dose_change', 'stop_start_medication'].includes(intentResult.intent);
+    const pharmacistAvailable = medication && pharmacistEscalationEnabled;
     return {
-      action: medication ? 'pharmacist_escalation' : 'medical_escalation',
+      action: pharmacistAvailable ? 'pharmacist_escalation' : 'medical_escalation',
       intent: intentResult.intent,
       reasonCode: intentResult.reasonCode || escalationReason(intentResult.intent),
-      message: medication ? 'คำถามนี้ควรตรวจสอบกับเภสัชกรหรือแพทย์' : 'คำถามนี้ควรได้รับการประเมินจากแพทย์หรือบุคลากรทางการแพทย์',
+      message: pharmacistAvailable
+        ? 'คำถามนี้ควรตรวจสอบกับเภสัชกรหรือแพทย์'
+        : 'คำถามนี้ควรได้รับการประเมินจากแพทย์หรือบุคลากรทางการแพทย์',
     };
   }
   if (!ALLOWED_INTENTS.includes(intentResult.intent)) {
@@ -122,9 +125,9 @@ function evaluatePlusSafety(intentResult) {
   return { action: 'allow', intent: intentResult.intent, reasonCode: null };
 }
 
-async function runPlusSafetyGate({ text, contextHint = null, classifier = null, generateAnswer }) {
+async function runPlusSafetyGate({ text, contextHint = null, classifier = null, generateAnswer, pharmacistEscalationEnabled = false }) {
   const intentResult = await classifyPlusIntent({ text, contextHint, classifier });
-  const decision = evaluatePlusSafety(intentResult);
+  const decision = evaluatePlusSafety(intentResult, { pharmacistEscalationEnabled });
   if (decision.action !== 'allow') return { ...decision, classification: intentResult };
   if (typeof generateAnswer !== 'function') return { ...decision, classification: intentResult };
   return { ...decision, classification: intentResult, result: await generateAnswer({ intent: intentResult.intent }) };

@@ -81,6 +81,7 @@ app.get('/ready', async (req, res) => {
   res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications });
 });
 app.get('/config/liff', (req, res) => res.json({
+  publicBackendUrl: process.env.PUBLIC_BACKEND_URL || null,
   familyLiffId: process.env.LIFF_ID_FAMILY || null,
   centerAdminLiffId: process.env.LIFF_ID_CENTER_ADMIN || null,
   registerLiffId: process.env.LIFF_ID_REGISTER || null,

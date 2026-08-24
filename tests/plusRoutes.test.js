@@ -13,7 +13,7 @@ const { AIProviderError, AI_ERROR_CODES } = require('../backend/providers/aiErro
 const ENABLED_FLAGS = {
   plus: {
     enabled: true, internalEntitlementOnly: true, aiExplanation: true,
-    medicationDiff: true, pharmacistEscalation: false,
+    medicationDiff: true, pharmacistEscalation: true,
   },
 };
 const DISABLED_FLAGS = { plus: { ...ENABLED_FLAGS.plus, enabled: false } };
@@ -82,9 +82,9 @@ function explanationProvider({ error = null } = {}) {
   };
 }
 
-function realOrchestration(provider) {
+function realOrchestration(provider, flags = ENABLED_FLAGS) {
   return createPlusOrchestrator({
-    flags: ENABLED_FLAGS,
+    flags,
     config: { ai: { provider: 'gemini', explanationModel: 'test-model', timeoutMs: 2000 } },
     provider,
     getPlusEntitlement: async () => activeEntitlement(),
@@ -231,6 +231,24 @@ test('risky medication question returns pharmacist escalation with provider zero
     const body = await response.json();
     assert.equal(body.status, 'escalation');
     assert.equal(body.type, 'pharmacist');
+    assert.equal(ai.calls.length, 0);
+  });
+});
+
+test('disabled pharmacist flag returns medical escalation without CTA or provider call', async () => {
+  await seed();
+  const flags = { plus: { ...ENABLED_FLAGS.plus, pharmacistEscalation: false } };
+  const ai = explanationProvider();
+  await withApi({
+    flags, getPlusEntitlement: async () => activeEntitlement(),
+    handlePlusRequest: realOrchestration(ai.provider, flags),
+  }, async (api) => {
+    const response = await api('/api/plus/care-profiles/CP-1/ask', { method: 'POST', body: JSON.stringify({ question: 'กินยาสองตัวนี้ด้วยกันได้ไหม' }) });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.status, 'escalation');
+    assert.equal(body.type, 'medical');
+    assert.doesNotMatch(body.message, /เภสัชกร/);
     assert.equal(ai.calls.length, 0);
   });
 });

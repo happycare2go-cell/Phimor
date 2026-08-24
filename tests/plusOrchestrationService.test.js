@@ -11,7 +11,7 @@ const {
 const FLAGS = {
   plus: {
     enabled: true, internalEntitlementOnly: true, aiExplanation: true,
-    medicationDiff: true, pharmacistEscalation: false,
+    medicationDiff: true, pharmacistEscalation: true,
   },
 };
 
@@ -150,6 +150,18 @@ for (const [question, intent, escalationType] of [
     assert.equal(audits[0].resultStatus, 'escalated');
   });
 }
+
+test('disabled pharmacist feature keeps risky medication blocked without pharmacist workflow', async () => {
+  await seed();
+  const flags = { plus: { ...FLAGS.plus, pharmacistEscalation: false } };
+  const { handle, providerCalls } = harness({ flags });
+  const result = await handle(request('กินยาสองตัวนี้ด้วยกันได้ไหม'));
+  assert.equal(result.action, 'escalation');
+  assert.equal(result.escalationType, 'medical_escalation');
+  assert.equal(result.intent, 'medication_advice');
+  assert.doesNotMatch(result.message, /เภสัชกร/);
+  assert.equal(providerCalls.length, 0);
+});
 
 test('AI context excludes identifiers, phone numbers, images, raw documents, audit and member lists', async () => {
   await seed();

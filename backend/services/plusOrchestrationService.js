@@ -137,7 +137,9 @@ function createPlusOrchestrator(overrides = {}) {
     const classification = await (overrides.classifyPlusIntent || classifyPlusIntent)({
       text: args.question, contextHint: args.purposeHint, classifier,
     });
-    const safety = (overrides.evaluatePlusSafety || evaluatePlusSafety)(classification);
+    const safety = (overrides.evaluatePlusSafety || evaluatePlusSafety)(classification, {
+      pharmacistEscalationEnabled: flags.plus.pharmacistEscalation,
+    });
     const audit = async (metadata) => {
       try {
         return await (overrides.recordAudit || recordAIInteractionMetadata)({

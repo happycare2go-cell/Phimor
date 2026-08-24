@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>พี่หมอ</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="../environment.js"></script>
+<script src="../runtime-config.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
 <link rel="stylesheet" href="./plus-ui.css">
 <style>
@@ -263,7 +265,7 @@
 
 <script src="./plus-ui.js"></script>
 <script>
-const BACKEND_URL = 'https://phimor-backend.onrender.com';
+let BACKEND_URL = null;
 let LINE_USER_ID = null;
 let LINE_ID_TOKEN = null;
 let currentProfile = null;
@@ -609,7 +611,12 @@ async function revokeCaregiver(lineId){if(!await askConfirm('ถอนสิท�
 
 // ── เริ่มต้น ──
 async function main() {
-  const config = await fetch(BACKEND_URL + '/config/liff').then(r=>r.json());
+  if (!window.PhimorRuntimeConfig) throw new Error('LIFF_RUNTIME_CONFIG_MISSING');
+  BACKEND_URL = window.PhimorRuntimeConfig.requireBackendUrl(window.PHIMOR_PUBLIC_BACKEND_URL);
+  const configResponse = await fetch(BACKEND_URL + '/config/liff');
+  if (!configResponse.ok) throw new Error('LIFF_RUNTIME_CONFIG_UNAVAILABLE');
+  const config = await configResponse.json();
+  window.PhimorRuntimeConfig.assertBackendConfig(BACKEND_URL, config);
   if (!config.familyLiffId) throw new Error('ยังไม่ได้ตั้งค่า LIFF_ID_FAMILY');
   await liff.init({ liffId: config.familyLiffId });
   if (!liff.isLoggedIn()) { liff.login(); return; }
@@ -634,7 +641,11 @@ async function main() {
   }
 }
 renderConditionChoices('newConditions'); renderConditionChoices('chronicConditions'); refreshMedicationCondition();
-main().catch(err => { console.error(err); toast('เชื่อมต่อไม่สำเร็จ'); });
+main().catch(err => {
+  console.error(err);
+  const configurationError = err?.name === 'RuntimeConfigurationError' || String(err?.message || '').startsWith('LIFF_RUNTIME_CONFIG');
+  toast(configurationError ? 'ตั้งค่าระบบไม่ครบ กรุณาติดต่อผู้ดูแลระบบ' : 'เชื่อมต่อไม่สำเร็จ');
+});
 </script>
 </body>
 </html>
