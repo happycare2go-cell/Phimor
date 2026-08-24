@@ -170,8 +170,37 @@ async function compareMedicationSnapshots({ previousSnapshotId, currentSnapshotI
   return output;
 }
 
+function snapshotTime(snapshot) {
+  const value = new Date(snapshot?.recorded_at || snapshot?._createdAt || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+async function compareLatestMedicationSnapshots({ requester, careProfileId } = {}) {
+  await authorizeCareProfileAccess({
+    lineUserId: requester?.lineUserId, careProfileId, permission: 'view',
+    centerId: requester?.centerId || null,
+    requireActiveCenter: requester?.requireActiveCenter !== false,
+  });
+  const snapshots = await MedicationSnapshots.findWhere((snapshot) =>
+    snapshot.care_profile_id === careProfileId && isEligibleCurrentSnapshot(snapshot)
+  );
+  const ordered = snapshots.sort((left, right) => snapshotTime(right) - snapshotTime(left));
+  if (ordered.length < 2) {
+    return { status: 'NOT_AVAILABLE', reasonCode: 'PREVIOUS_SNAPSHOT_NOT_FOUND' };
+  }
+  return {
+    status: 'AVAILABLE',
+    diff: await compareMedicationSnapshots({
+      previousSnapshotId: ordered[1].snapshot_id,
+      currentSnapshotId: ordered[0].snapshot_id,
+      requester,
+      careProfileId,
+    }),
+  };
+}
+
 module.exports = {
   MedicationDiffError, normalizeText, normalizeUnits, extractNameAndStrength,
   parseDoseAndInstruction, normalizeMedication, matchNormalized,
-  compareMedicationSnapshots,
+  compareMedicationSnapshots, compareLatestMedicationSnapshots,
 };
