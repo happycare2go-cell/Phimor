@@ -26,4 +26,5 @@ Rules:
 - Use backward-compatible, expand-first changes and `IF NOT EXISTS` where appropriate.
 - Test against staging and verify backups before production.
 - `down` documents a rollback path, but production data migrations may be forward-only.
-- Running `migrate` bootstraps only the relational `schema_migrations` infrastructure table when no business migrations exist.
+- Running `migrate` bootstraps `schema_migrations` and explicitly applies any pending migration files.
+- Business migrations must be tested in staging and are never run automatically by application startup.

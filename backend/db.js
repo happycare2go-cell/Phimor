@@ -245,4 +245,5 @@ module.exports = {
   PendingFamilyDeliveries,
   AdminUsers,
   audit, resetAll, initializeDatabase, withTransaction, pingDatabase,
+  databaseQuery: query,
 };
