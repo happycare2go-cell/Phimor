@@ -63,6 +63,24 @@ async function getUpcomingAppointmentSummary({ careProfileId, requester, limit =
     .map(projectAppointmentSummary);
 }
 
+async function getUpcomingAppointmentById({ careProfileId, appointmentId, requester, now = new Date() } = {}) {
+  await authorizeCareProfileAccess({
+    lineUserId: requester?.lineUserId,
+    careProfileId,
+    permission: 'view',
+    centerId: requester?.centerId || null,
+    requireActiveCenter: requester?.requireActiveCenter !== false,
+  });
+  const referenceTime = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(referenceTime.getTime())) throw new AppointmentSummaryError('INVALID_TIME');
+  const appointment = await Appointments.findOne((item) =>
+    item.appointment_id === appointmentId
+    && item.care_profile_id === careProfileId
+    && isUpcomingAppointment(item, referenceTime)
+  );
+  return appointment ? projectAppointmentSummary(appointment) : null;
+}
+
 module.exports = {
   EXCLUDED_APPOINTMENT_STATUSES,
   AppointmentSummaryError,
@@ -70,4 +88,5 @@ module.exports = {
   safeLimit,
   projectAppointmentSummary,
   getUpcomingAppointmentSummary,
+  getUpcomingAppointmentById,
 };
