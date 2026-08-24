@@ -6,6 +6,7 @@
 <title>พี่หมอ</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
+<link rel="stylesheet" href="./plus-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -112,6 +113,33 @@
     </div>
 
     <div id="profileSummary"></div>
+
+    <section class="card plus-panel" id="plusPanel" aria-labelledby="plusTitle" hidden>
+      <div class="plus-heading">
+        <img class="plus-heading__mascot" src="../assets/mascot/phimor-review.png" alt="">
+        <div>
+          <span class="plus-badge">INTERNAL TEST</span>
+          <h3 id="plusTitle">พี่หมอ Plus — ทดสอบภายใน</h3>
+          <p>ถามจากข้อมูลที่บันทึกไว้ใน Care Profile นี้ พี่หมอจะไม่เดาข้อมูลสุขภาพที่ไม่มี</p>
+        </div>
+      </div>
+      <div class="plus-actions" aria-label="หัวข้อที่แนะนำ">
+        <button type="button" data-plus-action="profile-summary">สรุป Care Profile</button>
+        <button type="button" data-plus-action="current-medication">ยาปัจจุบัน</button>
+        <button type="button" data-plus-action="medication-instructions">ยากินอย่างไร</button>
+        <button type="button" data-plus-action="medication-diff">ยาเปลี่ยนจากครั้งก่อน</button>
+        <button type="button" data-plus-action="appointments">นัดหมาย</button>
+        <button type="button" data-plus-action="prepare">เตรียมก่อนพบแพทย์</button>
+      </div>
+      <div class="plus-appointment-picker" id="plusAppointmentPicker" hidden></div>
+      <div class="plus-messages" id="plusMessages" role="log" aria-live="polite" aria-label="บทสนทนากับพี่หมอ Plus"></div>
+      <div class="plus-loading" id="plusLoading" role="status" hidden>พี่หมอกำลังตรวจข้อมูลที่บันทึกไว้...</div>
+      <div class="plus-compose">
+        <textarea id="plusQuestion" maxlength="4000" rows="3" placeholder="พิมพ์คำถามเกี่ยวกับข้อมูลที่บันทึกไว้"></textarea>
+        <button type="button" class="btn btn-primary" id="plusSendButton">ส่งคำถาม</button>
+      </div>
+      <button type="button" class="btn btn-outline plus-retry" id="plusRetryButton" hidden>ลองอีกครั้ง</button>
+    </section>
     <div id="accessRequestList"></div>
 
     <div class="card">
@@ -233,6 +261,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script src="./plus-ui.js"></script>
 <script>
 const BACKEND_URL = 'https://phimor-backend.onrender.com';
 let LINE_USER_ID = null;
@@ -242,6 +271,8 @@ let allProfiles = [];
 let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
+let PLUS_UI = null;
+const PHARMACIST_LINE_OA_URL = '';
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 let confirmResolver=null;
 function askConfirm(title,message,buttonText='ยืนยัน'){
@@ -279,6 +310,31 @@ async function api(path, opts={}) {
   return data;
 }
 
+async function plusApi(path, opts={}) {
+  try {
+    const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
+    const data = await res.json().catch(()=>({}));
+    if (data && typeof data.status === 'string') return data;
+    return { status:'unavailable', errorCode:res.ok?'INVALID_RESPONSE':'PLUS_REQUEST_FAILED' };
+  } catch (_) {
+    return { status:'unavailable', errorCode:'PLUS_NETWORK_UNAVAILABLE' };
+  }
+}
+
+async function ensurePlusUI() {
+  if (!window.PhimorPlusUI) return;
+  if (!PLUS_UI) {
+    PLUS_UI = window.PhimorPlusUI.createController({
+      doc: document,
+      request: plusApi,
+      getCurrentProfile: () => currentProfile,
+      pharmacistUrl: PHARMACIST_LINE_OA_URL,
+    });
+  }
+  PLUS_UI.setProfile(currentProfile);
+  await PLUS_UI.checkVisibility();
+}
+
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
@@ -293,6 +349,7 @@ async function acceptConsent() {
   document.getElementById('consentOverlay').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   await loadDashboard();
+  await ensurePlusUI();
 }
 function declineConsent() { toast('จำเป็นต้องยอมรับก่อนใช้งานพี่หมอ'); }
 
@@ -353,8 +410,9 @@ async function loadDashboard() {
   }
   await loadAccessRequests();
   await loadPendingTransport();
+  PLUS_UI?.setProfile(currentProfile);
 }
-function selectProfile(id){ currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null; loadDashboard(); }
+function selectProfile(id){ currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null; PLUS_UI?.setProfile(currentProfile); loadDashboard(); }
 async function loadAccessRequests(){
   const data = await api('/api/access-requests');
   document.getElementById('accessRequestList').innerHTML = data.requests.map(r=>`<div class="card"><h3>${esc(r.centerName)} ขอเข้าถึงข้อมูลของ ${esc(r.patientName)}</h3><p style="font-size:12px;color:var(--gray)">สาขา/ที่อยู่: ${esc(r.centerAddress||'-')}<br>เบอร์ติดต่อ: ${esc(r.centerPhone||'-')}<br>ผู้พัก: ${esc(r.residentName||r.patientName)}${r.room?' · ห้อง '+esc(r.room):''}<br>คำขอหมดอายุ: ${r.expiresAt?new Date(r.expiresAt).toLocaleString('th-TH'):'-'}</p><div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="respondAccess('${r.requestId}',true)">อนุญาต</button><button class="btn btn-outline" onclick="respondAccess('${r.requestId}',false)">ไม่อนุญาต</button></div></div>`).join('');
@@ -567,6 +625,7 @@ async function main() {
   } else {
     document.getElementById('app').style.display = 'block';
     await loadDashboard();
+    await ensurePlusUI();
     // อ่าน URL Parameter จากปุ่ม Rich Menu เพื่อสลับแท็บอัตโนมัติ
     const view = new URLSearchParams(location.search).get('view');
     if (view === 'record' || view === 'history') {
