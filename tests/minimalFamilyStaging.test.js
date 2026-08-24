@@ -153,7 +153,7 @@ test('Plus API remains available without LINE Messaging credentials', async () =
 
 test('staging Blueprint prompts only for minimal Family Plus secrets', () => {
   const prompted = [...stagingBlueprint.matchAll(/- key:\s*([A-Z0-9_]+)\s*\r?\n\s*sync:\s*false/g)].map((match) => match[1]).sort();
-  assert.deepEqual(prompted, ['GEMINI_API_KEY', 'LIFF_ID_FAMILY', 'LINE_LOGIN_CHANNEL_ID']);
+  assert.deepEqual(prompted, ['DATABASE_URL', 'GEMINI_API_KEY', 'LIFF_ID_FAMILY', 'LINE_LOGIN_CHANNEL_ID']);
   assert.match(stagingBlueprint, /key:\s*STAGING_FAMILY_PLUS_ONLY\s*\r?\n\s*value:\s*"true"/);
   assert.doesNotMatch(stagingBlueprint, /key:\s*(ADMIN_API_KEY|LINE_CHANNEL_ACCESS_TOKEN|LINE_CHANNEL_SECRET|LIFF_ID_CENTER_ADMIN|LIFF_ID_REGISTER|LIFF_ID_SYSTEM_ADMIN|CARE2GO_GROUP_BIND_CODE)\s*\r?\n\s*sync:\s*false/);
 });

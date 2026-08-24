@@ -79,7 +79,8 @@ test('staging blueprint has isolated branch, controlled deploy and safe Plus def
     assert.match(stagingBlueprint, new RegExp(`key:\\s*${key}\\s*\\n\\s*value:\\s*["']?${value}["']?`));
   }
   assert.match(stagingBlueprint, /key:\s*GEMINI_API_KEY\s*\n\s*sync:\s*false/);
-  assert.match(stagingBlueprint, /DATABASE_URL\s*\n\s*fromDatabase:\s*\n\s*name:\s*phimor-db-staging/);
+  assert.match(stagingBlueprint, /key:\s*DATABASE_URL\s*\n\s*sync:\s*false/);
+  assert.doesNotMatch(stagingBlueprint, /databases:|phimor-db-staging|fromDatabase:/);
 });
 
 test('production blueprint generates runtime config without enabling Plus', () => {
