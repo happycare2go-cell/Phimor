@@ -82,7 +82,7 @@ test('medication context uses current snapshot and excludes documents/images', a
   await seedClinicalData();
   const result = await buildCareProfileContext({ careProfileId: 'CP-1', requester: { lineUserId: 'U-OWNER' }, purpose: 'medication_summary', options: { now: NOW } });
   assert.equal(result.context.currentSnapshot.snapshotId, 'SNAP-NEW');
-  assert.deepEqual(result.context.medications, [{ name: 'Metformin', dose: '500 mg หลังอาหาร', condition: 'เบาหวาน', note: '' }]);
+  assert.deepEqual(result.context.medications, [{ name: 'Metformin', dose: '500 mg หลังอาหาร', condition: 'เบาหวาน', note: '', instruction: '' }]);
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /private-image|source_image_base64|imageBase64|raw_document/);
 });

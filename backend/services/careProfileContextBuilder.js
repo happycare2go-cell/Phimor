@@ -1,8 +1,7 @@
-const {
-  CareProfiles, MedicationSnapshots, Medications, Appointments,
-} = require('../db');
+const { CareProfiles, Appointments } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { AI_VERSIONS } = require('../config/aiVersions');
+const { getCurrentMedicationSnapshot } = require('./medicationRetrievalService');
 
 const PURPOSE_PERMISSION_MAP = Object.freeze({
   care_profile_summary: 'view',
@@ -52,6 +51,7 @@ function projectMedication(item) {
     dose: typeof item?.dose === 'string' ? item.dose : '',
     condition: typeof item?.condition === 'string' ? item.condition : '',
     note: typeof item?.note === 'string' ? item.note : '',
+    instruction: typeof item?.instruction === 'string' ? item.instruction : '',
   };
 }
 
@@ -75,22 +75,20 @@ function isUpcomingActive(appointment, now) {
   return !Number.isNaN(at.getTime()) && at.getTime() > now.getTime();
 }
 
-async function medicationContext(careProfileId, profile) {
-  const snapshots = await MedicationSnapshots.findWhere((item) => item.care_profile_id === careProfileId);
-  const latest = [...snapshots].sort((a, b) => timestamp(b.recorded_at) - timestamp(a.recorded_at))[0] || null;
-  let items = latest ? asArray(latest.items).map(projectMedication).filter((item) => item.name) : [];
-  if (!latest) {
-    const records = await Medications.findWhere((item) => item.care_profile_id === careProfileId);
-    items = [...records].sort((a, b) => timestamp(b.created_at || b.recorded_at) - timestamp(a.created_at || a.recorded_at))
-      .slice(0, 50).map(projectMedication).filter((item) => item.name);
-  }
+async function medicationContext(careProfileId, profile, requester) {
+  const current = await getCurrentMedicationSnapshot({ careProfileId, requester });
   return {
     data: {
-      currentSnapshot: latest ? { snapshotId: latest.snapshot_id, recordedAt: latest.recorded_at || null, source: latest.source || null } : null,
-      medications: items,
+      status: current.status,
+      currentSnapshot: current.currentSnapshot,
+      medicationSource: current.medicationSource,
+      medications: current.medications.map(projectMedication),
       allergies: { drug: profile.drug_allergies || '', food: profile.food_allergies || '' },
     },
-    version: { medicationSnapshotId: latest?.snapshot_id || null, medicationRecordedAt: latest?.recorded_at || null },
+    version: {
+      medicationSnapshotId: current.currentSnapshot?.snapshotId || null,
+      medicationRecordedAt: current.currentSnapshot?.recordedAt || null,
+    },
   };
 }
 
@@ -124,7 +122,7 @@ async function buildCareProfileContext({ careProfileId, requester, purpose, opti
   if (purpose === 'care_profile_summary') {
     context = { profile: projectProfile(profile) };
   } else if (purpose === 'medication_summary') {
-    const medication = await medicationContext(careProfileId, profile);
+    const medication = await medicationContext(careProfileId, profile, requester);
     context = medication.data;
     purposeVersion = medication.version;
   } else if (purpose === 'appointment_summary') {
@@ -136,7 +134,7 @@ async function buildCareProfileContext({ careProfileId, requester, purpose, opti
     const appointments = await upcomingAppointments(careProfileId, generatedAtDate, 25);
     const selected = appointments.find((item) => item.appointment_id === options.appointmentId);
     if (!selected) throw new CareProfileContextError('APPOINTMENT_NOT_FOUND');
-    const medication = await medicationContext(careProfileId, profile);
+    const medication = await medicationContext(careProfileId, profile, requester);
     const explicitlyRelated = typeof selected.related_condition === 'string' && selected.related_condition.trim()
       ? [selected.related_condition.trim()] : [];
     const relevantConditions = explicitlyRelated.length > 0
