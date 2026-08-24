@@ -3,8 +3,7 @@
 databases:
   - name: phimor-db-staging
     region: singapore
-    plan: basic-256mb
-    diskSizeGB: 1
+    plan: free
 
 services:
   - type: web
@@ -13,7 +12,7 @@ services:
     branch: feature/phimor-v2-foundation
     autoDeploy: false
     region: singapore
-    plan: starter
+    plan: free
     rootDir: backend
     buildCommand: npm ci --omit=dev
     startCommand: npm start
