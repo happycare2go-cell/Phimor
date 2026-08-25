@@ -122,9 +122,11 @@ async function familyConsultationJourney(browser) {
     if(url.pathname==='/api/transport/family/pending')return {pending:[]};
     if(url.pathname==='/api/care-profile/CP-CONSULT/caregivers')return {members:[]};
     if(url.pathname==='/api/plus/entitlement')return {status:'basic',plus:false};
-    if(url.pathname==='/api/consultations/eligibility')return {availability:'eligible',price:{amountMinor:10000,currency:'THB'},durationMinutes:1440,termsVersion:'consult-terms-v1',checkoutAvailable:false};
+    if(url.pathname==='/api/consultations/eligibility')return {availability:'eligible',price:{amountMinor:10000,currency:'THB'},durationMinutes:1440,termsVersion:'consult-terms-v1',checkoutAvailable:true};
     if(url.pathname==='/api/consultations'&&request.method()==='GET')return {items:[]};
     if(url.pathname==='/api/consultations/safety'&&request.method()==='POST')return {action:'pharmacist_consultation_eligible',category:'medication_advice',reasonCode:null};
+    if(url.pathname==='/api/consultations/checkout'&&request.method()==='POST')return {status:201,body:{status:'payment_pending',orderId:'ORDER-SIM',amountMinor:10000,currency:'THB',durationMinutes:1440,termsVersion:'consult-terms-v1',payment:{method:'promptpay',qrImageUrl:'https://cdn.omise.co/qr/simulated.png'}}};
+    if(url.pathname==='/api/consultations/orders/ORDER-SIM/status')return {status:'payment_pending',orderId:'ORDER-SIM',amountMinor:10000,currency:'THB'};
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
@@ -139,7 +141,9 @@ async function familyConsultationJourney(browser) {
   await page.locator('#consultationTermsCheck').check();
   await page.locator('#consultationContinueButton').click();
   await page.waitForFunction(()=>!document.querySelector('#consultationPayment').hidden);
-  assert.match(await page.locator('#consultationPayment').textContent(),/กำลังเตรียมเปิดใช้งาน/);
+  assert.match(await page.locator('#consultationPayment').textContent(),/สแกน QR.*100 บาท/);
+  assert.strictEqual(await page.locator('#consultationPaymentQr').isVisible(),true);
+  assert.match(await page.locator('#consultationPaymentQr').getAttribute('src'),/^https:\/\//);
   await page.close();
 }
 

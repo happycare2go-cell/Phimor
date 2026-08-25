@@ -40,6 +40,9 @@
   }
   function sourceLabel(category){return SOURCE_LABELS[category]||'ไม่ระบุแหล่งข้อมูล';}
   function closeReasonLabel(value){return value==='expired'?'ปิดอัตโนมัติเมื่อครบเวลาคำปรึกษา':'ปิดเคสแล้ว';}
+  function stateLabel(value){return ({queued:'รอเภสัชกร',active:'กำลังปรึกษา',resolved:'ตอบประเด็นหลักแล้ว',closed:'หมดเวลาปรึกษาแล้ว'})[value]||'ไม่ทราบสถานะ';}
+  function waitingOnLabel(value,state){if(['queued','resolved','closed'].includes(state))return 'ไม่มีฝ่ายที่กำลังรอคำตอบ';return value==='pharmacist'?'รอเภสัชกรตอบ':value==='customer'?'รอข้อมูลจากผู้ใช้':'ไม่มีฝ่ายที่กำลังรอคำตอบ';}
+  function accessStateMessage(access,error){if(access==='allowed')return '';if(access==='loading')return 'กำลังตรวจสอบสิทธิ์…';if(access==='denied')return 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน Pharmacist Console กรุณาติดต่อผู้ดูแลระบบ';if(error==='CONSULTATION_DISABLED')return 'ระบบปรึกษาเภสัชกรยังไม่เปิดใช้งาน';return 'ไม่สามารถเชื่อมต่อ Pharmacist Console ได้ กรุณาลองใหม่';}
   function createIdempotencyKey(cryptoApi=globalThis.crypto){
     if(cryptoApi&&typeof cryptoApi.randomUUID==='function') return cryptoApi.randomUUID();
     return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -88,9 +91,9 @@
       }catch(error){
         if(!current(requestRevision)) return {ignored:true,stale:true};
         const code=apiErrorCode(error);
-        if(['PHARMACIST_NOT_FOUND','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED','UNAUTHENTICATED'].includes(code)) {
+        if(['PHARMACIST_NOT_FOUND','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED','PHARMACIST_ACCESS_DENIED','UNAUTHENTICATED'].includes(code)) {
           patch({access:'denied',error:code});
-        } else patch({error:code,statusMessage:'โหลดข้อมูลไม่สำเร็จ กรุณาลองใหม่'});
+        } else patch({access:state.access==='loading'?'error':state.access,error:code,statusMessage:'โหลดข้อมูลไม่สำเร็จ กรุณาลองใหม่'});
         return {error:code};
       }
     }
@@ -111,8 +114,9 @@
     }
     async function selectCase(caseId){
       revision+=1; stopPolling();
+      if(rateLimitTimer!==null){cancelSchedule(rateLimitTimer);rateLimitTimer=null;}
       const requestRevision=token();
-      patch({selectedCase:null,messages:[],lastSequence:0,assistant:null,error:null,statusMessage:'กำลังโหลดเคส…'});
+      patch({selectedCase:null,messages:[],lastSequence:0,assistant:null,error:null,statusMessage:'กำลังโหลดเคส…',sending:false,resolving:false,retryAfterSeconds:0});
       try{
         const detail=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}`);
         if(!current(requestRevision)) return {ignored:true,stale:true};
@@ -129,16 +133,19 @@
     }
     async function acceptCase(caseId){
       if(state.acceptingCaseId) return {ignored:true};
+      const requestRevision=token();
       patch({acceptingCaseId:caseId,error:null});
       try{
         const detail=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/accept`,{method:'POST',body:'{}'});
         patch({acceptingCaseId:null});
+        if(!current(requestRevision))return {ignored:true,stale:true,detail};
         await Promise.all([loadCollection('queue'),loadCollection('active')]);
         await selectCase(detail.caseId||caseId); return detail;
       }catch(error){
         const code=apiErrorCode(error);
-        patch({acceptingCaseId:null,error:code,statusMessage:code==='CASE_ALREADY_ACCEPTED'?'เคสนี้มีเภสัชกรท่านอื่นรับแล้ว':'รับเคสไม่สำเร็จ'});
-        if(code==='CASE_ALREADY_ACCEPTED') await loadCollection('queue');
+        if(current(requestRevision))patch({acceptingCaseId:null,error:code,statusMessage:code==='CASE_ALREADY_ACCEPTED'?'เคสนี้มีเภสัชกรท่านอื่นรับแล้ว':'รับเคสไม่สำเร็จ'});
+        else patch({acceptingCaseId:null});
+        if(current(requestRevision)&&code==='CASE_ALREADY_ACCEPTED') await loadCollection('queue');
         return {error:code};
       }
     }
@@ -160,33 +167,39 @@
     async function sendMessage(body){
       const text=safeText(body).trim(); const caseId=state.selectedCase?.caseId;
       if(state.sending||state.retryAfterSeconds>0||!caseId||!text||text.length>4000||!canMessage(state.selectedCase))return {ignored:true};
+      const requestRevision=token();
       patch({sending:true,error:null,statusMessage:''});
       try{
         const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/messages`,{
           method:'POST',body:JSON.stringify({body:text,idempotencyKey:createIdempotencyKey(cryptoApi)}),
         });
-        if(state.selectedCase?.caseId===caseId){
+        if(current(requestRevision)&&state.selectedCase?.caseId===caseId){
           const messages=mergeMessages(state.messages,result.message?[result.message]:[]);
           patch({sending:false,messages,lastSequence:messages.at(-1)?.sequence||state.lastSequence});
           await pollOnce();
-        }
+        } else return {ignored:true,stale:true};
         return result;
       }catch(error){
+        if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         const retryAfterSeconds=Math.max(0,Number(error?.retryAfterSeconds)||0);
-        patch({sending:false,error:apiErrorCode(error),retryAfterSeconds,statusMessage:apiErrorCode(error)==='CONSULTATION_RATE_LIMITED'?'ส่งข้อความถี่เกินไป กรุณารอสักครู่':'ส่งข้อความไม่สำเร็จ'});
+        const code=apiErrorCode(error),closed=['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code);
+        patch({sending:false,error:code,retryAfterSeconds,statusMessage:code==='CONSULTATION_RATE_LIMITED'?'ส่งข้อความถี่เกินไป กรุณารอสักครู่':closed?'เคสนี้หมดเวลาปรึกษาแล้ว':'ส่งข้อความไม่สำเร็จ'});
         if(rateLimitTimer!==null)cancelSchedule(rateLimitTimer);
         if(retryAfterSeconds>0)rateLimitTimer=schedule(()=>{rateLimitTimer=null;patch({retryAfterSeconds:0,statusMessage:''});},retryAfterSeconds*1000);
-        return {error:apiErrorCode(error)};
+        if(closed)await pollOnce();
+        return {error:code};
       }
     }
     async function resolveCase(){
       const caseId=state.selectedCase?.caseId;
-      if(!caseId||state.resolving||!canMessage(state.selectedCase))return {ignored:true};
+      if(!caseId||state.resolving||state.selectedCase?.state!=='active'||!canMessage(state.selectedCase))return {ignored:true};
+      const requestRevision=token();
       patch({resolving:true});
       try{
         await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/resolve`,{method:'POST',body:'{}'});
+        if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         const result=await pollOnce(); patch({resolving:false}); await Promise.all([loadCollection('active'),loadCollection('resolved')]); return result;
-      }catch(error){patch({resolving:false,error:apiErrorCode(error),statusMessage:'เปลี่ยนสถานะไม่สำเร็จ'});return {error:apiErrorCode(error)};}
+      }catch(error){if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};patch({resolving:false,error:apiErrorCode(error),statusMessage:'เปลี่ยนสถานะไม่สำเร็จ'});return {error:apiErrorCode(error)};}
     }
     async function generateAssistant(){
       const caseId=state.selectedCase?.caseId;
@@ -239,13 +252,13 @@
     clearNode(container);
     if(!safeArray(items).length){textElement(doc,container,'p','empty-state','ยังไม่มีเคสในรายการ');return;}
     items.forEach((item)=>{
-      const card=doc.createElement('article');card.className='case-card';card.tabIndex=0;
+      const card=doc.createElement('article');card.className=`case-card case-card--${safeText(item.state,showAccept?'queued':'active')}`;
       textElement(doc,card,'strong','case-id',item.caseId);
       textElement(doc,card,'span','case-meta',item.queuedAt?new Date(item.queuedAt).toLocaleString('th-TH'):'ไม่ระบุเวลา');
       textElement(doc,card,'span','case-chip',safeText(item.topicCategory,'ไม่ระบุหัวข้อ'));
       textElement(doc,card,'span','case-chip',safeText(item.triageCategory,'ไม่ระบุ triage'));
       if(Number.isFinite(Number(item.waitingSeconds)))textElement(doc,card,'span','waiting-time',`รอ ${Math.floor(Number(item.waitingSeconds)/60)} นาที`);
-      card.addEventListener('click',()=>onSelect(item.caseId));
+      if(!showAccept){card.tabIndex=0;card.setAttribute?.('role','button');card.addEventListener('click',()=>onSelect(item.caseId));card.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault?.();onSelect(item.caseId);}});}
       if(showAccept){const button=textElement(doc,card,'button','accept-button','รับเคส');button.type='button';button.disabled=acceptingCaseId===item.caseId;
         button.addEventListener('click',(event)=>{event.stopPropagation?.();onAccept(item.caseId);});card.appendChild(button);}
       container.appendChild(card);
@@ -262,16 +275,17 @@
     };
     function render(state){
       elements.access.hidden=state.access==='allowed';elements.app.hidden=state.access!=='allowed';
-      elements.access.textContent=state.access==='denied'?'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน Pharmacist Console':state.access==='loading'?'กำลังตรวจสอบสิทธิ์…':'ไม่สามารถเชื่อมต่อระบบได้';
+      elements.access.textContent=accessStateMessage(state.access,state.error);
       elements.status.textContent=state.statusMessage||'';
       doc.querySelectorAll('[data-tab]').forEach((button)=>button.classList?.toggle('active',button.dataset.tab===state.tab));
       renderQueue(doc,elements.list,state.collections[state.tab],{acceptingCaseId:state.acceptingCaseId,showAccept:state.tab==='queue',onSelect:session.selectCase,onAccept:session.acceptCase});
       elements.loadMore.hidden=state.tab!=='queue'||!state.queueHasMore;
       clearNode(elements.header);
+      elements.header.className=`case-header${state.selectedCase?` case-header--${effectiveClosed(state.selectedCase)?'closed':state.selectedCase.state}`:''}`;
       if(state.selectedCase){
         textElement(doc,elements.header,'h2','',`เคส ${state.selectedCase.caseId}`);
-        textElement(doc,elements.header,'span','state-chip',state.selectedCase.state);
-        textElement(doc,elements.header,'span','waiting-chip',`รอการตอบจาก: ${state.selectedCase.waitingOn||'none'}`);
+        textElement(doc,elements.header,'span',`state-chip state-chip--${effectiveClosed(state.selectedCase)?'closed':state.selectedCase.state}`,stateLabel(effectiveClosed(state.selectedCase)?'closed':state.selectedCase.state));
+        textElement(doc,elements.header,'span','waiting-chip',waitingOnLabel(state.selectedCase.waitingOn,state.selectedCase.state));
         textElement(doc,elements.header,'span','countdown',formatDuration(state.selectedCase.remainingSeconds));
         if(state.selectedCase.acceptedAt)textElement(doc,elements.header,'small','',`รับเคส: ${new Date(state.selectedCase.acceptedAt).toLocaleString('th-TH')}`);
         if(state.selectedCase.expiresAt)textElement(doc,elements.header,'small','',`หมดเวลา: ${new Date(state.selectedCase.expiresAt).toLocaleString('th-TH')}`);
@@ -280,7 +294,7 @@
       renderMessages(doc,elements.messages,state.messages);
       const writable=state.selectedCase&&canMessage(state.selectedCase)&&state.retryAfterSeconds===0;
       elements.composer.disabled=!writable||state.sending;elements.send.disabled=!writable||state.sending||!elements.composer.value.trim();
-      elements.resolve.disabled=!writable||state.resolving;elements.resolve.hidden=!state.selectedCase;
+      elements.resolve.disabled=!writable||state.selectedCase?.state!=='active'||state.resolving;elements.resolve.hidden=!state.selectedCase;
       elements.assistantButton.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.assistantBusy;
       elements.assistantRefresh.disabled=elements.assistantButton.disabled;elements.assistantRefresh.hidden=state.assistant?.status!=='available';
       renderAssistant(doc,elements.assistant,state.assistant);
@@ -304,7 +318,7 @@
     return async function request(path,options={}){
       const response=await fetchImpl(backendUrl+path,{...options,headers:{'Content-Type':'application/json','Authorization':`Bearer ${idToken}`,...(options.headers||{})}});
       let body={};try{body=await response.json();}catch(_){body={};}
-      if(!response.ok){const error=new Error('request failed');error.errorCode=body.errorCode||body.code||'REQUEST_FAILED';error.status=response.status;error.retryAfterSeconds=Number(response.headers?.get?.('Retry-After'))||0;throw error;}
+      if(!response.ok){const error=new Error('request failed');const rawCode=body.errorCode||body.code||body.error;error.errorCode=rawCode==='pharmacist_access_denied'?'PHARMACIST_ACCESS_DENIED':rawCode||'REQUEST_FAILED';error.status=response.status;error.retryAfterSeconds=Number(response.headers?.get?.('Retry-After'))||0;throw error;}
       return body;
     };
   }
@@ -315,7 +329,7 @@
       const backendUrl=root.PhimorRuntimeConfig.requireBackendUrl(root.PHIMOR_PUBLIC_BACKEND_URL);
       const response=await fetchImpl(`${backendUrl}/config/liff`);if(!response.ok)throw new Error('LIFF_RUNTIME_CONFIG_UNAVAILABLE');
       const config=await response.json();root.PhimorRuntimeConfig.assertBackendConfig(backendUrl,config);
-      const liffId=config.pharmacistLiffId || root.PHIMOR_PHARMACIST_LIFF_ID;
+      const liffId=config.pharmacistLiffId;
       if(!liffId)throw new Error('LIFF_ID_PHARMACIST_MISSING');
       await liffApi.init({liffId});if(!liffApi.isLoggedIn()){liffApi.login();return null;}
       const idToken=liffApi.getIDToken();if(!idToken)throw new Error('LINE_ID_TOKEN_MISSING');
@@ -326,5 +340,5 @@
     }catch(error){access.hidden=false;access.textContent=error?.message==='LIFF_ID_PHARMACIST_MISSING'?'ยังไม่ได้ตั้งค่า Pharmacist LIFF กรุณาติดต่อผู้ดูแลระบบ':'ไม่สามารถเปิด Pharmacist Console ได้';return null;}
   }
 
-  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,createIdempotencyKey,createConsoleSession,renderAssistant,renderMessages,renderQueue,createController,createHttpClient,bootstrap};
+  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,createIdempotencyKey,createConsoleSession,renderAssistant,renderMessages,renderQueue,createController,createHttpClient,bootstrap};
 }));

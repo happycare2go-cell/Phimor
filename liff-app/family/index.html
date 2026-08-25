@@ -126,11 +126,12 @@
         </div>
       </div>
       <div id="consultationPatient" class="consultation-patient"></div>
-      <button type="button" class="btn btn-gold consultation-entry" id="consultationEntry">เริ่มตรวจขอบเขตคำถาม</button>
+      <button type="button" class="btn btn-gold consultation-entry" id="consultationEntry">เริ่มปรึกษาเภสัชกร</button>
       <button type="button" class="btn btn-outline" id="consultationRefreshButton">รีเฟรชรายการคำปรึกษา</button>
       <div id="consultationFlow" hidden>
         <label for="consultationQuestion">คำถามที่ต้องการปรึกษา</label>
         <textarea id="consultationQuestion" class="consultation-question" maxlength="4000" placeholder="อธิบายคำถามเรื่องยาโดยไม่ใส่ข้อมูลติดต่อส่วนตัว"></textarea>
+        <p class="consultation-help">หากมีอาการฉุกเฉิน เช่น หายใจไม่ออก หมดสติ หรือเจ็บหน้าอกรุนแรง ให้ติดต่อบริการฉุกเฉินทันที ไม่ต้องรอชำระเงิน</p>
         <button type="button" class="btn btn-primary" id="consultationCheckButton">ตรวจขอบเขตคำถาม</button>
         <div id="consultationTerms" hidden>
           <h3>100 บาท / 1 Consult Case</h3>
@@ -149,7 +150,7 @@
         </div>
         <div id="consultationPayment" class="consultation-payment" hidden>
           <strong>PromptPay • 100 บาท</strong>
-          <p id="consultationPaymentText">ระบบชำระเงินกำลังเตรียมเปิดใช้งาน</p>
+          <p id="consultationPaymentText">กำลังเตรียมรายการชำระเงินอย่างปลอดภัย</p>
           <img id="consultationPaymentQr" class="consultation-payment__qr" alt="PromptPay QR สำหรับชำระ Consult Case" hidden>
         </div>
         <button type="button" class="btn btn-outline" id="consultationCancelButton">ยกเลิกและล้างคำถาม</button>
