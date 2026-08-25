@@ -26,16 +26,20 @@ function playwright() {
 }
 
 const LIFF_MOCK = `<script>window.liff={init:async()=>{},isLoggedIn:()=>true,login:()=>{},logout:()=>{},getIDToken:()=> 'SIMULATED_ID_TOKEN',getProfile:async()=>({userId:'U_SIMULATED',displayName:'ผู้ใช้จำลอง'}),isInClient:()=>true,closeWindow:()=>{},openWindow:()=>{}};</script>`;
+const SIMULATED_BACKEND_URL = 'https://phimor-backend.onrender.com';
+const RUNTIME_CONFIG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'runtime-config.js'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
-    .replace(/<script[^>]+static\.line-scdn\.net\/liff\/edge\/2\/sdk\.js[^>]*><\/script>/, LIFF_MOCK);
+    .replace(/<script[^>]+static\.line-scdn\.net\/liff\/edge\/2\/sdk\.js[^>]*><\/script>/, LIFF_MOCK)
+    .replace('<script src="../environment.js"></script>', `<script>window.PHIMOR_PUBLIC_BACKEND_URL=${JSON.stringify(SIMULATED_BACKEND_URL)};</script>`)
+    .replace('<script src="../runtime-config.js"></script>', `<script>${RUNTIME_CONFIG_SOURCE}</script>`);
 }
 
 async function mockBackend(page, handler) {
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (!request.url().startsWith('https://phimor-backend.onrender.com')) return route.abort();
+    if (!request.url().startsWith(SIMULATED_BACKEND_URL)) return route.abort();
     const result = await handler(new URL(request.url()), request);
     return route.fulfill({ status: result?.status || 200, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
   });
@@ -45,7 +49,7 @@ async function familyConsentJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   let consent = false;
   await mockBackend(page, async (url) => {
-    if (url.pathname === '/config/liff') return { familyLiffId: 'SIM_FAMILY' };
+    if (url.pathname === '/config/liff') return { publicBackendUrl: SIMULATED_BACKEND_URL, familyLiffId: 'SIM_FAMILY' };
     if (url.pathname === '/api/consent/check') return { hasConsent: consent };
     if (url.pathname === '/api/consent') { consent = true; return { consent_id: 'C1', accepted: true }; }
     if (url.pathname === '/api/init-dashboard') return { profiles: [] };
@@ -58,6 +62,84 @@ async function familyConsentJourney(browser) {
   await page.getByRole('button', { name: 'ยอมรับและเริ่มใช้งาน' }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
   assert.match(await page.locator('#profileLabel').textContent(), /ยังไม่มีข้อมูล/);
+  await page.locator('.tab[data-view="health"]').click();
+  assert.strictEqual(await page.locator('#healthNoProfileState').isVisible(), true);
+  assert.strictEqual(await page.locator('#healthProfileContent').isHidden(), true);
+  assert.match(await page.locator('#healthNoProfileState').textContent(), /ยังไม่ได้เลือก Care Profile/);
+  await page.getByRole('button', { name: 'กลับหน้าหลักเพื่อสร้าง Care Profile' }).click();
+  assert.strictEqual(await page.locator('#view-home').isVisible(), true);
+  await page.close();
+}
+
+async function familyHealthProfileSwitchJourney(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const profiles = [
+    {
+      profile: { care_profile_id:'CP1', patient_name:'คุณยายทองดี', blood_type:'A+', gender:'female', height_cm:'155', weight_kg:'52', chronic_conditions:['เบาหวาน'], drug_allergies:'เพนิซิลลิน', food_allergies:'', mobility_limitations:'ใช้ไม้เท้า', emergency_contact_name:'สมใจ', emergency_contact_phone:'0811111111', family_phone:'0822222222' },
+      familyRole:'owner', canUseAi:false, upcomingAppointments:[],
+    },
+    {
+      profile: { care_profile_id:'CP2', patient_name:'คุณตาสมชาย', blood_type:'O+', gender:'male', height_cm:'168', weight_kg:'64', chronic_conditions:['ความดันโลหิตสูง'], drug_allergies:'', food_allergies:'กุ้ง', mobility_limitations:'', emergency_contact_name:'สมหญิง', emergency_contact_phone:'0833333333', family_phone:'0844444444' },
+      familyRole:'caregiver', canUseAi:false, upcomingAppointments:[],
+    },
+  ];
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return { publicBackendUrl: SIMULATED_BACKEND_URL, familyLiffId: 'SIM_FAMILY' };
+    if (url.pathname === '/api/consent/check') return { hasConsent:true };
+    if (url.pathname === '/api/init-dashboard') return { profiles };
+    if (url.pathname === '/api/access-requests') return { requests:[] };
+    if (url.pathname === '/api/transport/family/pending') return { pending:[] };
+    if (url.pathname === '/api/care-profile/CP1/caregivers') return { members:[] };
+    if (url.pathname === '/api/plus/entitlement') return { status:'basic', plus:false };
+    return { status:404, body:{message:`unmocked ${url.pathname}`} };
+  });
+  await page.setContent(localHtml('family'), { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.locator('.tab[data-view="health"]').click();
+  assert.strictEqual(await page.locator('#healthProfileContent').isVisible(), true);
+  assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณยายทองดี');
+  assert.strictEqual(await page.locator('#bloodType').inputValue(), 'A+');
+  assert.strictEqual(await page.locator('#drugAllergies').inputValue(), 'เพนิซิลลิน');
+  await page.locator('#profileSelector').selectOption('CP2');
+  await page.waitForFunction(() => document.querySelector('#healthProfileHeading').textContent.includes('คุณตาสมชาย'));
+  assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณตาสมชาย');
+  assert.strictEqual(await page.locator('#bloodType').inputValue(), 'O+');
+  assert.strictEqual(await page.locator('#drugAllergies').inputValue(), '');
+  assert.strictEqual(await page.locator('#foodAllergies').inputValue(), 'กุ้ง');
+  assert.strictEqual(await page.locator('#chronicConditions input[value="ความดันโลหิตสูง"]').isChecked(), true);
+  assert.strictEqual(await page.locator('#chronicConditions input[value="เบาหวาน"]').isChecked(), false);
+  await page.close();
+}
+
+async function familyConsultationJourney(browser) {
+  const page=await browser.newPage({viewport:{width:390,height:844}});
+  const profile={profile:{care_profile_id:'CP-CONSULT',patient_name:'คุณแม่จำลอง'},familyRole:'owner',canUseAi:false,upcomingAppointments:[]};
+  await mockBackend(page,async(url,request)=>{
+    if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if(url.pathname==='/api/consent/check')return {hasConsent:true};
+    if(url.pathname==='/api/init-dashboard')return {profiles:[profile]};
+    if(url.pathname==='/api/access-requests')return {requests:[]};
+    if(url.pathname==='/api/transport/family/pending')return {pending:[]};
+    if(url.pathname==='/api/care-profile/CP-CONSULT/caregivers')return {members:[]};
+    if(url.pathname==='/api/plus/entitlement')return {status:'basic',plus:false};
+    if(url.pathname==='/api/consultations/eligibility')return {availability:'eligible',price:{amountMinor:10000,currency:'THB'},durationMinutes:1440,termsVersion:'consult-terms-v1',checkoutAvailable:false};
+    if(url.pathname==='/api/consultations'&&request.method()==='GET')return {items:[]};
+    if(url.pathname==='/api/consultations/safety'&&request.method()==='POST')return {action:'pharmacist_consultation_eligible',category:'medication_advice',reasonCode:null};
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!document.querySelector('#consultationPanel').hidden);
+  assert.match(await page.locator('#consultationPatient').textContent(),/คุณแม่จำลอง/);
+  await page.locator('#consultationEntry').click();
+  await page.locator('#consultationQuestion').fill('ควรหยุดยานี้ไหม');
+  await page.locator('#consultationCheckButton').click();
+  await page.waitForFunction(()=>!document.querySelector('#consultationTerms').hidden);
+  assert.match(await page.locator('#consultationTerms').textContent(),/100 บาท/);
+  assert.strictEqual(await page.locator('#consultationContinueButton').isDisabled(),true);
+  await page.locator('#consultationTermsCheck').check();
+  await page.locator('#consultationContinueButton').click();
+  await page.waitForFunction(()=>!document.querySelector('#consultationPayment').hidden);
+  assert.match(await page.locator('#consultationPayment').textContent(),/กำลังเตรียมเปิดใช้งาน/);
   await page.close();
 }
 
@@ -137,13 +219,37 @@ async function adminSubscriptionJourney(browser) {
   await page.close();
 }
 
+async function pharmacistConsoleJourney(browser) {
+  const page=await browser.newPage({viewport:{width:1440,height:900}});
+  await mockBackend(page,async(url,request)=>{
+    if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
+    if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
+    if(url.pathname==='/api/pharmacist/consultations/active')return {items:[{caseId:'CASE-1',state:'active',waitingOn:'pharmacist',remainingSeconds:3600,effectiveClosed:false}]};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages')return {items:[],nextSequence:0,hasMore:false};
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('pharmacist'),{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!document.querySelector('#consoleApp').hidden);
+  assert.strictEqual(await page.locator('.case-column').isVisible(),true);
+  assert.strictEqual(await page.locator('.chat-column').isVisible(),true);
+  assert.strictEqual(await page.locator('.assistant-column').isVisible(),true);
+  await page.getByRole('button',{name:'รับเคส'}).click();
+  await page.waitForFunction(()=>document.querySelector('#caseHeader').textContent.includes('CASE-Q'));
+  assert.match(await page.locator('#caseHeader').textContent(),/เหลือเวลา/);
+  assert.strictEqual(await page.locator('#messageComposer').isEnabled(),true);
+  assert.match(await page.locator('.ai-boundary').textContent(),/เภสัชกรเป็นผู้ตัดสินใจ/);
+  await page.close();
+}
+
 (async () => {
   const { chromium } = playwright();
   const executablePath = browserExecutable(chromium);
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney })) {
+  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }

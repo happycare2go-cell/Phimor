@@ -5,6 +5,7 @@ const router = express.Router();
 const { requireAuth, requireFamilyAccess } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const familyService = require('../services/familyService');
+const healthHistoryService = require('../services/careProfileHealthHistoryService');
 const { CareProfiles, CareProfileMembers } = require('../db');
 
 const PDF_LINK_TTL_MS = 5 * 60 * 1000;
@@ -155,14 +156,36 @@ router.get('/init-dashboard', asyncHandler(async (req, res) => {
 // PATCH /api/care-profile/:id — แก้ไขข้อมูลสุขภาพ
 router.patch('/care-profile/:careProfileId', requireFamilyAccess(), asyncHandler(async (req, res) => {
   if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('edit_profile')) return res.status(403).json({ error:'forbidden', message:'ไม่มีสิทธิ์แก้ไขข้อมูลสุขภาพ' });
-  const { CareProfiles: CP } = require('../db');
-  const allowed = ['gender', 'blood_type', 'height_cm', 'weight_kg', 'chronic_conditions',
-    'drug_allergies', 'food_allergies', 'mobility_limitations',
-    'emergency_contact_name', 'emergency_contact_phone', 'family_phone'];
-  const patch = {};
-  for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
-  const updated = await CP.update((p) => p.care_profile_id === req.params.careProfileId, patch);
-  res.json(updated);
+  try {
+    const result = await healthHistoryService.updateCareProfileHealth({
+      careProfileId: req.params.careProfileId,
+      lineUserId: req.user.lineUserId,
+      patch: req.body,
+      source: 'family_liff',
+    });
+    res.json(result.profile);
+  } catch (error) {
+    if (error?.status) return res.status(error.status).json({ error:error.code || 'health_history_error', message:error.message });
+    throw error;
+  }
+}));
+
+router.get('/care-profile/:careProfileId/health-history', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('edit_profile')) return res.status(403).json({ error:'forbidden', message:'ไม่มีสิทธิ์ดูประวัติข้อมูลสุขภาพ' });
+  try {
+    const result = await healthHistoryService.getCareProfileHealthHistory({
+      careProfileId: req.params.careProfileId,
+      lineUserId: req.user.lineUserId,
+      audience: 'family',
+      limit: req.query.limit,
+      cursor: req.query.cursor,
+      field: req.query.field,
+    });
+    res.json(result);
+  } catch (error) {
+    if (error?.status) return res.status(error.status).json({ error:error.code || 'health_history_error', message:error.message });
+    throw error;
+  }
 }));
 
 // GET/POST /api/appointments — จัดการนัดหมาย

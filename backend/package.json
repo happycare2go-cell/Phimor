@@ -9,7 +9,9 @@
     "test:flows": "node scripts/run-tests.js journey",
     "test:ui": "node scripts/run-tests.js ui",
     "test:browser": "node ../tests/browserLiffSimulation.js",
-    "test:ai-golden": "node scripts/run-ai-golden.js"
+    "test:ai-golden": "node scripts/run-ai-golden.js",
+    "migrate": "node scripts/migrate.js",
+    "migrate:status": "node scripts/migrate-status.js"
   },
   "dependencies": {
     "@line/bot-sdk": "^9.4.2",

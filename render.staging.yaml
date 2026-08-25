@@ -1,16 +1,13 @@
 # Separate Blueprint for non-production verification. Do not point LINE users
 # or production LIFF endpoints at these services.
-databases:
-  - name: phimor-db-staging
-    region: singapore
-    plan: starter
-
 services:
   - type: web
     name: phimor-backend-staging
     runtime: node
+    branch: feature/phimor-v2-foundation
+    autoDeploy: false
     region: singapore
-    plan: starter
+    plan: free
     rootDir: backend
     buildCommand: npm ci --omit=dev
     startCommand: npm start
@@ -20,34 +17,46 @@ services:
         value: production
       - key: STAGING_MODE
         value: "true"
+      - key: STAGING_FAMILY_PLUS_ONLY
+        value: "true"
       - key: STAGING_CLOCK_OFFSET_MINUTES
         value: "0"
       - key: DATABASE_URL
-        fromDatabase:
-          name: phimor-db-staging
-          property: connectionString
+        sync: false
       - key: ALLOWED_ORIGINS
         value: https://phimor-liff-staging.onrender.com
-      - key: ADMIN_API_KEY
-        sync: false
+      - key: PUBLIC_BACKEND_URL
+        value: https://phimor-backend-staging.onrender.com
       - key: LINE_LOGIN_CHANNEL_ID
-        sync: false
-      - key: LINE_CHANNEL_ACCESS_TOKEN
-        sync: false
-      - key: LINE_CHANNEL_SECRET
-        sync: false
-      - key: LIFF_ID_CENTER_ADMIN
         sync: false
       - key: LIFF_ID_FAMILY
         sync: false
-      - key: LIFF_ID_REGISTER
-        sync: false
-      - key: LIFF_ID_SYSTEM_ADMIN
+      - key: LIFF_ID_PHARMACIST
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: CARE2GO_GROUP_BIND_CODE
-        sync: false
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_MODEL_DOCUMENT
+        value: ""
+      - key: AI_MODEL_EXPLANATION
+        value: ""
+      - key: AI_TIMEOUT_MS
+        value: "15000"
+      - key: AI_MAX_RETRIES
+        value: "1"
+      - key: PLUS_ENABLED
+        value: "false"
+      - key: PLUS_INTERNAL_ENTITLEMENT_ONLY
+        value: "true"
+      - key: PLUS_AI_EXPLANATION_ENABLED
+        value: "false"
+      - key: PLUS_MEDICATION_DIFF_ENABLED
+        value: "false"
+      - key: PLUS_PHARMACIST_ESCALATION_ENABLED
+        value: "false"
+      - key: PLUS_RATE_LIMIT_PER_5_MINUTES
+        value: "10"
       - key: REQUIRE_STAFF_APPROVAL
         value: "true"
       - key: REQUIRE_CARE2GO_OPS_BINDING
@@ -56,6 +65,11 @@ services:
   - type: web
     name: phimor-liff-staging
     runtime: static
+    branch: feature/phimor-v2-foundation
+    autoDeploy: false
     rootDir: liff-app
-    buildCommand: ""
+    buildCommand: node scripts/write-runtime-config.js
     staticPublishPath: .
+    envVars:
+      - key: PUBLIC_BACKEND_URL
+        value: https://phimor-backend-staging.onrender.com

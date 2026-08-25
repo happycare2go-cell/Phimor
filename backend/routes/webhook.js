@@ -11,12 +11,23 @@ const familyService = require('../services/familyService');
 const lineClient = require('../providers/lineClient');
 const flex = require('../flexMessages');
 const rateLimiter = require('../utils/rateLimiter');
+const { messagingConfigured } = require('../config/runtimeCapabilities');
 const { Residents, PendingCards, CareProfiles, CenterStaff, Centers, WebhookInbox, id, now } = require('../db');
 
 const IMAGE_RATE_LIMIT = Number(process.env.IMAGE_RATE_LIMIT_PER_MINUTE) || 5;
 const webhookParser = (process.env.NODE_ENV === 'test' || process.env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true')
   ? express.json()
   : line.middleware({ channelSecret: process.env.LINE_CHANNEL_SECRET || 'missing-channel-secret' });
+
+function requireMessagingCapability(req, res, next) {
+  if (!messagingConfigured()) {
+    return res.status(503).json({
+      error: 'line_messaging_unavailable',
+      message: 'LINE Messaging/Webhook ไม่ได้เปิดใช้งานใน environment นี้',
+    });
+  }
+  next();
+}
 
 async function safeReply(replyToken, messages) {
   return lineClient.replyMessage(replyToken, Array.isArray(messages) ? messages : [messages]);
@@ -256,7 +267,7 @@ async function processPendingWebhookEvents(limit = 50) {
   return { processed };
 }
 
-router.post('/webhook', webhookParser, async (req, res) => {
+router.post('/webhook', requireMessagingCapability, webhookParser, async (req, res) => {
   const events = req.body.events || [];
   // Persist every event before acknowledging LINE.  A worker can replay a
   // pending item after a process restart, and webhookEventId prevents doubles.
@@ -271,3 +282,4 @@ router.post('/webhook', webhookParser, async (req, res) => {
 
 module.exports = router;
 module.exports.processPendingWebhookEvents = processPendingWebhookEvents;
+module.exports.requireMessagingCapability = requireMessagingCapability;

@@ -13,6 +13,10 @@ const accessRouter = require('./routes/access');
 const groupsRouter = require('./routes/groups');
 const adminRouter = require('./routes/admin');
 const externalRouter = require('./routes/external');
+const plusRouter = require('./routes/plus');
+const consultationsRouter = require('./routes/consultations');
+const omiseWebhookRouter = require('./routes/omiseWebhook');
+const pharmacistConsultationsRouter = require('./routes/pharmacistConsultations');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
@@ -20,6 +24,7 @@ const subscriptionService = require('./services/subscriptionService');
 const notificationService = require('./services/notificationService');
 const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
+const { missingRuntimeEnvironment, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
 
 const app = express();
 
@@ -45,6 +50,7 @@ app.use(cors({
 }));
 
 app.use(webhookRouter);
+app.use('/api/payments/omise/webhook', express.raw({ type:'application/json', limit:'256kb' }), omiseWebhookRouter);
 app.use(express.json({ limit: '10mb' }));
 
 app.use('/api', (req, res, next) => {
@@ -60,6 +66,9 @@ app.use('/api', (req, res, next) => {
 
 app.use('/api/admin', adminRouter);
 app.use('/api/external', externalRouter);
+app.use('/api/plus', plusRouter);
+app.use('/api/consultations', consultationsRouter);
+app.use('/api/pharmacist/consultations', pharmacistConsultationsRouter);
 app.use('/api/export/pdf/download', pdfDownloadRouter);
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);
@@ -71,19 +80,14 @@ app.use('/api', groupsRouter);
 let schedulerHeartbeatAt = null;
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend', now: new Date().toISOString() }));
 app.get('/ready', async (req, res) => {
-  const missing = process.env.NODE_ENV === 'test' ? [] : ['DATABASE_URL','LINE_CHANNEL_ACCESS_TOKEN','LINE_CHANNEL_SECRET','LINE_LOGIN_CHANNEL_ID','LIFF_ID_CENTER_ADMIN','LIFF_ID_FAMILY','LIFF_ID_REGISTER','ADMIN_API_KEY'].filter((key) => !process.env[key]);
+  const missing = missingRuntimeEnvironment();
   let database = true; let databaseError = null;
   try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
   const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
   const ready = database && missing.length === 0;
   res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications });
 });
-app.get('/config/liff', (req, res) => res.json({
-  familyLiffId: process.env.LIFF_ID_FAMILY || null,
-  centerAdminLiffId: process.env.LIFF_ID_CENTER_ADMIN || null,
-  registerLiffId: process.env.LIFF_ID_REGISTER || null,
-  systemAdminLiffId: process.env.LIFF_ID_SYSTEM_ADMIN || null,
-}));
+app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 
 app.use((err, req, res, next) => {
   console.error(err);
