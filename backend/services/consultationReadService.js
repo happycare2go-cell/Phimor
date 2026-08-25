@@ -8,6 +8,10 @@ const {
 
 const DEFAULT_MESSAGE_LIMIT = 20;
 const MAX_MESSAGE_LIMIT = 50;
+const DEFAULT_QUEUE_LIMIT = 20;
+const MAX_QUEUE_LIMIT = 50;
+const MAX_QUEUE_SCAN = 500;
+const QUEUE_CATEGORY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
 function parseSequence(value) {
   if (value === undefined || value === null || value === '') return 0;
@@ -25,8 +29,52 @@ function parseLimit(value) {
   return parsed;
 }
 
+function parseQueueLimit(value) {
+  if (value === undefined || value === null || value === '') return DEFAULT_QUEUE_LIMIT;
+  const parsed=Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed<1 || parsed>MAX_QUEUE_LIMIT) {
+    throw new ConsultationDomainError('INVALID_QUEUE_LIMIT');
+  }
+  return parsed;
+}
+
+function parseQueueAge(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const parsed=Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed<0 || parsed>10_080) {
+    throw new ConsultationDomainError('INVALID_QUEUE_AGE');
+  }
+  return parsed;
+}
+
+function parseCategory(value, errorCode) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !QUEUE_CATEGORY_PATTERN.test(value)) {
+    throw new ConsultationDomainError(errorCode);
+  }
+  return value;
+}
+
+function encodeQueueCursor(row) {
+  return Buffer.from(JSON.stringify({queuedAt:row.queued_at,caseId:row.case_id})).toString('base64url');
+}
+
+function parseQueueCursor(value) {
+  if (value === undefined || value === null || value === '') return null;
+  try {
+    const parsed=JSON.parse(Buffer.from(String(value),'base64url').toString('utf8'));
+    if (!parsed || typeof parsed.caseId!=='string' || !parsed.caseId
+        || Number.isNaN(new Date(parsed.queuedAt).getTime())) throw new Error('invalid');
+    return {queuedAt:new Date(parsed.queuedAt).toISOString(),caseId:parsed.caseId};
+  } catch (_) { throw new ConsultationDomainError('INVALID_QUEUE_CURSOR'); }
+}
+
 function projectCase(row, { includeQuestion = false } = {}) {
-  const state = effectiveConsultationState(row, row.database_now || new Date());
+  const now=new Date(row.database_now || Date.now());
+  const state = effectiveConsultationState(row, now);
+  const expiresAt=row.expires_at ? new Date(row.expires_at) : null;
+  const remainingSeconds=expiresAt && state!=='closed'
+    ? Math.max(0,Math.floor((expiresAt.getTime()-now.getTime())/1000)) : 0;
   const result = {
     caseId:row.case_id,
     state,
@@ -37,6 +85,9 @@ function projectCase(row, { includeQuestion = false } = {}) {
     resolvedAt:row.resolved_at || null,
     closedAt:row.closed_at || (state === 'closed' ? row.expires_at : null),
     closeReason:row.close_reason || (state === 'closed' ? 'expired' : null),
+    effectiveClosed:state==='closed',
+    remainingSeconds,
+    messageCursor:{lastSequence:Number(row.last_message_sequence || 0)},
   };
   if (includeQuestion) result.initialQuestion = row.initial_question;
   return result;
@@ -102,26 +153,51 @@ function createConsultationReadService({
     return projectCase(row, { includeQuestion:true });
   }
 
-  async function listQueue({ pharmacistLineUserId } = {}) {
+  async function listQueue({
+    pharmacistLineUserId, cursor = null, limit = DEFAULT_QUEUE_LIMIT,
+    minQueuedMinutes = 0, topicCategory = null, triageCategory = null,
+  } = {}) {
     await accounts.requireActive(pharmacistLineUserId);
-    const rows = await repository.listQueuedCases();
+    const boundedLimit=parseQueueLimit(limit);
+    const queueAge=parseQueueAge(minQueuedMinutes);
+    const topic=parseCategory(topicCategory,'INVALID_TOPIC_CATEGORY');
+    const triageFilter=parseCategory(triageCategory,'INVALID_TRIAGE_CATEGORY');
+    const parsedCursor=parseQueueCursor(cursor);
+    const rows = await repository.listQueuedCases({
+      cursorQueuedAt:parsedCursor?.queuedAt || null,
+      cursorCaseId:parsedCursor?.caseId || null,
+      minQueuedMinutes:queueAge,
+      limit:MAX_QUEUE_SCAN,
+    });
+    const projected=rows.map((row) => {
+      const triage = classifyConsultationSafety(row.initial_question);
+      const now=new Date(row.database_now || Date.now()).getTime();
+      return {
+        caseId:row.case_id, queuedAt:row.queued_at,
+        topicCategory:triage.category, triageCategory:triage.action,
+        waitingSeconds:Math.max(0,Math.floor((now-new Date(row.queued_at).getTime())/1000)),
+        _row:row,
+      };
+    }).filter((item)=>(!topic || item.topicCategory===topic)
+      && (!triageFilter || item.triageCategory===triageFilter));
+    const hasMore=projected.length>boundedLimit;
+    const visible=projected.slice(0,boundedLimit);
     return {
-      items:rows.map((row) => {
-        const triage = classifyConsultationSafety(row.initial_question);
-        return {
-          caseId:row.case_id,
-          queuedAt:row.queued_at,
-          topicCategory:triage.category,
-          triageCategory:triage.action,
-        };
-      }),
+      items:visible.map(({_row,...item})=>item),
+      nextCursor:hasMore ? encodeQueueCursor(visible.at(-1)._row) : null,
+      hasMore,
     };
   }
 
-  async function listPharmacistCases({ pharmacistLineUserId } = {}) {
+  async function listPharmacistCases({ pharmacistLineUserId, collection='active' } = {}) {
+    if (!['active','resolved','closed'].includes(collection)) {
+      throw new ConsultationDomainError('INVALID_CASE_COLLECTION');
+    }
     const pharmacist = await accounts.requireActive(pharmacistLineUserId);
-    const rows = await repository.listActiveCasesForPharmacist(pharmacist.pharmacistId);
-    return { items:rows.map((row) => projectCase(row)).filter((item) => item.state !== 'closed') };
+    const rows = repository.listCasesForPharmacist
+      ? await repository.listCasesForPharmacist(pharmacist.pharmacistId,{collection})
+      : await repository.listActiveCasesForPharmacist(pharmacist.pharmacistId);
+    return {items:rows.map((row)=>projectCase(row)).filter((item)=>item.state===collection)};
   }
 
   async function getPharmacistCase({ caseId, pharmacistLineUserId } = {}) {
@@ -160,6 +236,8 @@ function createConsultationReadService({
 const defaultService = createConsultationReadService();
 module.exports = {
   DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT, parseSequence, parseLimit,
+  DEFAULT_QUEUE_LIMIT, MAX_QUEUE_LIMIT, parseQueueLimit, parseQueueAge,
+  parseQueueCursor, encodeQueueCursor,
   projectCase, projectMessage, createConsultationReadService,
   listFamilyConsultations:defaultService.listFamilyCases,
   getFamilyConsultation:defaultService.getFamilyCase,

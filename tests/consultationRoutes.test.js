@@ -15,6 +15,7 @@ const ENABLED = Object.freeze({
   enabled:true, internalOnly:false, internalLineUserIds:[], priceMinor:10000,
   currency:'THB', durationMinutes:1440, pollSeconds:5, maxMessageChars:4000,
   termsVersion:'consult-v1',
+  rateLimits:Object.freeze({checkoutAttemptsPer10Minutes:3,messageSendsPerMinute:10,pharmacistAcceptsPerMinute:10}),
 });
 
 function reads(overrides = {}) {
@@ -177,4 +178,62 @@ test('domain expiry errors return safe response without stack or database detail
     assert.equal(response.status,409); const serialized=JSON.stringify(await response.json());
     assert.equal(serialized.includes('PRIVATE_STACK'),false); assert.equal(serialized.includes('secret database'),false);
   });
+});
+
+test('message and pharmacist acceptance routes enforce consultation-specific rate limits',async()=>{
+  const seen=[];
+  const rateLimitService={
+    requireMessage(input){seen.push({message:input});},
+    requirePharmacistAccept(id){seen.push({accept:id});},
+  };
+  await withApi({
+    family:{readService:reads(),rateLimitService,messageService:{async sendMessage(){return {duplicate:false,message:{message_id:'M-F',message_sequence:1,sender_type:'customer',body:'x',created_at:'now'}};}}},
+    pharmacist:{readService:reads(),rateLimitService,caseService:{async acceptCase(){return {};},async resolveCase(){return {};}},messageService:{async sendMessage(){return {duplicate:false,message:{message_id:'M-P',message_sequence:1,sender_type:'pharmacist',body:'x',created_at:'now'}};}}},
+  },async(api)=>{
+    assert.equal((await api('/api/consultations/CASE-1/messages',{method:'POST',body:JSON.stringify({body:'x',idempotencyKey:'KF'})},'U-FAMILY')).status,201);
+    assert.equal((await api('/api/pharmacist/consultations/CASE-1/messages',{method:'POST',body:JSON.stringify({body:'x',idempotencyKey:'KP'})},'U-PHARM')).status,201);
+    assert.equal((await api('/api/pharmacist/consultations/CASE-1/accept',{method:'POST',body:'{}'},'U-PHARM')).status,200);
+  });
+  assert.deepEqual(seen,[
+    {message:{caseId:'CASE-1',actorType:'customer',actorId:'U-FAMILY'}},
+    {message:{caseId:'CASE-1',actorType:'pharmacist',actorId:'PH-1'}},
+    {accept:'PH-1'},
+  ]);
+});
+
+test('rate-limit errors return safe 429 envelope and Retry-After without calling domain service',async()=>{
+  let messageCalls=0;
+  const blocked=()=>{const error=Object.assign(new Error('private'),{code:'CONSULTATION_RATE_LIMITED',status:429,retryAfterMs:2500});throw error;};
+  await withApi({family:{readService:reads(),rateLimitService:{requireMessage:blocked},messageService:{async sendMessage(){messageCalls+=1;}}}},async(api)=>{
+    const response=await api('/api/consultations/CASE-1/messages',{method:'POST',body:JSON.stringify({body:'x',idempotencyKey:'K'})});
+    assert.equal(response.status,429);assert.equal(response.headers.get('retry-after'),'3');
+    const body=await response.json();assert.equal(body.status,'rate_limited');assert.equal(body.errorCode,'CONSULTATION_RATE_LIMITED');
+    assert.equal(JSON.stringify(body).includes('private'),false);
+  });
+  assert.equal(messageCalls,0);
+});
+
+test('closed consultation returns a safe closed envelope without internal error details',async()=>{
+  const closed=Object.assign(new Error('private case record'),{code:'CONSULTATION_CLOSED',status:409});
+  await withApi({family:{readService:reads(),messageService:{async sendMessage(){throw closed;}}}},async(api)=>{
+    const response=await api('/api/consultations/CASE-1/messages',{method:'POST',body:JSON.stringify({body:'x',idempotencyKey:'K-CLOSED'})});
+    assert.equal(response.status,409);const body=await response.json();
+    assert.equal(body.status,'closed');assert.equal(body.errorCode,'CONSULTATION_CLOSED');
+    assert.equal(JSON.stringify(body).includes('private'),false);
+  });
+});
+
+test('pharmacist operational collections and resolve route use assigned identity server-side',async()=>{
+  const calls=[];
+  const readService=reads({
+    async listPharmacistCases(input){calls.push(input);return {items:[]};},
+    async getPharmacistCase(input){calls.push({detail:input});return {caseId:input.caseId,state:'resolved',waitingOn:'none'};},
+  });
+  await withApi({pharmacist:{readService,caseService:{async acceptCase(){},async resolveCase(input){calls.push({resolve:input});}}}},async(api)=>{
+    for(const collection of ['active','resolved','closed'])assert.equal((await api(`/api/pharmacist/consultations/${collection}`,{},'U-PHARM')).status,200);
+    const resolved=await api('/api/pharmacist/consultations/CASE-1/resolve',{method:'POST',body:'{}'},'U-PHARM');
+    assert.equal(resolved.status,200);assert.equal((await resolved.json()).waitingOn,'none');
+  });
+  assert.deepEqual(calls.slice(0,3).map((item)=>item.collection),['active','resolved','closed']);
+  assert.equal(calls[3].resolve.pharmacistLineUserId,'U-PHARM');
 });

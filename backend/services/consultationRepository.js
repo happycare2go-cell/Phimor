@@ -232,7 +232,10 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
     async findCaseForRead(caseId) {
       const result = await queryFn(
         `SELECT c.*, o.initial_question, o.status AS order_status,
-                o.provisioning_status, CURRENT_TIMESTAMP AS database_now
+                o.provisioning_status, CURRENT_TIMESTAMP AS database_now,
+                COALESCE((SELECT MAX(m.message_sequence)
+                          FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
+                  AS last_message_sequence
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
          WHERE c.case_id = $1`,
@@ -243,7 +246,10 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
 
     async listCasesForCustomer(lineUserId) {
       const result = await queryFn(
-        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now
+        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now,
+                COALESCE((SELECT MAX(m.message_sequence)
+                          FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
+                  AS last_message_sequence
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
          WHERE c.customer_line_user_id = $1
@@ -254,29 +260,65 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows;
     },
 
-    async listQueuedCases() {
+    async listQueuedCases({
+      cursorQueuedAt = null, cursorCaseId = null,
+      minQueuedMinutes = 0, limit = 51,
+    } = {}) {
       const result = await queryFn(
         `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
          WHERE c.state = 'queued'
            AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
-         ORDER BY c.queued_at, c.case_id`
+           AND ($1::timestamptz IS NULL OR (c.queued_at, c.case_id) > ($1::timestamptz, $2))
+           AND c.queued_at <= CURRENT_TIMESTAMP - ($3 * INTERVAL '1 minute')
+         ORDER BY c.queued_at, c.case_id
+         LIMIT $4`,
+        [cursorQueuedAt, cursorCaseId, minQueuedMinutes, limit]
       );
       return result.rows;
     },
 
     async listActiveCasesForPharmacist(pharmacistId) {
+      return this.listCasesForPharmacist(pharmacistId, {collection:'open'});
+    },
+
+    async listCasesForPharmacist(pharmacistId, {collection = 'active', limit = 100} = {}) {
+      const collectionPredicates = {
+        open:"c.state IN ('active', 'resolved') AND c.expires_at > CURRENT_TIMESTAMP",
+        active:"c.state = 'active' AND c.expires_at > CURRENT_TIMESTAMP",
+        resolved:"c.state = 'resolved' AND c.expires_at > CURRENT_TIMESTAMP",
+        closed:"(c.state = 'closed' OR (c.expires_at IS NOT NULL AND c.expires_at <= CURRENT_TIMESTAMP))",
+      };
+      const predicate = collectionPredicates[collection];
+      if (!predicate) throw new Error('Unsupported consultation collection');
       const result = await queryFn(
-        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now
+        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now,
+                COALESCE((SELECT MAX(m.message_sequence)
+                          FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
+                  AS last_message_sequence
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
-         WHERE c.assigned_pharmacist_id = $1 AND c.state IN ('active', 'resolved')
+         WHERE c.assigned_pharmacist_id = $1 AND ${predicate}
            AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
-         ORDER BY c.updated_at DESC, c.case_id DESC`,
-        [pharmacistId]
+         ORDER BY c.updated_at DESC, c.case_id DESC
+         LIMIT $2`,
+        [pharmacistId, limit]
       );
       return result.rows;
+    },
+
+    async listExpiredCaseIds(limit = 100) {
+      const result = await queryFn(
+        `SELECT case_id
+         FROM consultation_cases
+         WHERE state IN ('active', 'resolved')
+           AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP
+         ORDER BY expires_at, case_id
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows.map((row) => row.case_id);
     },
 
     async listMessages(caseId, { afterSequence = 0, limit = 21 } = {}) {
@@ -317,6 +359,17 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
         WHERE case_id = $1
         RETURNING *, CURRENT_TIMESTAMP AS database_now`,
         [caseId, state, waitingOn, closedAt, closeReason]
+      );
+      return result.rows[0] || null;
+    },
+
+    async reassignCase(caseId, pharmacistId) {
+      const result = await queryFn(
+        `UPDATE consultation_cases SET
+          assigned_pharmacist_id = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE case_id = $1
+         RETURNING *, CURRENT_TIMESTAMP AS database_now`,
+        [caseId, pharmacistId]
       );
       return result.rows[0] || null;
     },

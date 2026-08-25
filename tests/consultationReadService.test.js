@@ -79,7 +79,7 @@ test('queue projection contains minimum triage fields and no health or identity 
     accepted_at:null, expires_at:null, medication_list:['SECRET'], phone:'0811111111', allergies:['SECRET'] });
   const h = harness({rows:[row]});
   const result = await h.service.listQueue({pharmacistLineUserId:'U-PHARM-1'});
-  assert.deepEqual(Object.keys(result.items[0]).sort(), ['caseId','queuedAt','topicCategory','triageCategory'].sort());
+  assert.deepEqual(Object.keys(result.items[0]).sort(), ['caseId','queuedAt','topicCategory','triageCategory','waitingSeconds'].sort());
   const serialized = JSON.stringify(result);
   for (const secret of ['SECRET','0811111111','U-CUSTOMER','CP-1','PRIVATE-LINE-ID']) assert.equal(serialized.includes(secret), false);
   assert.equal(result.items[0].topicCategory, 'medication_advice');

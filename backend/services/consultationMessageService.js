@@ -3,6 +3,7 @@ const { withTransaction } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { createConsultationRepository } = require('./consultationRepository');
 const { createPharmacistAccountService } = require('./pharmacistAccountService');
+const { materializeExpiredCaseInTransaction } = require('./consultationExpirationService');
 const {
   ConsultationDomainError,
   normalizeQuestion,
@@ -51,22 +52,6 @@ function createConsultationMessageService({
     return pharmacist.pharmacistId;
   }
 
-  async function closeExpired(consultationCase) {
-    const closed = await repository.updateCaseWorkflow(consultationCase.case_id, {
-      state: 'closed', waitingOn: 'none',
-      closedAt: consultationCase.database_now,
-      closeReason: 'expired',
-    });
-    await repository.insertEvent({
-      event_id: eventId(), case_id: consultationCase.case_id,
-      event_type: 'closed', actor_type: 'system', actor_id: null,
-      from_state: consultationCase.state, to_state: 'closed',
-      metadata: { reason: 'expired' },
-      idempotency_key: `closed:expired:${consultationCase.case_id}`,
-    });
-    return closed;
-  }
-
   async function sendMessage({ caseId, actor: actorInput, body, idempotencyKey } = {}) {
     if (typeof caseId !== 'string' || !caseId.trim()) throw new ConsultationDomainError('CASE_REQUIRED');
     const actor = validateActor(actorInput);
@@ -92,8 +77,12 @@ function createConsultationMessageService({
         consultationCase.database_now || new Date()
       );
       if (effectiveState === 'closed') {
-        if (consultationCase.state !== 'closed') await closeExpired(consultationCase);
-        return { domainError: new ConsultationDomainError('CONSULTATION_EXPIRED', 409) };
+        if (consultationCase.state !== 'closed') {
+          await materializeExpiredCaseInTransaction({consultationCase,repository,eventId});
+        }
+        const code=consultationCase.state==='closed' && consultationCase.close_reason
+          && consultationCase.close_reason!=='expired' ? 'CONSULTATION_CLOSED' : 'CONSULTATION_EXPIRED';
+        return { domainError: new ConsultationDomainError(code, 409) };
       }
       if (effectiveState === 'queued') throw new ConsultationDomainError('CONSULTATION_NOT_ACCEPTED', 409);
 

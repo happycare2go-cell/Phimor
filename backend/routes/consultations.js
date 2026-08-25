@@ -5,14 +5,21 @@ const { loadConsultationConfig, isInternalConsultationUser } = require('../confi
 const { createConsultationEligibilityService } = require('../services/consultationEligibilityService');
 const { createConsultationReadService } = require('../services/consultationReadService');
 const { createConsultationMessageService } = require('../services/consultationMessageService');
+const { createConsultationRateLimitService } = require('../services/consultationRateLimitService');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function consultationError(res, error) {
   const code = error?.code || 'CONSULTATION_UNAVAILABLE';
   const status = Number.isInteger(error?.status) ? error.status : 400;
+  if (status===429 && Number.isFinite(error?.retryAfterMs)) {
+    res.setHeader('Retry-After',Math.max(1,Math.ceil(error.retryAfterMs/1000)));
+  }
+  const responseStatus=status===401 ? 'unauthenticated' : status===403 ? 'denied'
+    : status===429 ? 'rate_limited'
+      : ['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code) ? 'closed' : 'unavailable';
   return res.status(status >= 500 ? 503 : status).json({
-    status:status === 401 ? 'unauthenticated' : status === 403 ? 'denied' : 'unavailable',
+    status:responseStatus,
     errorCode:code,
     message:status >= 500 ? 'ระบบคำปรึกษายังไม่พร้อม กรุณาลองใหม่ภายหลัง' : 'ไม่สามารถดำเนินการคำขอนี้ได้',
   });
@@ -25,6 +32,7 @@ function createConsultationsRouter(overrides = {}) {
   const eligibility = overrides.eligibilityService || createConsultationEligibilityService(overrides.eligibilityDependencies);
   const reads = overrides.readService || createConsultationReadService(overrides.readDependencies);
   const messages = overrides.messageService || createConsultationMessageService(overrides.messageDependencies);
+  const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
 
   router.use(auth);
   router.use((req, res, next) => {
@@ -81,6 +89,7 @@ function createConsultationsRouter(overrides = {}) {
       return res.status(400).json({ status:'invalid_request', errorCode:'UNSUPPORTED_FIELD' });
     }
     try {
+      rates.requireMessage({caseId:req.params.caseId,actorType:'customer',actorId:req.user.lineUserId},req.consultationConfig);
       const result = await messages.sendMessage({
         caseId:req.params.caseId,
         actor:{ type:'customer', lineUserId:req.user.lineUserId },
