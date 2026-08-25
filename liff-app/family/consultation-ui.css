@@ -10,11 +10,13 @@
 .consultation-payment{padding:13px;border:1px dashed #aeb8ce;border-radius:10px;text-align:center;color:var(--gray)}
 .consultation-payment__qr{display:block;width:min(260px,100%);height:auto;margin:12px auto;border-radius:12px;background:#fff}
 .consultation-groups{display:grid;gap:10px;margin-top:14px}.consultation-group h4{margin:0 0 6px;color:var(--navy);font-size:13px}
-.consultation-case{width:100%;padding:11px;text-align:left;background:#fff;border:1px solid #e0e5f0;border-radius:9px;margin:4px 0;color:#26324e}
+.consultation-case{width:100%;min-height:48px;padding:11px;text-align:left;background:#fff;border:1px solid #e0e5f0;border-radius:9px;margin:4px 0;color:#26324e;overflow-wrap:anywhere}
+.consultation-case--active{border-left:4px solid #0f6e56}.consultation-case--resolved{border-left:4px solid #d6a62f;background:#fffdf5}.consultation-case--closed{border-left:4px solid #7a8498;background:#f5f6f8}.consultation-case__state{font-weight:700;color:#26324e!important}
 .consultation-case strong,.consultation-case span{display:block}.consultation-case span{font-size:11px;color:var(--gray);margin-top:3px}
-.consultation-chat{margin-top:12px;border-top:1px solid #e2e7f1;padding-top:12px}.consultation-case-header h4{margin:0;color:var(--navy)}
+.consultation-chat{margin-top:12px;border-top:1px solid #e2e7f1;padding-top:12px;min-width:0}.consultation-chat--resolved{border-top-color:#d6a62f}.consultation-chat--closed{padding:12px;border:1px solid #d6dae2;border-radius:10px;background:#f5f6f8}.consultation-case-header h4{margin:0;color:var(--navy)}
 .consultation-messages{max-height:380px;overflow:auto;padding:8px 0}.consultation-message{max-width:88%;padding:9px 11px;margin:7px 0;border-radius:12px;background:#eef1f7}
 .consultation-message--customer{margin-left:auto;background:#e8efff}.consultation-message--system{margin-left:auto;margin-right:auto;background:#f2f2f2}
 .consultation-message__role{display:block;font-size:10px;font-weight:700;color:var(--gray)}.consultation-message__body{white-space:pre-wrap;overflow-wrap:anywhere}
 .consultation-composer textarea{min-height:76px;resize:vertical}.consultation-live{font-size:12px;color:var(--gray);margin-top:7px;min-height:18px}
-.consultation-hidden{display:none!important}@media(max-width:480px){.consultation-actions{flex-direction:column}.consultation-heading img{width:52px;height:52px}}
+.consultation-panel button,.consultation-panel input[type="checkbox"]{min-height:44px}.consultation-panel textarea{font-size:16px;max-width:100%}
+.consultation-hidden{display:none!important}@media(max-width:480px){.consultation-panel{min-width:0;overflow:hidden}.consultation-actions{flex-direction:column}.consultation-heading img{width:52px;height:52px}.consultation-message{max-width:94%}.consultation-payment{padding:10px}.consultation-payment__qr{width:min(260px,88vw)}}

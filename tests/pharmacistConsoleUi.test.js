@@ -43,6 +43,20 @@ test('pharmacist access denied is a safe backend-authoritative state',async()=>{
   assert.equal(state().access,'denied');assert.equal(JSON.stringify(state()).includes('private'),false);
 });
 
+test('generic middleware pharmacist denial maps to a terminal access-denied state',async()=>{
+  const client=consoleUI.createHttpClient({backendUrl:'https://backend.example',idToken:'TOKEN',fetchImpl:async()=>({ok:false,status:403,headers:{get:()=>null},json:async()=>({error:'pharmacist_access_denied'})})});
+  await assert.rejects(()=>client('/api/pharmacist/consultations/queue'),(error)=>error.errorCode==='PHARMACIST_ACCESS_DENIED');
+  const {session,state}=createHarness(async()=>{throw Object.assign(new Error('private'),{errorCode:'PHARMACIST_ACCESS_DENIED'});});await session.initialize();
+  assert.equal(state().access,'denied');assert.match(consoleUI.accessStateMessage(state().access,state().error),/ไม่มีสิทธิ์/);
+});
+
+test('feature disabled and network failures leave loading state safely',async()=>{
+  for(const code of ['CONSULTATION_DISABLED','REQUEST_FAILED']){const {session,state}=createHarness(async()=>{throw Object.assign(new Error('raw'),{errorCode:code});});await session.initialize();assert.equal(state().access,'error');assert.doesNotMatch(consoleUI.accessStateMessage(state().access,state().error),/raw/);}
+  assert.match(consoleUI.accessStateMessage('error','CONSULTATION_DISABLED'),/ยังไม่เปิดใช้งาน/);
+});
+
+test('collection refresh network failure does not hide an already authorized manual workspace',async()=>{let fail=false;const {session,state}=createHarness(async(pathValue)=>{if(fail)throw Object.assign(new Error('network'),{errorCode:'REQUEST_FAILED'});return standardHandler(pathValue);});await session.initialize();fail=true;await session.loadCollection('active');assert.equal(state().access,'allowed');assert.match(state().statusMessage,/โหลดข้อมูลไม่สำเร็จ/);});
+
 test('active verified pharmacist loads queue and assigned active collection',async()=>{
   const {session,state,calls}=createHarness(standardHandler);await session.initialize();
   assert.equal(state().access,'allowed');assert.equal(state().collections.queue[0].caseId,'CASE-Q');
@@ -54,6 +68,12 @@ test('queue renderer exposes only approved minimal metadata',()=>{
   const visible=container.children[0].children.map((item)=>item.textContent).join('|');
   assert.match(visible,/CASE-Q|medication_advice|pharmacist_consultation_eligible/);
   assert.doesNotMatch(visible,/CP-SECRET|U-SECRET|allergies|secret/);
+});
+
+test('queued cards cannot open unassigned case detail before explicit acceptance',()=>{
+  const doc=fakeDocument();const container=new FakeElement();let selected=0,accepted=0;
+  consoleUI.renderQueue(doc,container,[QUEUE_ITEM],{showAccept:true,onSelect:()=>{selected+=1;},onAccept:()=>{accepted+=1;}});
+  const card=container.children[0];assert.equal(card.listeners.click,undefined);const button=card.children.find((item)=>item.tagName==='button');button.listeners.click({stopPropagation(){}});assert.equal(selected,0);assert.equal(accepted,1);
 });
 
 test('accept case is double-click protected and CASE_ALREADY_ACCEPTED stays safe',async()=>{
@@ -69,6 +89,13 @@ test('accept case is double-click protected and CASE_ALREADY_ACCEPTED stays safe
   const result=await conflict.session.acceptCase('CASE-Q');assert.equal(result.error,'CASE_ALREADY_ACCEPTED');assert.doesNotMatch(conflict.state().statusMessage,/db/);
 });
 
+test('stale accept response cannot replace a newly selected case',async()=>{
+  let release;const pending=new Promise((resolve)=>{release=resolve;});const harness=createHarness(async(pathValue)=>{if(pathValue.endsWith('/CASE-Q/accept'))return pending;if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;if(pathValue.includes('/CASE-1/messages'))return {items:[],nextSequence:0};return standardHandler(pathValue);});
+  const accepting=harness.session.acceptCase('CASE-Q');await harness.session.selectCase('CASE-1');release({...OPEN_CASE,caseId:'CASE-Q'});const result=await accepting;assert.equal(result.stale,true);assert.equal(harness.state().selectedCase.caseId,'CASE-1');
+});
+
+test('stale send and resolve responses cannot overwrite a newly selected case',async()=>{let releaseSend,releaseResolve;const sendPending=new Promise((resolve)=>{releaseSend=resolve;}),resolvePending=new Promise((resolve)=>{releaseResolve=resolve;});const harness=createHarness(async(pathValue)=>{if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;if(pathValue==='/api/pharmacist/consultations/CASE-2')return {...OPEN_CASE,caseId:'CASE-2'};if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};if(pathValue.endsWith('/CASE-1/messages'))return sendPending;if(pathValue.endsWith('/CASE-1/resolve'))return resolvePending;return standardHandler(pathValue);});await harness.session.selectCase('CASE-1');const sending=harness.session.sendMessage('ข้อความเก่า');await harness.session.selectCase('CASE-2');assert.equal(harness.state().sending,false);releaseSend({message:{sequence:1,senderType:'pharmacist',body:'ข้อความเก่า'}});assert.equal((await sending).stale,true);assert.equal(harness.state().selectedCase.caseId,'CASE-2');await harness.session.selectCase('CASE-1');const resolving=harness.session.resolveCase();await harness.session.selectCase('CASE-2');assert.equal(harness.state().resolving,false);releaseResolve({});assert.equal((await resolving).stale,true);assert.equal(harness.state().selectedCase.caseId,'CASE-2');});
+
 test('active resolved and closed tabs use separate backend collections',async()=>{
   const {session,state}=createHarness(standardHandler);
   for(const tab of ['active','resolved','closed']){await session.switchTab(tab);assert.equal(state().tab,tab);assert.equal(state().collections[tab][0].state,tab);}
@@ -80,6 +107,8 @@ test('countdown and closed state rendering are deterministic and informational',
   assert.equal(consoleUI.canMessage(RESOLVED_CASE),true);
   assert.match(consoleUI.closeReasonLabel('expired'),/ครบเวลา/);
 });
+
+test('state and waiting-on labels are Thai and do not collapse resolved into closed',()=>{assert.equal(consoleUI.stateLabel('active'),'กำลังปรึกษา');assert.equal(consoleUI.stateLabel('resolved'),'ตอบประเด็นหลักแล้ว');assert.equal(consoleUI.stateLabel('closed'),'หมดเวลาปรึกษาแล้ว');assert.equal(consoleUI.waitingOnLabel('pharmacist','active'),'รอเภสัชกรตอบ');assert.equal(consoleUI.waitingOnLabel('customer','active'),'รอข้อมูลจากผู้ใช้');});
 
 test('message polling uses afterSequence, deterministic order and no duplicates',async()=>{
   let poll=0;const harness=createHarness(async(pathValue)=>{
@@ -128,6 +157,8 @@ test('resolve does not close chat and explains resolved follow-up contract in ma
   assert.equal(harness.state().selectedCase.state,'resolved');assert.equal(consoleUI.canMessage(harness.state().selectedCase),true);
   assert.match(html,/Resolved ไม่ปิดการสนทนาก่อนเวลา/);
 });
+
+test('resolved case cannot be resolved twice but remains messageable',async()=>{let resolveCalls=0;const harness=createHarness(async(pathValue)=>{if(pathValue==='/api/pharmacist/consultations/CASE-1')return RESOLVED_CASE;if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};if(pathValue.endsWith('/resolve')){resolveCalls+=1;return {};}return standardHandler(pathValue);});await harness.session.selectCase('CASE-1');assert.deepEqual(await harness.session.resolveCase(),{ignored:true});assert.equal(resolveCalls,0);assert.equal(consoleUI.canMessage(harness.state().selectedCase),true);});
 
 test('customer follow-up reflected by backend poll reopens resolved case as active',async()=>{
   let detail=RESOLVED_CASE;const harness=createHarness(async(pathValue)=>{
@@ -201,10 +232,11 @@ test('console source and markup expose no LINE IDs contacts Health History or Ca
   assert.doesNotMatch(html,/family phone|เบอร์ผู้ติดต่อ|Health History/);
 });
 
-test('runtime backend has no production fallback and pharmacist LIFF ID remains injectable',()=>{
+test('runtime backend and pharmacist LIFF ID have no production or browser fallback',()=>{
   assert.match(html,/\.\.\/environment\.js/);assert.match(html,/\.\.\/runtime-config\.js/);
   assert.doesNotMatch(source,/https:\/\/phimor-backend\.onrender\.com/);
-  assert.match(source,/config\.pharmacistLiffId \|\| root\.PHIMOR_PHARMACIST_LIFF_ID/);
+  assert.match(source,/const liffId=config\.pharmacistLiffId/);
+  assert.doesNotMatch(source,/PHIMOR_PHARMACIST_LIFF_ID|familyLiffId|location\.(search|hash)|localStorage|sessionStorage/);
   assert.doesNotMatch(source,/LIFF_ID_PHARMACIST\s*=\s*['"][^'"]+/);
 });
 
@@ -243,11 +275,14 @@ test('console bootstrap fails safely when pharmacistLiffId is unavailable',async
   assert.match(access.textContent,/ยังไม่ได้ตั้งค่า Pharmacist LIFF/);
 });
 
+test('console bootstrap fails safely on backend URL mismatch before liff.init',async()=>{const access=new FakeElement();access.hidden=true;const doc={getElementById:()=>access};let initCalled=false;const root={PHIMOR_PUBLIC_BACKEND_URL:'https://staging.example',PhimorRuntimeConfig:{requireBackendUrl:(value)=>value,assertBackendConfig:()=>{throw new Error('BACKEND_URL_MISMATCH');}}};const fetchImpl=async()=>({ok:true,json:async()=>({publicBackendUrl:'https://production.example',pharmacistLiffId:'PHARM'})});await consoleUI.bootstrap({root,doc,fetchImpl,liffApi:{init:async()=>{initCalled=true;}}});assert.equal(initCalled,false);assert.match(access.textContent,/ไม่สามารถเปิด/);});
+
 test('dedicated desktop-first console contains three professional workspace columns',()=>{
   for(const id of ['caseList','chatMessages','messageComposer','assistantContent','generateAssistantButton','refreshAssistantButton'])assert.match(html,new RegExp(`id="${id}"`));
   assert.match(html,/AI Pharmacist Assistant/);assert.match(html,/maxlength="4000"/);
   const css=fs.readFileSync(path.join(__dirname,'..','liff-app','pharmacist','console.css'),'utf8');assert.match(css,/grid-template-columns:minmax\(250px,300px\).*minmax\(420px,1fr\).*minmax\(310px,380px\)/);
   assert.match(css,/@media\(max-width:720px\)/);
+  assert.match(css,/min-height:44px/);assert.match(css,/safe-area-inset-bottom/);assert.match(css,/case-card--closed/);assert.match(css,/case-header--closed/);
 });
 
 function walkText(element){return [element.textContent,...element.children.flatMap(walkText)].filter(Boolean);}
