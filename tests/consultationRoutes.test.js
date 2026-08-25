@@ -15,7 +15,7 @@ const ENABLED = Object.freeze({
   enabled:true, internalOnly:false, internalLineUserIds:[], priceMinor:10000,
   currency:'THB', durationMinutes:1440, pollSeconds:5, maxMessageChars:4000,
   termsVersion:'consult-v1',
-  rateLimits:Object.freeze({checkoutAttemptsPer10Minutes:3,messageSendsPerMinute:10,pharmacistAcceptsPerMinute:10}),
+  rateLimits:Object.freeze({checkoutAttemptsPer10Minutes:3,messageSendsPerMinute:10,pharmacistAcceptsPerMinute:10,assistantRequestsPer10Minutes:5}),
 });
 
 function reads(overrides = {}) {
@@ -169,6 +169,24 @@ test('pharmacist message route derives pharmacist actor and never accepts Care P
     assert.equal(rejected.status,400);
   });
   assert.deepEqual(seen[0].actor,{type:'pharmacist',lineUserId:'U-PHARM'});
+});
+
+test('pharmacist assistant route is assigned-pharmacist-only, rate limited and never sends chat',async()=>{
+  const calls=[];
+  await withApi({pharmacist:{
+    readService:reads(),
+    rateLimitService:{requireAssistant(input){calls.push({rate:input});}},
+    assistantService:async(input)=>{calls.push({assistant:input});return {status:'available',generatedAt:'2026-08-25T10:00:00Z',contextTimestamp:'2026-08-25T10:00:00Z',assistant:{caseSummary:'private'}};},
+    messageService:{async sendMessage(){calls.push({message:true});}},
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/CASE-1/assistant',{method:'POST',body:JSON.stringify({refresh:true})},'U-PHARM');
+    assert.equal(response.status,200); assert.equal((await response.json()).status,'available');
+    const injected=await api('/api/pharmacist/consultations/CASE-1/assistant',{method:'POST',body:JSON.stringify({model:'other'})},'U-PHARM');
+    assert.equal(injected.status,400);
+  });
+  assert.deepEqual(calls[0],{rate:{caseId:'CASE-1',pharmacistId:'PH-1'}});
+  assert.equal(calls[1].assistant.pharmacistLineUserId,'U-PHARM');
+  assert.equal(calls.some((item)=>item.message),false);
 });
 
 test('domain expiry errors return safe response without stack or database details', async () => {

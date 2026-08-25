@@ -8,6 +8,7 @@ const { createConsultationCaseService } = require('../services/consultationCaseS
 const { createConsultationMessageService } = require('../services/consultationMessageService');
 const { createConsultationRateLimitService } = require('../services/consultationRateLimitService');
 const { consultationError } = require('./consultations');
+const { createPharmacistAssistantService } = require('../services/pharmacistAssistantService');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -20,6 +21,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   const cases = overrides.caseService || createConsultationCaseService(overrides.caseDependencies);
   const messages = overrides.messageService || createConsultationMessageService(overrides.messageDependencies);
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
+  const assistant = overrides.assistantService || createPharmacistAssistantService(overrides.assistantDependencies);
 
   router.use(auth);
   router.use((req, res, next) => {
@@ -86,6 +88,18 @@ function createPharmacistConsultationsRouter(overrides = {}) {
       await cases.resolveCase({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId});
       return res.json(await reads.getPharmacistCase({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
     } catch (error) { return consultationError(res,error); }
+  }));
+
+  router.post('/:caseId/assistant',asyncHandler(async(req,res)=>{
+    if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({status:'invalid_request',errorCode:'INVALID_CASE_ID'});
+    const keys=req.body&&typeof req.body==='object'?Object.keys(req.body):[];
+    if (keys.some((key)=>key!=='refresh') || (req.body?.refresh!==undefined && req.body.refresh!==true)) {
+      return res.status(400).json({status:'invalid_request',errorCode:'UNSUPPORTED_FIELD'});
+    }
+    try {
+      rates.requireAssistant({caseId:req.params.caseId,pharmacistId:req.pharmacist.pharmacistId},req.consultationConfig);
+      return res.json(await assistant({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
+    } catch(error) { return consultationError(res,error); }
   }));
 
   router.post('/:caseId/messages', asyncHandler(async (req, res) => {

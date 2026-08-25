@@ -52,11 +52,12 @@ test('audit service inserts metadata fields in the expected order', async () => 
   }, { queryFn: async (sql, params) => { captured = { sql, params }; } });
   assert.deepEqual(result, { recorded: true, interactionId: 'AI-test' });
   assert.match(captured.sql, /INSERT INTO ai_interaction_audit/);
-  assert.equal(captured.params.length, 17);
+  assert.equal(captured.params.length, 19);
   assert.equal(captured.params[0], 'AI-test');
   assert.equal(captured.params[3], 'medication_summary');
   assert.equal(captured.params[11], 'success');
   assert.equal(captured.params[15], 20);
+  assert.match(captured.sql, /consultation_case_id, requester_type/);
 });
 
 test('audit insert failure is fail-open and logs no health data or secrets', async () => {

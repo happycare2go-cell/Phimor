@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { databaseQuery } = require('../db');
 
 const RESULT_STATUSES = new Set(['started', 'success', 'error', 'escalated', 'needs_review', 'denied']);
+const REQUESTER_TYPES = new Set(['family', 'pharmacist', 'system']);
 
 function safeString(value, maxLength) {
   if (value === undefined || value === null) return null;
@@ -27,6 +28,8 @@ function sanitizeAIInteractionMetadata(input = {}) {
     interactionId: safeString(input.interactionId, 80) || `AI-${randomUUID()}`,
     requesterLineId: safeString(input.requesterLineId, 128),
     careProfileId: safeString(input.careProfileId, 80),
+    consultationCaseId: safeString(input.consultationCaseId, 80),
+    requesterType: REQUESTER_TYPES.has(input.requesterType) ? input.requesterType : null,
     purpose: safeString(input.purpose, 64) || 'unspecified',
     intent: safeString(input.intent, 64),
     provider: safeString(input.provider, 32),
@@ -56,16 +59,17 @@ async function recordAIInteractionMetadata(input, { queryFn = databaseQuery, log
         interaction_id, requester_line_id, care_profile_id, purpose, intent,
         provider, model, prompt_version, context_version, requested_at,
         completed_at, result_status, error_code, escalation, provider_request_id,
-        input_character_count, output_character_count
+        input_character_count, output_character_count, consultation_case_id, requester_type
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17
+        $11, $12, $13, $14, $15, $16, $17, $18, $19
       )`,
       [
         record.interactionId, record.requesterLineId, record.careProfileId, record.purpose, record.intent,
         record.provider, record.model, record.promptVersion, record.contextVersion, record.requestedAt,
         record.completedAt, record.resultStatus, record.errorCode, record.escalation, record.providerRequestId,
         record.inputCharacterCount, record.outputCharacterCount,
+        record.consultationCaseId, record.requesterType,
       ]
     );
     return { recorded: true, interactionId: record.interactionId };
@@ -80,5 +84,5 @@ async function recordAIInteractionMetadata(input, { queryFn = databaseQuery, log
 }
 
 module.exports = {
-  RESULT_STATUSES, sanitizeAIInteractionMetadata, recordAIInteractionMetadata, defaultAuditLogger,
+  RESULT_STATUSES, REQUESTER_TYPES, sanitizeAIInteractionMetadata, recordAIInteractionMetadata, defaultAuditLogger,
 };

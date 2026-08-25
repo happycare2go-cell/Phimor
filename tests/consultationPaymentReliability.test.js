@@ -325,16 +325,19 @@ test('malformed consultation rate-limit environment values use conservative defa
     CONSULTATION_CHECKOUT_ATTEMPTS_PER_10_MINUTES:'unlimited',
     CONSULTATION_MESSAGE_SENDS_PER_MINUTE:'-1',
     CONSULTATION_PHARMACIST_ACCEPTS_PER_MINUTE:'999999',
+    CONSULTATION_ASSISTANT_REQUESTS_PER_10_MINUTES:'unlimited',
   });
   assert.deepEqual(config.rateLimits,{
     checkoutAttemptsPer10Minutes:3,messageSendsPerMinute:10,pharmacistAcceptsPerMinute:10,
+    assistantRequestsPer10Minutes:5,
   });
   const calls=[];
   const limiter={checkAndRecord(...args){calls.push(args); return {allowed:true,remaining:0,retryAfterMs:0};}};
   const service=createConsultationRateLimitService({limiter,configLoader:()=>config});
   service.checkCheckout('U-1'); service.checkMessage({caseId:'C-1',actorType:'customer',actorId:'U-1'});
   service.checkPharmacistAccept('PH-1');
-  assert.deepEqual(calls.map((item)=>item.slice(1)),[[3,600000],[10,60000],[10,60000]]);
+  service.checkAssistant({caseId:'C-1',pharmacistId:'PH-1'});
+  assert.deepEqual(calls.map((item)=>item.slice(1)),[[3,600000],[10,60000],[10,60000],[5,600000]]);
 });
 
 test('durable payment ingestion allowlists metadata and excludes raw payload, secrets and health context', async () => {

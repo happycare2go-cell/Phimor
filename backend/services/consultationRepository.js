@@ -333,6 +333,22 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows;
     },
 
+    async listRecentMessages(caseId, { limit = 12 } = {}) {
+      const result = await queryFn(
+        `SELECT message_id, case_id, message_sequence, sender_type, body, created_at
+         FROM (
+           SELECT message_id, case_id, message_sequence, sender_type, body, created_at
+           FROM consultation_messages
+           WHERE case_id = $1
+           ORDER BY message_sequence DESC
+           LIMIT $2
+         ) recent
+         ORDER BY message_sequence`,
+        [caseId, limit]
+      );
+      return result.rows;
+    },
+
     async acceptCase(caseId, pharmacistId) {
       const result = await queryFn(
         `UPDATE consultation_cases SET
