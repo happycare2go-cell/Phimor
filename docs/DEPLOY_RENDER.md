@@ -169,5 +169,5 @@ curl -X POST https://phimor-backend.onrender.com/api/admin/centers \
   -d '{"name":"ศูนย์สุขสบาย","ownerLineId":"Uxxxxxxxxxxxxxxxx"}'
 ```
 
-ทั้งสองวิธีต้องการ **LINE User ID ของเจ้าของศูนย์** ซึ่งหาได้โดยให้เจ้าของศูนย์เพิ่มเพื่อน LINE OA
-ก่อน แล้วส่งข้อความอะไรมาสักอย่าง จากนั้นดู `userId` จาก Webhook Event ที่เข้ามา (ดู Log บน Render)
+ทั้งสองวิธีต้องการ **LINE User ID ของเจ้าของศูนย์** ให้เจ้าของศูนย์เพิ่มเพื่อน LINE OA
+แล้วส่งคำสั่ง `user_id` ระบบจะตอบ LINE User ID ของบัญชีผู้ส่งข้อความนั้นกลับมาโดยตรง

@@ -33,6 +33,26 @@ async function safeReply(replyToken, messages) {
   return lineClient.replyMessage(replyToken, Array.isArray(messages) ? messages : [messages]);
 }
 
+function isUserIdCommand(event) {
+  return event?.type === 'message'
+    && event.message?.type === 'text'
+    && String(event.message.text || '').trim().toLowerCase() === 'user_id';
+}
+
+async function handleUserIdCommand(event) {
+  if (!isUserIdCommand(event)) return false;
+  const lineUserId = typeof event.source?.userId === 'string' && event.source.userId
+    ? event.source.userId
+    : null;
+  if (event.replyToken) {
+    await safeReply(event.replyToken, {
+      type: 'text',
+      text: lineUserId ? `LINE User ID:\n${lineUserId}` : 'ไม่พบ LINE User ID ของบัญชีนี้',
+    });
+  }
+  return true;
+}
+
 async function handleJoinEvent(event) {
   const groupId = event.source.groupId;
   if (!groupId) return;
@@ -210,7 +230,9 @@ async function handlePostback(event) {
 }
 
 async function processEvent(event) {
-      if (event.type === 'memberLeft') {
+      if (await handleUserIdCommand(event)) {
+        return;
+      } else if (event.type === 'memberLeft') {
         const groupId = event.source.groupId || event.source.roomId;
         const leftMembers = event.left.members;
         for (const member of leftMembers) {
@@ -283,3 +305,6 @@ router.post('/webhook', requireMessagingCapability, webhookParser, async (req, r
 module.exports = router;
 module.exports.processPendingWebhookEvents = processPendingWebhookEvents;
 module.exports.requireMessagingCapability = requireMessagingCapability;
+module.exports.isUserIdCommand = isUserIdCommand;
+module.exports.handleUserIdCommand = handleUserIdCommand;
+module.exports.processEvent = processEvent;
