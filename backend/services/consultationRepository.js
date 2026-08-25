@@ -1,4 +1,5 @@
 const { databaseQuery } = require('../db');
+const { assertWaitingOnInvariant } = require('../domain/consultation');
 
 function createConsultationRepository({ queryFn = databaseQuery } = {}) {
   return {
@@ -130,10 +131,77 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
 
     async findCaseForUpdate(caseId) {
       const result = await queryFn(
-        'SELECT *, CURRENT_TIMESTAMP AS database_now FROM consultation_cases WHERE case_id = $1 FOR UPDATE',
+        `SELECT c.*, o.status AS order_status, o.provisioning_status,
+                CURRENT_TIMESTAMP AS database_now
+         FROM consultation_cases c
+         JOIN consultation_orders o ON o.order_id = c.order_id
+         WHERE c.case_id = $1
+         FOR UPDATE OF c`,
         [caseId]
       );
       return result.rows[0] || null;
+    },
+
+    async findCaseForRead(caseId) {
+      const result = await queryFn(
+        `SELECT c.*, o.initial_question, o.status AS order_status,
+                o.provisioning_status, CURRENT_TIMESTAMP AS database_now
+         FROM consultation_cases c
+         JOIN consultation_orders o ON o.order_id = c.order_id
+         WHERE c.case_id = $1`,
+        [caseId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async listCasesForCustomer(lineUserId) {
+      const result = await queryFn(
+        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now
+         FROM consultation_cases c
+         JOIN consultation_orders o ON o.order_id = c.order_id
+         WHERE c.customer_line_user_id = $1
+           AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
+         ORDER BY c.created_at DESC, c.case_id DESC`,
+        [lineUserId]
+      );
+      return result.rows;
+    },
+
+    async listQueuedCases() {
+      const result = await queryFn(
+        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now
+         FROM consultation_cases c
+         JOIN consultation_orders o ON o.order_id = c.order_id
+         WHERE c.state = 'queued'
+           AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
+         ORDER BY c.queued_at, c.case_id`
+      );
+      return result.rows;
+    },
+
+    async listActiveCasesForPharmacist(pharmacistId) {
+      const result = await queryFn(
+        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now
+         FROM consultation_cases c
+         JOIN consultation_orders o ON o.order_id = c.order_id
+         WHERE c.assigned_pharmacist_id = $1 AND c.state IN ('active', 'resolved')
+           AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
+         ORDER BY c.updated_at DESC, c.case_id DESC`,
+        [pharmacistId]
+      );
+      return result.rows;
+    },
+
+    async listMessages(caseId, { afterSequence = 0, limit = 21 } = {}) {
+      const result = await queryFn(
+        `SELECT message_id, case_id, message_sequence, sender_type, sender_id, body, created_at
+         FROM consultation_messages
+         WHERE case_id = $1 AND message_sequence > $2
+         ORDER BY message_sequence
+         LIMIT $3`,
+        [caseId, afterSequence, limit]
+      );
+      return result.rows;
     },
 
     async acceptCase(caseId, pharmacistId) {
@@ -152,6 +220,7 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
     },
 
     async updateCaseWorkflow(caseId, { state, waitingOn, closedAt = null, closeReason = null }) {
+      assertWaitingOnInvariant(state, waitingOn);
       const result = await queryFn(
         `UPDATE consultation_cases SET
           state = $2, waiting_on = $3,

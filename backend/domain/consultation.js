@@ -11,6 +11,12 @@ const MESSAGE_SENDER_TYPES = Object.freeze(['customer', 'pharmacist', 'system'])
 const EVENT_ACTOR_TYPES = Object.freeze(['customer', 'pharmacist', 'system', 'payment', 'admin']);
 const PHARMACIST_STATUSES = Object.freeze(['invited', 'active', 'suspended', 'inactive']);
 
+const WAITING_ON_SEMANTICS = Object.freeze({
+  pharmacist: 'next_expected_action_from_pharmacist',
+  customer: 'next_expected_action_from_customer',
+  none: 'no_pending_response_expectation',
+});
+
 class ConsultationDomainError extends Error {
   constructor(code, status = 400, message = 'ไม่สามารถดำเนินการคำปรึกษานี้ได้') {
     super(message);
@@ -55,11 +61,41 @@ function assertFixedPurchase({ amountMinor, currency, durationMinutes }) {
   if (durationMinutes !== CONSULTATION_DURATION_MINUTES) throw new ConsultationDomainError('CONSULTATION_DURATION_MISMATCH');
 }
 
+function messageWorkflowTransition(currentState, senderType) {
+  if (!['customer', 'pharmacist'].includes(senderType)) {
+    throw new ConsultationDomainError('INVALID_MESSAGE_ACTOR');
+  }
+  return Object.freeze({
+    state: currentState === 'resolved' ? 'active' : currentState,
+    waitingOn: senderType === 'customer' ? 'pharmacist' : 'customer',
+    reopened: currentState === 'resolved',
+  });
+}
+
+function assertWaitingOnInvariant(state, waitingOn) {
+  if ((state === 'queued' || state === 'resolved' || state === 'closed') && waitingOn !== 'none') {
+    throw new ConsultationDomainError('INVALID_WAITING_ON_STATE');
+  }
+  if (state === 'active' && !['customer', 'pharmacist'].includes(waitingOn)) {
+    throw new ConsultationDomainError('INVALID_WAITING_ON_STATE');
+  }
+}
+
+function assertProvisionedConsultationCase(consultationCase) {
+  if (!consultationCase
+    || consultationCase.order_status !== 'paid'
+    || consultationCase.provisioning_status !== 'provisioned') {
+    throw new ConsultationDomainError('CONSULTATION_NOT_PROVISIONED', 409);
+  }
+}
+
 module.exports = {
   CONSULTATION_PRICE_MINOR, CONSULTATION_CURRENCY, CONSULTATION_DURATION_MINUTES,
   CONSULTATION_MESSAGE_MAX_LENGTH, ORDER_STATES, PAYMENT_PROCESSING_STATES,
   CONSULTATION_STATES, WAITING_ON_VALUES, MESSAGE_SENDER_TYPES, EVENT_ACTOR_TYPES,
-  PHARMACIST_STATUSES, ConsultationDomainError,
+  PHARMACIST_STATUSES, WAITING_ON_SEMANTICS, ConsultationDomainError,
   normalizeQuestion, normalizeIdempotencyKey, asInstant,
   effectiveConsultationState, assertFixedPurchase,
+  messageWorkflowTransition, assertWaitingOnInvariant,
+  assertProvisionedConsultationCase,
 };

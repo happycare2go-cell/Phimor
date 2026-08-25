@@ -6,6 +6,7 @@ const {
   CONSULTATION_DURATION_MINUTES,
   ConsultationDomainError,
   asInstant,
+  assertProvisionedConsultationCase,
 } = require('../domain/consultation');
 
 function createConsultationCaseService({
@@ -24,6 +25,7 @@ function createConsultationCaseService({
       const pharmacist = await accounts.requireActive(pharmacistLineUserId);
       const current = await repository.findCaseForUpdate(caseId.trim());
       if (!current) throw new ConsultationDomainError('CASE_NOT_FOUND', 404);
+      assertProvisionedConsultationCase(current);
       if (current.state !== 'queued' || current.assigned_pharmacist_id) {
         throw new ConsultationDomainError('CASE_ALREADY_ACCEPTED', 409);
       }

@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { withTransaction } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { createConsultationRepository } = require('./consultationRepository');
+const { classifyConsultationSafety } = require('./consultationSafetyService');
 const {
   CONSULTATION_PRICE_MINOR, CONSULTATION_CURRENCY, CONSULTATION_DURATION_MINUTES,
   ConsultationDomainError, normalizeQuestion,
@@ -21,6 +22,7 @@ function createConsultationOrderService({
   transaction = withTransaction,
   now = () => new Date().toISOString(),
   orderId = () => `CORD-${randomUUID()}`,
+  safetyClassifier = classifyConsultationSafety,
 } = {}) {
   async function createDraft({
     lineUserId, careProfileId, initialQuestion, termsAccepted, termsVersion,
@@ -28,6 +30,13 @@ function createConsultationOrderService({
     if (typeof lineUserId !== 'string' || !lineUserId.trim()) throw new ConsultationDomainError('UNAUTHENTICATED', 401);
     if (typeof careProfileId !== 'string' || !careProfileId.trim()) throw new ConsultationDomainError('CARE_PROFILE_REQUIRED');
     const question = normalizeQuestion(initialQuestion);
+    const safety = safetyClassifier(question);
+    if (safety.action === 'emergency_block') {
+      throw new ConsultationDomainError('EMERGENCY_BLOCKED', 409, safety.message);
+    }
+    if (safety.action !== 'pharmacist_consultation_eligible') {
+      throw new ConsultationDomainError('CONSULTATION_SCOPE_UNSUPPORTED', 409);
+    }
     const acceptedVersion = validateTerms(termsAccepted, termsVersion);
     return transaction(`consultation-order:${lineUserId.trim()}:${careProfileId.trim()}`, async () => {
       await authorize({

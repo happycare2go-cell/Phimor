@@ -8,6 +8,8 @@ const {
   normalizeQuestion,
   normalizeIdempotencyKey,
   effectiveConsultationState,
+  messageWorkflowTransition,
+  assertProvisionedConsultationCase,
 } = require('../domain/consultation');
 
 function validateActor(actor) {
@@ -74,6 +76,7 @@ function createConsultationMessageService({
     const outcome = await transaction(`consultation-message:${caseId.trim()}`, async () => {
       const consultationCase = await repository.findCaseForUpdate(caseId.trim());
       if (!consultationCase) throw new ConsultationDomainError('CASE_NOT_FOUND', 404);
+      assertProvisionedConsultationCase(consultationCase);
 
       const senderId = await authorizeSender(consultationCase, actor);
       const existing = await repository.findMessageByIdempotency(consultationCase.case_id, normalizedKey);
@@ -102,15 +105,14 @@ function createConsultationMessageService({
       if (!inserted.message) throw new ConsultationDomainError('MESSAGE_INSERT_FAILED', 500);
 
       if (!inserted.duplicate) {
-        const nextState = actor.type === 'customer' ? 'active' : consultationCase.state;
-        const nextWaitingOn = actor.type === 'customer' ? 'pharmacist' : 'customer';
+        const transition = messageWorkflowTransition(consultationCase.state, actor.type);
         await repository.updateCaseWorkflow(consultationCase.case_id, {
-          state: nextState, waitingOn: nextWaitingOn,
+          state: transition.state, waitingOn: transition.waitingOn,
         });
-        if (consultationCase.state === 'resolved' && actor.type === 'customer') {
+        if (transition.reopened) {
           await repository.insertEvent({
             event_id: eventId(), case_id: consultationCase.case_id,
-            event_type: 'reopened', actor_type: 'customer', actor_id: senderId,
+            event_type: 'reopened', actor_type: actor.type, actor_id: senderId,
             from_state: 'resolved', to_state: 'active', metadata: {},
             idempotency_key: `reopened:message:${inserted.message.message_id}`,
           });

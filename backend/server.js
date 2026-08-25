@@ -14,6 +14,8 @@ const groupsRouter = require('./routes/groups');
 const adminRouter = require('./routes/admin');
 const externalRouter = require('./routes/external');
 const plusRouter = require('./routes/plus');
+const consultationsRouter = require('./routes/consultations');
+const pharmacistConsultationsRouter = require('./routes/pharmacistConsultations');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
@@ -63,6 +65,8 @@ app.use('/api', (req, res, next) => {
 app.use('/api/admin', adminRouter);
 app.use('/api/external', externalRouter);
 app.use('/api/plus', plusRouter);
+app.use('/api/consultations', consultationsRouter);
+app.use('/api/pharmacist/consultations', pharmacistConsultationsRouter);
 app.use('/api/export/pdf/download', pdfDownloadRouter);
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);

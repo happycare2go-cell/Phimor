@@ -141,7 +141,8 @@ function activeCase(overrides = {}) {
   return {
     case_id:'CASE-1', order_id:'ORD-1', care_profile_id:'CP-1', customer_line_user_id:'U-CUSTOMER',
     state:'active', waiting_on:'pharmacist', assigned_pharmacist_id:'PH-1',
-    accepted_at:'2026-08-25T03:00:00Z', expires_at:'2026-08-26T03:00:00Z', ...overrides,
+    accepted_at:'2026-08-25T03:00:00Z', expires_at:'2026-08-26T03:00:00Z',
+    order_status:'paid', provisioning_status:'provisioned', ...overrides,
   };
 }
 
@@ -155,8 +156,8 @@ test('draft order requires terms evidence and snapshots fixed commercial terms',
   const h = createMemoryHarness();
   const service = createConsultationOrderService({ repository:h.repository, transaction:h.transaction,
     authorize:async () => ({ principalType:'family_owner' }), now:() => '2026-08-25T01:00:00Z', orderId:() => 'ORD-1' });
-  await assert.rejects(() => service.createDraft({ lineUserId:'U-CUSTOMER', careProfileId:'CP-1', initialQuestion:'ถามยา', termsVersion:'v1' }), (e) => e.code === 'TERMS_ACCEPTANCE_REQUIRED');
-  const order = await service.createDraft({ lineUserId:'U-CUSTOMER', careProfileId:'CP-1', initialQuestion:'ถามยา', termsAccepted:true, termsVersion:'v1' });
+  await assert.rejects(() => service.createDraft({ lineUserId:'U-CUSTOMER', careProfileId:'CP-1', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsVersion:'v1' }), (e) => e.code === 'TERMS_ACCEPTANCE_REQUIRED');
+  const order = await service.createDraft({ lineUserId:'U-CUSTOMER', careProfileId:'CP-1', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsAccepted:true, termsVersion:'v1' });
   assert.equal(order.amount_minor, 10000); assert.equal(order.currency, 'THB'); assert.equal(order.duration_minutes, 1440);
   assert.equal(order.terms_version, 'v1'); assert.equal(order.terms_accepted_at, '2026-08-25T01:00:00Z');
 });
@@ -167,9 +168,9 @@ test('order creation uses view authorization: active caregiver allowed, revoked 
   const service = createConsultationOrderService({ repository:h.repository, transaction:h.transaction,
     authorize:async (request) => { seen.push(request); if (request.lineUserId === 'U-REVOKED') { const e = new Error('revoked'); e.code='MEMBERSHIP_REVOKED'; throw e; } return { principalType:'family_caregiver', permissions:['view'] }; },
     orderId:() => 'ORD-CG' });
-  await service.createDraft({ lineUserId:'U-CAREGIVER', careProfileId:'CP-1', initialQuestion:'ถาม', termsAccepted:true, termsVersion:'v1' });
+  await service.createDraft({ lineUserId:'U-CAREGIVER', careProfileId:'CP-1', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsAccepted:true, termsVersion:'v1' });
   assert.equal(seen[0].permission, 'view');
-  await assert.rejects(() => service.createDraft({ lineUserId:'U-REVOKED', careProfileId:'CP-1', initialQuestion:'ถาม', termsAccepted:true, termsVersion:'v1' }), (e) => e.code === 'MEMBERSHIP_REVOKED');
+  await assert.rejects(() => service.createDraft({ lineUserId:'U-REVOKED', careProfileId:'CP-1', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsAccepted:true, termsVersion:'v1' }), (e) => e.code === 'MEMBERSHIP_REVOKED');
   assert.equal(h.state.orders.size, 1);
 });
 
@@ -181,9 +182,9 @@ test('order foundation reuses real centralized authorization for caregiver statu
   const h = createMemoryHarness();
   const service = createConsultationOrderService({ repository:h.repository, transaction:h.transaction,
     orderId:()=>`ORD-AUTH-${h.state.orders.size+1}` });
-  await service.createDraft({ lineUserId:'U-ACTIVE', careProfileId:'CP-AUTH', initialQuestion:'ถาม', termsAccepted:true, termsVersion:'v1' });
+  await service.createDraft({ lineUserId:'U-ACTIVE', careProfileId:'CP-AUTH', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsAccepted:true, termsVersion:'v1' });
   await assert.rejects(
-    () => service.createDraft({ lineUserId:'U-REVOKED', careProfileId:'CP-AUTH', initialQuestion:'ถาม', termsAccepted:true, termsVersion:'v1' }),
+    () => service.createDraft({ lineUserId:'U-REVOKED', careProfileId:'CP-AUTH', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsAccepted:true, termsVersion:'v1' }),
     (error) => error.code === 'MEMBERSHIP_REVOKED'
   );
   assert.equal(h.state.orders.size, 1);
@@ -194,7 +195,7 @@ test('unauthorized profile creates neither order nor health writes', async () =>
   const h = createMemoryHarness();
   const service = createConsultationOrderService({ repository:h.repository, transaction:h.transaction,
     authorize:async () => { const e=new Error('denied'); e.code='ACCESS_DENIED'; throw e; } });
-  await assert.rejects(() => service.createDraft({ lineUserId:'U-X', careProfileId:'CP-X', initialQuestion:'ถาม', termsAccepted:true, termsVersion:'v1' }), (e) => e.code === 'ACCESS_DENIED');
+  await assert.rejects(() => service.createDraft({ lineUserId:'U-X', careProfileId:'CP-X', initialQuestion:'กินยาสองตัวนี้ด้วยกันได้ไหม', termsAccepted:true, termsVersion:'v1' }), (e) => e.code === 'ACCESS_DENIED');
   assert.equal(h.state.orders.size, 0); assert.equal(h.state.profileWrites, 0); assert.equal(h.state.healthHistoryWrites, 0);
 });
 

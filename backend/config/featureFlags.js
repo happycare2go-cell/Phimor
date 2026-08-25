@@ -16,6 +16,10 @@ function loadFeatureFlags(env = process.env) {
       medicationDiff: parseBoolean(env.PLUS_MEDICATION_DIFF_ENABLED, false),
       pharmacistEscalation: parseBoolean(env.PLUS_PHARMACIST_ESCALATION_ENABLED, false),
     }),
+    consultation: Object.freeze({
+      enabled: parseBoolean(env.CONSULTATION_ENABLED, false),
+      internalOnly: parseBoolean(env.CONSULTATION_INTERNAL_ONLY, true),
+    }),
   });
 }
 
