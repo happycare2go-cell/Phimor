@@ -6,6 +6,7 @@ const { requireAuth, requireCenterStaff } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
 const familyService = require('../services/familyService');
+const healthHistoryService = require('../services/careProfileHealthHistoryService');
 const transportService = require('../services/transportService');
 const { CenterStaff, Centers } = require('../db');
 
@@ -113,6 +114,29 @@ router.get('/residents/:residentId/care-profile', requireCenterStaff(['owner', '
   const medicationHistory = await familyService.getMedicationHistory(profile.care_profile_id);
   await audit('care_profile.viewed_by_center', req.user.lineUserId, { centerId: req.centerId, residentId: resident.resident_id, careProfileId: profile.care_profile_id });
   res.json({ profile, medicationHistory });
+}));
+
+router.get('/residents/:residentId/care-profile/health-history', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const { Residents } = require('../db');
+  const resident = await Residents.findOne(
+    (item) => item.resident_id === req.params.residentId && item.center_id === req.centerId && item.status === 'active'
+  );
+  if (!resident?.care_profile_id) return res.status(404).json({ error:'not_found', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
+  try {
+    const result = await healthHistoryService.getCareProfileHealthHistory({
+      careProfileId: resident.care_profile_id,
+      lineUserId: req.user.lineUserId,
+      centerId: req.centerId,
+      audience: 'center',
+      limit: req.query.limit,
+      cursor: req.query.cursor,
+      field: req.query.field,
+    });
+    res.json(result);
+  } catch (error) {
+    if (error?.status) return res.status(error.status).json({ error:error.code || 'health_history_error', message:error.message });
+    throw error;
+  }
 }));
 
 // ข้อมูลจำเป็นต่อการดูแลประจำวัน: staff เห็นเฉพาะ summary ไม่เห็นประวัติฉบับเต็ม
