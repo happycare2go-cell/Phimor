@@ -111,6 +111,38 @@ async function familyHealthProfileSwitchJourney(browser) {
   await page.close();
 }
 
+async function familyConsultationJourney(browser) {
+  const page=await browser.newPage({viewport:{width:390,height:844}});
+  const profile={profile:{care_profile_id:'CP-CONSULT',patient_name:'คุณแม่จำลอง'},familyRole:'owner',canUseAi:false,upcomingAppointments:[]};
+  await mockBackend(page,async(url,request)=>{
+    if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if(url.pathname==='/api/consent/check')return {hasConsent:true};
+    if(url.pathname==='/api/init-dashboard')return {profiles:[profile]};
+    if(url.pathname==='/api/access-requests')return {requests:[]};
+    if(url.pathname==='/api/transport/family/pending')return {pending:[]};
+    if(url.pathname==='/api/care-profile/CP-CONSULT/caregivers')return {members:[]};
+    if(url.pathname==='/api/plus/entitlement')return {status:'basic',plus:false};
+    if(url.pathname==='/api/consultations/eligibility')return {availability:'eligible',price:{amountMinor:10000,currency:'THB'},durationMinutes:1440,termsVersion:'consult-terms-v1',checkoutAvailable:false};
+    if(url.pathname==='/api/consultations'&&request.method()==='GET')return {items:[]};
+    if(url.pathname==='/api/consultations/safety'&&request.method()==='POST')return {action:'pharmacist_consultation_eligible',category:'medication_advice',reasonCode:null};
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!document.querySelector('#consultationPanel').hidden);
+  assert.match(await page.locator('#consultationPatient').textContent(),/คุณแม่จำลอง/);
+  await page.locator('#consultationEntry').click();
+  await page.locator('#consultationQuestion').fill('ควรหยุดยานี้ไหม');
+  await page.locator('#consultationCheckButton').click();
+  await page.waitForFunction(()=>!document.querySelector('#consultationTerms').hidden);
+  assert.match(await page.locator('#consultationTerms').textContent(),/100 บาท/);
+  assert.strictEqual(await page.locator('#consultationContinueButton').isDisabled(),true);
+  await page.locator('#consultationTermsCheck').check();
+  await page.locator('#consultationContinueButton').click();
+  await page.waitForFunction(()=>!document.querySelector('#consultationPayment').hidden);
+  assert.match(await page.locator('#consultationPayment').textContent(),/กำลังเตรียมเปิดใช้งาน/);
+  await page.close();
+}
+
 async function centerPendingJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
@@ -217,7 +249,7 @@ async function pharmacistConsoleJourney(browser) {
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
+  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }

@@ -132,11 +132,12 @@ function createConsultationReadService({
     return { row, pharmacist };
   }
 
-  async function listFamilyCases({ lineUserId } = {}) {
+  async function listFamilyCases({ lineUserId, careProfileId = null } = {}) {
     if (!lineUserId) throw new ConsultationDomainError('UNAUTHENTICATED', 401);
     const rows = await repository.listCasesForCustomer(lineUserId);
     const allowed = [];
     for (const row of rows) {
+      if (careProfileId && row.care_profile_id !== careProfileId) continue;
       try {
         await authorizeFamilyCase(row, lineUserId);
         allowed.push(projectCase(row));

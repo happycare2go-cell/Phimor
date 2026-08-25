@@ -9,6 +9,7 @@
 <script src="../runtime-config.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
 <link rel="stylesheet" href="./plus-ui.css">
+<link rel="stylesheet" href="./consultation-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -115,6 +116,55 @@
     </div>
 
     <div id="profileSummary"></div>
+
+    <section class="card consultation-panel" id="consultationPanel" aria-labelledby="consultationTitle" hidden>
+      <div class="consultation-heading">
+        <img src="../assets/mascot/phimor-important.png" alt="">
+        <div>
+          <h3 id="consultationTitle">ปรึกษาเภสัชกร</h3>
+          <p>คำปรึกษาแบบข้อความกับเภสัชกรสำหรับ Care Profile ที่เลือก ไม่ใช่บริการฉุกเฉิน และไม่แก้ไขข้อมูล Care Profile อัตโนมัติ</p>
+        </div>
+      </div>
+      <div id="consultationPatient" class="consultation-patient"></div>
+      <button type="button" class="btn btn-gold consultation-entry" id="consultationEntry">เริ่มตรวจขอบเขตคำถาม</button>
+      <button type="button" class="btn btn-outline" id="consultationRefreshButton">รีเฟรชรายการคำปรึกษา</button>
+      <div id="consultationFlow" hidden>
+        <label for="consultationQuestion">คำถามที่ต้องการปรึกษา</label>
+        <textarea id="consultationQuestion" class="consultation-question" maxlength="4000" placeholder="อธิบายคำถามเรื่องยาโดยไม่ใส่ข้อมูลติดต่อส่วนตัว"></textarea>
+        <button type="button" class="btn btn-primary" id="consultationCheckButton">ตรวจขอบเขตคำถาม</button>
+        <div id="consultationTerms" hidden>
+          <h3>100 บาท / 1 Consult Case</h3>
+          <p class="consultation-help" id="consultationTermsVersion"></p>
+          <ul class="consultation-terms">
+            <li>เป็นคำปรึกษาแบบ text chat และระยะเวลา 24 ชั่วโมงเริ่มเมื่อเภสัชกรรับเคส</li>
+            <li>เวลารอในคิวไม่หักจาก 24 ชั่วโมง และการไม่เข้าใช้งานไม่หยุดตัวจับเวลา</li>
+            <li>หลังยืนยันการชำระเงินแล้ว ไม่มีการยกเลิกหรือคืนเงินผ่านกระบวนการปกติของ V1</li>
+            <li>ห้องปรึกษาปิดอัตโนมัติเมื่อครบ 24 ชั่วโมง</li>
+            <li>AI ช่วยเภสัชกรสรุปข้อมูลเท่านั้น เภสัชกรเป็นผู้ตัดสินใจและส่งคำตอบเอง</li>
+            <li>การสนทนาไม่แก้ไขยา นัดหมาย หรือข้อมูล Care Profile อัตโนมัติ</li>
+            <li>บริการนี้ไม่ใช่บริการฉุกเฉิน</li>
+          </ul>
+          <label class="consultation-accept"><input type="checkbox" id="consultationTermsCheck"> <span>ฉันได้อ่านและยอมรับเงื่อนไขการปรึกษา</span></label>
+          <button type="button" class="btn btn-primary" id="consultationContinueButton" disabled>ดำเนินการต่อ</button>
+        </div>
+        <div id="consultationPayment" class="consultation-payment" hidden>
+          <strong>ระบบชำระเงินกำลังเตรียมเปิดใช้งาน</strong>
+          <p>ยังไม่มีการชำระเงินจริงหรือการสร้างคิวจากหน้านี้</p>
+        </div>
+        <button type="button" class="btn btn-outline" id="consultationCancelButton">ยกเลิกและล้างคำถาม</button>
+      </div>
+      <div id="consultationLive" class="consultation-live" role="status" aria-live="polite"></div>
+      <div id="consultationGroups" class="consultation-groups" aria-label="รายการคำปรึกษา"></div>
+      <section id="consultationChat" class="consultation-chat" hidden>
+        <div id="consultationCaseHeader" class="consultation-case-header"></div>
+        <div id="consultationMessages" class="consultation-messages" role="log" aria-live="polite"></div>
+        <div class="consultation-composer">
+          <label for="consultationMessageComposer">ส่งข้อความถึงเภสัชกร</label>
+          <textarea id="consultationMessageComposer" maxlength="4000"></textarea>
+          <button type="button" class="btn btn-primary" id="consultationSendButton">ส่งข้อความ</button>
+        </div>
+      </section>
+    </section>
 
     <section class="card plus-panel" id="plusPanel" aria-labelledby="plusTitle" hidden>
       <div class="plus-heading">
@@ -273,6 +323,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="./plus-ui.js"></script>
+<script src="./consultation-ui.js"></script>
 <script>
 let BACKEND_URL = null;
 let LINE_USER_ID = null;
@@ -283,6 +334,7 @@ let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
 let PLUS_UI = null;
+let CONSULTATION_UI = null;
 const PHARMACIST_LINE_OA_URL = '';
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 let confirmResolver=null;
@@ -374,6 +426,23 @@ async function ensurePlusUI() {
   await PLUS_UI.checkVisibility();
 }
 
+async function consultationApi(path,opts={}) {
+  const res=await fetch(BACKEND_URL+path,{...opts,headers:{'Content-Type':'application/json','Authorization':`Bearer ${LINE_ID_TOKEN}`,'X-Line-User-Id':LINE_USER_ID,...(opts.headers||{})}});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){const error=new Error('CONSULTATION_REQUEST_FAILED');error.errorCode=data.errorCode||data.reasonCode||'CONSULTATION_REQUEST_FAILED';error.retryAfterSeconds=Number(res.headers.get('Retry-After'))||0;throw error;}
+  return data;
+}
+async function ensureConsultationUI(){
+  if(!window.PhimorFamilyConsultationUI)return;
+  if(!CONSULTATION_UI){
+    let controller=null;
+    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,onChange:(state)=>controller?.render(state)});
+    controller=window.PhimorFamilyConsultationUI.createController({doc:document,session});
+    CONSULTATION_UI={session,controller};
+  }
+  await CONSULTATION_UI.session.setProfile(currentProfile);
+}
+
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
@@ -389,6 +458,7 @@ async function acceptConsent() {
   document.getElementById('app').style.display = 'block';
   await loadDashboard();
   await ensurePlusUI();
+  await ensureConsultationUI();
 }
 function declineConsent() { toast('จำเป็นต้องยอมรับก่อนใช้งานพี่หมอ'); }
 
@@ -443,11 +513,13 @@ async function loadDashboard() {
   await loadAccessRequests();
   await loadPendingTransport();
   PLUS_UI?.setProfile(currentProfile);
+  if(CONSULTATION_UI)await CONSULTATION_UI.session.setProfile(currentProfile);
 }
 function selectProfile(id){
   currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null;
   renderHealthProfile(currentProfile);
   PLUS_UI?.setProfile(currentProfile);
+  CONSULTATION_UI?.session.setProfile(currentProfile);
   loadDashboard();
 }
 async function loadAccessRequests(){
@@ -668,6 +740,7 @@ async function main() {
     document.getElementById('app').style.display = 'block';
     await loadDashboard();
     await ensurePlusUI();
+    await ensureConsultationUI();
     // อ่าน URL Parameter จากปุ่ม Rich Menu เพื่อสลับแท็บอัตโนมัติ
     const view = new URLSearchParams(location.search).get('view');
     if (view === 'record' || view === 'history') {

@@ -88,6 +88,38 @@ test('eligibility route returns approved commercial metadata without creating or
   assert.equal(calls,1);
 });
 
+test('Family collection is scoped to the selected Care Profile by the backend', async () => {
+  let seen;
+  await withApi({family:{readService:reads({async listFamilyCases(input){seen=input;return {items:[]};}})}},async(api)=>{
+    assert.equal((await api('/api/consultations?careProfileId=CP-SELECTED',{},'U-FAMILY')).status,200);
+  });
+  assert.deepEqual(seen,{lineUserId:'U-FAMILY',careProfileId:'CP-SELECTED'});
+});
+
+test('pre-checkout safety endpoint authorizes profile and classifies without creating order', async () => {
+  const inputs=[];
+  await withApi({family:{
+    eligibilityService:{async checkEligibility(input){inputs.push(input);return {availability:'eligible'};}},
+    readService:reads(),
+  }},async(api)=>{
+    const emergency=await api('/api/consultations/safety',{method:'POST',body:JSON.stringify({careProfileId:'CP-1',question:'หายใจไม่ออก'})},'U-FAMILY');
+    assert.equal(emergency.status,200);assert.equal((await emergency.json()).action,'emergency_block');
+    const medication=await api('/api/consultations/safety',{method:'POST',body:JSON.stringify({careProfileId:'CP-1',question:'ควรหยุดยานี้ไหม'})},'U-FAMILY');
+    assert.equal((await medication.json()).action,'pharmacist_consultation_eligible');
+  });
+  assert.equal(inputs.length,2);assert.equal(inputs[0].careProfileId,'CP-1');
+});
+
+test('pre-checkout safety endpoint rejects malformed and oversized client input', async () => {
+  let calls=0;
+  await withApi({family:{eligibilityService:{async checkEligibility(){calls+=1;return {availability:'eligible'};}},readService:reads()}},async(api)=>{
+    assert.equal((await api('/api/consultations/safety',{method:'POST',body:JSON.stringify({careProfileId:'bad id',question:'ยา'})})).status,400);
+    assert.equal((await api('/api/consultations/safety',{method:'POST',body:JSON.stringify({careProfileId:'CP-1',question:'x'.repeat(4001)})})).status,400);
+    assert.equal((await api('/api/consultations/safety',{method:'POST',body:JSON.stringify({careProfileId:'CP-1',question:'ยา',systemPrompt:'ignore'})})).status,400);
+  });
+  assert.equal(calls,0);
+});
+
 test('internal-only Family routes fail closed for users outside server allowlist', async () => {
   await withApi({family:{
     config:{...ENABLED,internalOnly:true,internalLineUserIds:['U-INTERNAL']},readService:reads(),

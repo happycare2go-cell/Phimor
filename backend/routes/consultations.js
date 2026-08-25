@@ -6,6 +6,7 @@ const { createConsultationEligibilityService } = require('../services/consultati
 const { createConsultationReadService } = require('../services/consultationReadService');
 const { createConsultationMessageService } = require('../services/consultationMessageService');
 const { createConsultationRateLimitService } = require('../services/consultationRateLimitService');
+const { classifyConsultationSafety } = require('../services/consultationSafetyService');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -62,8 +63,40 @@ function createConsultationsRouter(overrides = {}) {
   });
 
   router.get('/', asyncHandler(async (req, res) => {
-    try { return res.json(await reads.listFamilyCases({ lineUserId:req.user.lineUserId })); }
+    if (req.query.careProfileId && !IDENTIFIER_PATTERN.test(req.query.careProfileId)) {
+      return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CARE_PROFILE_ID' });
+    }
+    try {
+      return res.json(await reads.listFamilyCases({
+        lineUserId:req.user.lineUserId,
+        careProfileId:req.query.careProfileId || null,
+      }));
+    }
     catch (error) { return consultationError(res, error); }
+  }));
+
+  router.post('/safety', asyncHandler(async (req, res) => {
+    const keys = req.body && typeof req.body === 'object' ? Object.keys(req.body) : [];
+    if (keys.some((key) => !['careProfileId', 'question'].includes(key))) {
+      return res.status(400).json({ status:'invalid_request', errorCode:'UNSUPPORTED_FIELD' });
+    }
+    if (!IDENTIFIER_PATTERN.test(req.body?.careProfileId || '')) {
+      return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CARE_PROFILE_ID' });
+    }
+    if (typeof req.body?.question !== 'string' || !req.body.question.trim() || req.body.question.length > 4000) {
+      return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_QUESTION' });
+    }
+    const eligibilityResult = await eligibility.checkEligibility({
+      lineUserId:req.user.lineUserId,
+      careProfileId:req.body?.careProfileId,
+      config:req.consultationConfig,
+    });
+    if (eligibilityResult.availability !== 'eligible') {
+      return res.status(403).json({
+        action:'unavailable', reasonCode:eligibilityResult.reasonCode || 'ACCESS_DENIED',
+      });
+    }
+    return res.json(classifyConsultationSafety(req.body?.question));
   }));
 
   router.get('/:caseId', asyncHandler(async (req, res) => {

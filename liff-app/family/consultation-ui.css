@@ -1,0 +1,19 @@
+.consultation-panel{border:1px solid #d6deef;background:linear-gradient(180deg,#fff 0%,#f8faff 100%)}
+.consultation-heading{display:flex;align-items:flex-start;gap:12px}.consultation-heading img{width:62px;height:62px;object-fit:contain}
+.consultation-heading p,.consultation-help{margin:4px 0 0;color:var(--gray);font-size:12px;line-height:1.55}
+.consultation-entry{margin-top:12px}.consultation-state{margin-top:12px;padding:12px;border-radius:10px;background:#f3f6fc}
+.consultation-state--danger{background:#fff0f0;color:#8a2630}.consultation-state--warning{background:#fff8df;color:#705515}
+.consultation-patient{font-weight:700;color:var(--navy);margin:8px 0}.consultation-question{min-height:90px;resize:vertical}
+.consultation-actions{display:flex;gap:8px;margin-top:10px}.consultation-actions .btn{flex:1}
+.consultation-terms{font-size:12px;line-height:1.6;padding-left:20px}.consultation-terms li{margin:5px 0}
+.consultation-accept{display:flex;align-items:flex-start;gap:8px;margin:12px 0;color:#30384e}.consultation-accept input{width:auto;margin-top:3px}
+.consultation-payment{padding:13px;border:1px dashed #aeb8ce;border-radius:10px;text-align:center;color:var(--gray)}
+.consultation-groups{display:grid;gap:10px;margin-top:14px}.consultation-group h4{margin:0 0 6px;color:var(--navy);font-size:13px}
+.consultation-case{width:100%;padding:11px;text-align:left;background:#fff;border:1px solid #e0e5f0;border-radius:9px;margin:4px 0;color:#26324e}
+.consultation-case strong,.consultation-case span{display:block}.consultation-case span{font-size:11px;color:var(--gray);margin-top:3px}
+.consultation-chat{margin-top:12px;border-top:1px solid #e2e7f1;padding-top:12px}.consultation-case-header h4{margin:0;color:var(--navy)}
+.consultation-messages{max-height:380px;overflow:auto;padding:8px 0}.consultation-message{max-width:88%;padding:9px 11px;margin:7px 0;border-radius:12px;background:#eef1f7}
+.consultation-message--customer{margin-left:auto;background:#e8efff}.consultation-message--system{margin-left:auto;margin-right:auto;background:#f2f2f2}
+.consultation-message__role{display:block;font-size:10px;font-weight:700;color:var(--gray)}.consultation-message__body{white-space:pre-wrap;overflow-wrap:anywhere}
+.consultation-composer textarea{min-height:76px;resize:vertical}.consultation-live{font-size:12px;color:var(--gray);margin-top:7px;min-height:18px}
+.consultation-hidden{display:none!important}@media(max-width:480px){.consultation-actions{flex-direction:column}.consultation-heading img{width:52px;height:52px}}
