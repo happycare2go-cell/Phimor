@@ -62,6 +62,52 @@ async function familyConsentJourney(browser) {
   await page.getByRole('button', { name: 'ยอมรับและเริ่มใช้งาน' }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
   assert.match(await page.locator('#profileLabel').textContent(), /ยังไม่มีข้อมูล/);
+  await page.locator('.tab[data-view="health"]').click();
+  assert.strictEqual(await page.locator('#healthNoProfileState').isVisible(), true);
+  assert.strictEqual(await page.locator('#healthProfileContent').isHidden(), true);
+  assert.match(await page.locator('#healthNoProfileState').textContent(), /ยังไม่ได้เลือก Care Profile/);
+  await page.getByRole('button', { name: 'กลับหน้าหลักเพื่อสร้าง Care Profile' }).click();
+  assert.strictEqual(await page.locator('#view-home').isVisible(), true);
+  await page.close();
+}
+
+async function familyHealthProfileSwitchJourney(browser) {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const profiles = [
+    {
+      profile: { care_profile_id:'CP1', patient_name:'คุณยายทองดี', blood_type:'A+', gender:'female', height_cm:'155', weight_kg:'52', chronic_conditions:['เบาหวาน'], drug_allergies:'เพนิซิลลิน', food_allergies:'', mobility_limitations:'ใช้ไม้เท้า', emergency_contact_name:'สมใจ', emergency_contact_phone:'0811111111', family_phone:'0822222222' },
+      familyRole:'owner', canUseAi:false, upcomingAppointments:[],
+    },
+    {
+      profile: { care_profile_id:'CP2', patient_name:'คุณตาสมชาย', blood_type:'O+', gender:'male', height_cm:'168', weight_kg:'64', chronic_conditions:['ความดันโลหิตสูง'], drug_allergies:'', food_allergies:'กุ้ง', mobility_limitations:'', emergency_contact_name:'สมหญิง', emergency_contact_phone:'0833333333', family_phone:'0844444444' },
+      familyRole:'caregiver', canUseAi:false, upcomingAppointments:[],
+    },
+  ];
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return { publicBackendUrl: SIMULATED_BACKEND_URL, familyLiffId: 'SIM_FAMILY' };
+    if (url.pathname === '/api/consent/check') return { hasConsent:true };
+    if (url.pathname === '/api/init-dashboard') return { profiles };
+    if (url.pathname === '/api/access-requests') return { requests:[] };
+    if (url.pathname === '/api/transport/family/pending') return { pending:[] };
+    if (url.pathname === '/api/care-profile/CP1/caregivers') return { members:[] };
+    if (url.pathname === '/api/plus/entitlement') return { status:'basic', plus:false };
+    return { status:404, body:{message:`unmocked ${url.pathname}`} };
+  });
+  await page.setContent(localHtml('family'), { waitUntil:'domcontentloaded' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.locator('.tab[data-view="health"]').click();
+  assert.strictEqual(await page.locator('#healthProfileContent').isVisible(), true);
+  assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณยายทองดี');
+  assert.strictEqual(await page.locator('#bloodType').inputValue(), 'A+');
+  assert.strictEqual(await page.locator('#drugAllergies').inputValue(), 'เพนิซิลลิน');
+  await page.locator('#profileSelector').selectOption('CP2');
+  await page.waitForFunction(() => document.querySelector('#healthProfileHeading').textContent.includes('คุณตาสมชาย'));
+  assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณตาสมชาย');
+  assert.strictEqual(await page.locator('#bloodType').inputValue(), 'O+');
+  assert.strictEqual(await page.locator('#drugAllergies').inputValue(), '');
+  assert.strictEqual(await page.locator('#foodAllergies').inputValue(), 'กุ้ง');
+  assert.strictEqual(await page.locator('#chronicConditions input[value="ความดันโลหิตสูง"]').isChecked(), true);
+  assert.strictEqual(await page.locator('#chronicConditions input[value="เบาหวาน"]').isChecked(), false);
   await page.close();
 }
 
@@ -147,7 +193,7 @@ async function adminSubscriptionJourney(browser) {
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney })) {
+  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney })) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }
