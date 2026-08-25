@@ -37,6 +37,8 @@ services:
         sync: false
       - key: LIFF_ID_SYSTEM_ADMIN
         sync: false
+      - key: LIFF_ID_PHARMACIST
+        sync: false
       - key: ALLOWED_ORIGINS
         value: "https://phimor-liff.onrender.com"
       - key: PUBLIC_BACKEND_URL

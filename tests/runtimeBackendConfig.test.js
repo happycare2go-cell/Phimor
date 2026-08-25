@@ -10,6 +10,7 @@ const {
   normalizeBackendUrl, requireBackendUrl, assertBackendConfig,
 } = require('../liff-app/runtime-config');
 const { buildRuntimeConfigSource } = require('../liff-app/scripts/write-runtime-config');
+const { buildPublicLiffConfig } = require('../backend/config/runtimeCapabilities');
 
 const root = path.resolve(__dirname, '..');
 const familyHtml = fs.readFileSync(path.join(root, 'liff-app', 'family', 'index.html'), 'utf8');
@@ -49,21 +50,65 @@ test('deploy-time config generator emits only the validated public backend URL',
   assert.doesNotMatch(source, /TOKEN|SECRET|DATABASE_URL/);
 });
 
-test('/config/liff reports PUBLIC_BACKEND_URL for environment consistency checks', async () => {
-  const previous = process.env.PUBLIC_BACKEND_URL;
+test('/config/liff reports public backend and pharmacist LIFF configuration without secrets', async () => {
+  const keys = ['PUBLIC_BACKEND_URL', 'LIFF_ID_PHARMACIST', 'OMISE_SECRET_KEY', 'GEMINI_API_KEY'];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   process.env.PUBLIC_BACKEND_URL = 'https://phimor-backend-staging.onrender.com';
+  process.env.LIFF_ID_PHARMACIST = 'pharmacist-liff';
+  process.env.OMISE_SECRET_KEY = 'secret-payment-key';
+  process.env.GEMINI_API_KEY = 'secret-ai-key';
   const app = require('../backend/server');
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/config/liff`);
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).publicBackendUrl, process.env.PUBLIC_BACKEND_URL);
+    const body = await response.json();
+    assert.equal(body.publicBackendUrl, process.env.PUBLIC_BACKEND_URL);
+    assert.equal(body.pharmacistLiffId, process.env.LIFF_ID_PHARMACIST);
+    assert.doesNotMatch(JSON.stringify(body), /secret-payment|secret-ai/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
-    if (previous === undefined) delete process.env.PUBLIC_BACKEND_URL;
-    else process.env.PUBLIC_BACKEND_URL = previous;
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
   }
+});
+
+test('public LIFF config exposes the pharmacist ID without changing existing LIFF IDs', () => {
+  const config = buildPublicLiffConfig({
+    PUBLIC_BACKEND_URL: 'https://phimor-backend-staging.onrender.com',
+    LIFF_ID_FAMILY: 'family-liff',
+    LIFF_ID_CENTER_ADMIN: 'center-liff',
+    LIFF_ID_REGISTER: 'register-liff',
+    LIFF_ID_SYSTEM_ADMIN: 'system-admin-liff',
+    LIFF_ID_PHARMACIST: 'pharmacist-liff',
+    DATABASE_URL: 'postgresql://secret',
+    GEMINI_API_KEY: 'secret-ai-key',
+    OMISE_SECRET_KEY: 'secret-payment-key',
+  });
+  assert.deepEqual(config, {
+    publicBackendUrl: 'https://phimor-backend-staging.onrender.com',
+    familyLiffId: 'family-liff',
+    centerAdminLiffId: 'center-liff',
+    registerLiffId: 'register-liff',
+    systemAdminLiffId: 'system-admin-liff',
+    pharmacistLiffId: 'pharmacist-liff',
+  });
+  assert.doesNotMatch(JSON.stringify(config), /postgresql|secret-ai|secret-payment/);
+});
+
+test('missing pharmacist LIFF ID is omitted safely from public runtime config', () => {
+  const config = buildPublicLiffConfig({
+    PUBLIC_BACKEND_URL: 'https://phimor-backend-staging.onrender.com',
+    LIFF_ID_FAMILY: 'family-liff',
+  });
+  assert.deepEqual(config, {
+    publicBackendUrl: 'https://phimor-backend-staging.onrender.com',
+    familyLiffId: 'family-liff',
+  });
+  assert.equal(config.pharmacistLiffId, undefined);
 });
 
 test('staging blueprint has isolated branch, controlled deploy and safe Plus defaults', () => {
@@ -87,6 +132,12 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.match(productionBlueprint, /key:\s*PUBLIC_BACKEND_URL\s*\n\s*value:\s*"https:\/\/phimor-backend\.onrender\.com"/);
   assert.match(productionBlueprint, /buildCommand:\s*node scripts\/write-runtime-config\.js/);
   assert.doesNotMatch(productionBlueprint, /key:\s*PLUS_ENABLED/);
+  assert.match(productionBlueprint, /key:\s*LIFF_ID_PHARMACIST\s*\n\s*sync:\s*false/);
+});
+
+test('staging blueprint declares the pharmacist LIFF ID without a repository value', () => {
+  assert.match(stagingBlueprint, /key:\s*LIFF_ID_PHARMACIST\s*\n\s*sync:\s*false/);
+  assert.doesNotMatch(stagingBlueprint, /key:\s*LIFF_ID_PHARMACIST\s*\n\s*value:/);
 });
 
 test('normalizer rejects path, query and hash injection', () => {

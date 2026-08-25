@@ -47,6 +47,7 @@ function buildPublicLiffConfig(env = process.env) {
     centerAdminLiffId: env.LIFF_ID_CENTER_ADMIN,
     registerLiffId: env.LIFF_ID_REGISTER,
     systemAdminLiffId: env.LIFF_ID_SYSTEM_ADMIN,
+    pharmacistLiffId: env.LIFF_ID_PHARMACIST,
   };
   return Object.fromEntries(Object.entries(configured).filter(([, value]) => hasValue(value)));
 }

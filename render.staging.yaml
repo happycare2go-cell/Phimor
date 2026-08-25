@@ -31,6 +31,8 @@ services:
         sync: false
       - key: LIFF_ID_FAMILY
         sync: false
+      - key: LIFF_ID_PHARMACIST
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: AI_PROVIDER

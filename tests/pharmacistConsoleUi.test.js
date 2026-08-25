@@ -208,6 +208,41 @@ test('runtime backend has no production fallback and pharmacist LIFF ID remains 
   assert.doesNotMatch(source,/LIFF_ID_PHARMACIST\s*=\s*['"][^'"]+/);
 });
 
+test('console bootstrap consumes pharmacistLiffId from trusted backend runtime config',async()=>{
+  const access=new FakeElement();access.hidden=true;
+  const doc={getElementById:(id)=>id==='accessState'?access:new FakeElement()};
+  const initialized=[];let loginCalled=false;
+  const liffApi={init:async(options)=>initialized.push(options),isLoggedIn:()=>false,login:()=>{loginCalled=true;}};
+  const root={
+    PHIMOR_PUBLIC_BACKEND_URL:'https://phimor-backend-staging.onrender.com',
+    PhimorRuntimeConfig:{
+      requireBackendUrl:(value)=>value,
+      assertBackendConfig:(url,config)=>assert.equal(config.publicBackendUrl,url),
+    },
+  };
+  const fetchImpl=async()=>({ok:true,json:async()=>({
+    publicBackendUrl:root.PHIMOR_PUBLIC_BACKEND_URL,
+    pharmacistLiffId:'pharmacist-liff',
+  })});
+  const result=await consoleUI.bootstrap({root,doc,fetchImpl,liffApi});
+  assert.equal(result,null);assert.deepEqual(initialized,[{liffId:'pharmacist-liff'}]);assert.equal(loginCalled,true);
+  assert.equal(access.hidden,true);
+});
+
+test('console bootstrap fails safely when pharmacistLiffId is unavailable',async()=>{
+  const access=new FakeElement();access.hidden=true;
+  const doc={getElementById:(id)=>id==='accessState'?access:new FakeElement()};
+  let initCalled=false;
+  const root={
+    PHIMOR_PUBLIC_BACKEND_URL:'https://phimor-backend-staging.onrender.com',
+    PhimorRuntimeConfig:{requireBackendUrl:(value)=>value,assertBackendConfig:()=>{}},
+  };
+  const fetchImpl=async()=>({ok:true,json:async()=>({publicBackendUrl:root.PHIMOR_PUBLIC_BACKEND_URL})});
+  const result=await consoleUI.bootstrap({root,doc,fetchImpl,liffApi:{init:async()=>{initCalled=true;}}});
+  assert.equal(result,null);assert.equal(initCalled,false);assert.equal(access.hidden,false);
+  assert.match(access.textContent,/ยังไม่ได้ตั้งค่า Pharmacist LIFF/);
+});
+
 test('dedicated desktop-first console contains three professional workspace columns',()=>{
   for(const id of ['caseList','chatMessages','messageComposer','assistantContent','generateAssistantButton','refreshAssistantButton'])assert.match(html,new RegExp(`id="${id}"`));
   assert.match(html,/AI Pharmacist Assistant/);assert.match(html,/maxlength="4000"/);
