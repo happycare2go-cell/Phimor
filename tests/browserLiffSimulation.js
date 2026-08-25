@@ -187,13 +187,37 @@ async function adminSubscriptionJourney(browser) {
   await page.close();
 }
 
+async function pharmacistConsoleJourney(browser) {
+  const page=await browser.newPage({viewport:{width:1440,height:900}});
+  await mockBackend(page,async(url,request)=>{
+    if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
+    if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
+    if(url.pathname==='/api/pharmacist/consultations/active')return {items:[{caseId:'CASE-1',state:'active',waitingOn:'pharmacist',remainingSeconds:3600,effectiveClosed:false}]};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages')return {items:[],nextSequence:0,hasMore:false};
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('pharmacist'),{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!document.querySelector('#consoleApp').hidden);
+  assert.strictEqual(await page.locator('.case-column').isVisible(),true);
+  assert.strictEqual(await page.locator('.chat-column').isVisible(),true);
+  assert.strictEqual(await page.locator('.assistant-column').isVisible(),true);
+  await page.getByRole('button',{name:'รับเคส'}).click();
+  await page.waitForFunction(()=>document.querySelector('#caseHeader').textContent.includes('CASE-Q'));
+  assert.match(await page.locator('#caseHeader').textContent(),/เหลือเวลา/);
+  assert.strictEqual(await page.locator('#messageComposer').isEnabled(),true);
+  assert.match(await page.locator('.ai-boundary').textContent(),/เภสัชกรเป็นผู้ตัดสินใจ/);
+  await page.close();
+}
+
 (async () => {
   const { chromium } = playwright();
   const executablePath = browserExecutable(chromium);
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney })) {
+  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }

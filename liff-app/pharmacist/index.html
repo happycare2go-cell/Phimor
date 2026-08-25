@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PHIMOR Pharmacist Console</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="../environment.js"></script>
+  <script src="../runtime-config.js"></script>
+  <link rel="stylesheet" href="./console.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><strong>PHIMOR</strong><span>Pharmacist Console</span></div>
+    <span class="secure-label">พื้นที่ทำงานสำหรับเภสัชกร</span>
+  </header>
+
+  <main>
+    <section id="accessState" class="access-state" role="status">กำลังตรวจสอบสิทธิ์…</section>
+    <section id="consoleApp" class="console-grid" hidden>
+      <aside class="case-column" aria-label="รายการเคส">
+        <div class="panel-heading">
+          <div>
+            <h1>เคสคำปรึกษา</h1>
+            <p>ข้อมูลในคิวถูกจำกัดเพื่อคุ้มครองความเป็นส่วนตัว</p>
+          </div>
+          <button id="refreshListButton" class="icon-button" type="button">รีเฟรช</button>
+        </div>
+        <nav class="case-tabs" aria-label="สถานะเคส">
+          <button type="button" data-tab="queue" class="active">Queue</button>
+          <button type="button" data-tab="active">Active</button>
+          <button type="button" data-tab="resolved">Resolved</button>
+          <button type="button" data-tab="closed">Closed</button>
+        </nav>
+        <div class="filters">
+          <label>หัวข้อ<input id="topicFilter" autocomplete="off" placeholder="เช่น medication_advice"></label>
+          <label>Triage<input id="triageFilter" autocomplete="off" placeholder="เช่น pharmacist_consultation_eligible"></label>
+        </div>
+        <div id="caseList" class="case-list" aria-live="polite"></div>
+        <button id="loadMoreButton" class="secondary-button" type="button" hidden>โหลดเพิ่มเติม</button>
+      </aside>
+
+      <section class="chat-column" aria-label="การสนทนา">
+        <header id="caseHeader" class="case-header">
+          <div class="empty-state">เลือกเคสจากรายการเพื่อเปิดการสนทนา</div>
+        </header>
+        <div id="chatMessages" class="chat-messages" aria-live="polite" aria-label="ข้อความในเคส"></div>
+        <div class="resolve-note">
+          <button id="resolveButton" class="secondary-button" type="button" hidden>ทำเครื่องหมายว่าตอบประเด็นหลักแล้ว</button>
+          <p>Resolved ไม่ปิดการสนทนาก่อนเวลา ผู้ใช้ยังถามต่อในประเด็นที่เกี่ยวข้องได้จนหมด 24 ชั่วโมง</p>
+        </div>
+        <div class="composer-wrap">
+          <label for="messageComposer">ข้อความจากเภสัชกร</label>
+          <textarea id="messageComposer" maxlength="4000" rows="4" disabled placeholder="พิมพ์คำตอบที่เภสัชกรตรวจสอบและตัดสินใจเอง"></textarea>
+          <div class="composer-actions"><small>สูงสุด 4,000 ตัวอักษร · Enter เพื่อส่ง · Shift+Enter ขึ้นบรรทัดใหม่</small><button id="sendMessageButton" class="primary-button" type="button" disabled>ส่งข้อความ</button></div>
+        </div>
+      </section>
+
+      <aside class="assistant-column" aria-label="AI Pharmacist Assistant">
+        <div class="assistant-heading">
+          <div><span class="ai-label">PRIVATE ASSISTANT</span><h2>AI Pharmacist Assistant</h2></div>
+          <div class="assistant-actions"><button id="generateAssistantButton" class="primary-button" type="button" disabled>สร้างสรุปช่วยตอบ</button><button id="refreshAssistantButton" class="secondary-button" type="button" disabled hidden>รีเฟรชข้อมูล</button></div>
+        </div>
+        <div class="ai-boundary" role="note">AI ช่วยสรุปและเสนอประเด็นประกอบการพิจารณาเท่านั้น เภสัชกรเป็นผู้ตัดสินใจและพิมพ์คำตอบให้ผู้ใช้เอง</div>
+        <div id="assistantContent" class="assistant-content"><p class="empty-state">เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ</p></div>
+      </aside>
+    </section>
+    <div id="statusLive" class="status-live" role="status" aria-live="polite"></div>
+  </main>
+  <script src="./console.js"></script>
+  <script>
+    window.PhimorPharmacistConsole.bootstrap();
+  </script>
+</body>
+</html>
