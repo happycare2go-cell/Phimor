@@ -82,7 +82,7 @@ test('queue projection contains minimum triage fields and no health or identity 
   assert.deepEqual(Object.keys(result.items[0]).sort(), ['caseId','queuedAt','topicCategory','triageCategory','waitingSeconds'].sort());
   const serialized = JSON.stringify(result);
   for (const secret of ['SECRET','0811111111','U-CUSTOMER','CP-1','PRIVATE-LINE-ID']) assert.equal(serialized.includes(secret), false);
-  assert.equal(result.items[0].topicCategory, 'medication_advice');
+  assert.equal(result.items[0].topicCategory, 'drug_interaction');
 });
 
 test('repository queue SQL excludes unpaid and unprovisioned orders', async () => {

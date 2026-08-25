@@ -93,6 +93,37 @@ test('non-emergency medication advice is eligible for human pharmacist consultat
   assert.equal(classifyConsultationSafety('Can I take these two medications together?').action, 'pharmacist_consultation_eligible');
 });
 
+test('pharmacist scope includes medication information dose disease context and adherence', () => {
+  for (const question of [
+    'Metformin ใช้รักษาอะไร',
+    'Metformin ปกติใช้ขนาดเท่าไหร่',
+    'คนเป็นโรคไตใช้ metformin ได้ไหม',
+    'ยาสองตัวนี้กินด้วยกันได้ไหม',
+    'ลืมกินยา 1 มื้อควรทำอย่างไร',
+    'ยานี้มีผลข้างเคียงอะไร',
+    'ยานี้มีข้อห้ามใช้ในโรคอะไร',
+    'How should this medication be taken?',
+    'What is metformin used for?',
+    'Can metformin be used in a patient with kidney disease?',
+    'What are the usual dosing ranges by indication?',
+    'What precautions or contraindications should be considered?',
+    'Can these medications be used together?',
+  ]) {
+    assert.equal(classifyConsultationSafety(question).action, 'pharmacist_consultation_eligible', question);
+  }
+});
+
+test('medication disease and individualized adjustment concerns carry possible physician escalation', () => {
+  for (const question of [
+    'คนเป็นโรคไตใช้ metformin ได้ไหม',
+    'หมอปรับยาเพิ่มขึ้น อยากถามเภสัชว่าต้องระวังอะไร',
+  ]) {
+    const result=classifyConsultationSafety(question);
+    assert.equal(result.action,'pharmacist_consultation_eligible',question);
+    assert.equal(result.physicianEscalationMayBeRequired,true,question);
+  }
+});
+
 test('emergency safety gate prevents order creation before authorization or paywall progression', async () => {
   let authorizationCalls=0; let insertCalls=0;
   const service=createConsultationOrderService({
@@ -108,9 +139,10 @@ test('emergency safety gate prevents order creation before authorization or payw
   assert.equal(insertCalls,0);
 });
 
-test('diagnosis/treatment and ambiguous requests do not silently enter pharmacist checkout', () => {
+test('diagnosis escalates while ambiguous and clearly unrelated questions remain distinct', () => {
   assert.equal(classifyConsultationSafety('อาการนี้เป็นโรคอะไร').action, 'medical_escalation');
-  assert.equal(classifyConsultationSafety('ช่วยตอบคำถามนี้หน่อย').action, 'medical_escalation');
+  assert.equal(classifyConsultationSafety('ช่วยตอบคำถามนี้หน่อย').action, 'needs_review');
+  assert.equal(classifyConsultationSafety('พยากรณ์อากาศวันนี้เป็นอย่างไร').action, 'out_of_scope');
 });
 
 test('disabled consultation eligibility returns unavailable without authorization', async () => {

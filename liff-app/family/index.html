@@ -126,13 +126,21 @@
         </div>
       </div>
       <div id="consultationPatient" class="consultation-patient"></div>
-      <button type="button" class="btn btn-gold consultation-entry" id="consultationEntry">เริ่มปรึกษาเภสัชกร</button>
-      <button type="button" class="btn btn-outline" id="consultationRefreshButton">รีเฟรชรายการคำปรึกษา</button>
+      <div class="consultation-primary-actions">
+        <button type="button" class="btn btn-gold consultation-entry" id="consultationEntry">เริ่มปรึกษาเภสัชกร</button>
+      </div>
       <div id="consultationFlow" hidden>
         <label for="consultationQuestion">คำถามที่ต้องการปรึกษา</label>
         <textarea id="consultationQuestion" class="consultation-question" maxlength="4000" placeholder="อธิบายคำถามเรื่องยาโดยไม่ใส่ข้อมูลติดต่อส่วนตัว"></textarea>
         <p class="consultation-help">หากมีอาการฉุกเฉิน เช่น หายใจไม่ออก หมดสติ หรือเจ็บหน้าอกรุนแรง ให้ติดต่อบริการฉุกเฉินทันที ไม่ต้องรอชำระเงิน</p>
-        <button type="button" class="btn btn-primary" id="consultationCheckButton">ตรวจขอบเขตคำถาม</button>
+        <div class="consultation-primary-actions">
+          <button type="button" class="btn btn-primary" id="consultationCheckButton">ตรวจคำถามและไปต่อ</button>
+        </div>
+        <section id="consultationEligible" class="consultation-state consultation-state--success" hidden aria-labelledby="consultationEligibleTitle">
+          <h3 id="consultationEligibleTitle">คำถามนี้ส่งให้เภสัชกรช่วยประเมินได้</h3>
+          <p>เภสัชกรจะตรวจข้อมูลเรื่องยา และอาจแนะนำให้พบแพทย์เมื่อจำเป็น</p>
+          <button type="button" class="btn btn-primary" id="consultationEligibleContinueButton">ไปต่อเพื่อปรึกษาเภสัชกร</button>
+        </section>
         <div id="consultationTerms" hidden>
           <h3>100 บาท / 1 Consult Case</h3>
           <p class="consultation-help" id="consultationTermsVersion"></p>
@@ -146,16 +154,22 @@
             <li>บริการนี้ไม่ใช่บริการฉุกเฉิน</li>
           </ul>
           <label class="consultation-accept"><input type="checkbox" id="consultationTermsCheck"> <span>ฉันได้อ่านและยอมรับเงื่อนไขการปรึกษา</span></label>
-          <button type="button" class="btn btn-primary" id="consultationContinueButton" disabled>ดำเนินการต่อ</button>
+          <button type="button" class="btn btn-primary" id="consultationContinueButton" disabled>ยอมรับเงื่อนไขและเข้าสู่การชำระเงิน</button>
         </div>
         <div id="consultationPayment" class="consultation-payment" hidden>
           <strong>PromptPay • 100 บาท</strong>
           <p id="consultationPaymentText">กำลังเตรียมรายการชำระเงินอย่างปลอดภัย</p>
           <img id="consultationPaymentQr" class="consultation-payment__qr" alt="PromptPay QR สำหรับชำระ Consult Case" hidden>
         </div>
-        <button type="button" class="btn btn-outline" id="consultationCancelButton">ยกเลิกและล้างคำถาม</button>
+        <div class="consultation-secondary-actions">
+          <button type="button" class="btn consultation-cancel" id="consultationCancelButton">ยกเลิกและล้างคำถาม</button>
+        </div>
       </div>
       <div id="consultationLive" class="consultation-live" role="status" aria-live="polite"></div>
+      <div class="consultation-history-header">
+        <h3>รายการคำปรึกษาของฉัน</h3>
+        <button type="button" class="consultation-refresh" id="consultationRefreshButton">รีเฟรชรายการคำปรึกษา</button>
+      </div>
       <div id="consultationGroups" class="consultation-groups" aria-label="รายการคำปรึกษา"></div>
       <section id="consultationChat" class="consultation-chat" hidden>
         <div id="consultationCaseHeader" class="consultation-case-header"></div>
