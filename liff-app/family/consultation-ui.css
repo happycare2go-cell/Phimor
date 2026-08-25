@@ -3,8 +3,12 @@
 .consultation-heading p,.consultation-help{margin:4px 0 0;color:var(--gray);font-size:12px;line-height:1.55}
 .consultation-entry{margin-top:12px}.consultation-state{margin-top:12px;padding:12px;border-radius:10px;background:#f3f6fc}
 .consultation-state--danger{background:#fff0f0;color:#8a2630}.consultation-state--warning{background:#fff8df;color:#705515}
+.consultation-state--success{border:1px solid #a9d6c8;background:#eef9f5;color:#254d42}.consultation-state--success h3{margin:0 0 6px;color:#153f35}.consultation-state--success p{margin:0 0 12px;line-height:1.55}
 .consultation-patient{font-weight:700;color:var(--navy);margin:8px 0}.consultation-question{min-height:90px;resize:vertical}
 .consultation-actions{display:flex;gap:8px;margin-top:10px}.consultation-actions .btn{flex:1}
+.consultation-primary-actions{margin-top:14px}.consultation-secondary-actions{margin-top:24px;padding-top:14px;border-top:1px solid #e3e7f0}
+.consultation-cancel{width:auto;min-width:0;padding:10px 12px;background:transparent;color:#8a2630;border:1px solid #d7a8ae}
+.consultation-history-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:24px;padding-top:14px;border-top:1px solid #e3e7f0}.consultation-history-header h3{margin:0!important}.consultation-refresh{min-height:44px;padding:8px 10px;border:1px solid #c5ccdc;border-radius:8px;background:#fff;color:var(--navy);font:inherit;font-size:12px;font-weight:600}
 .consultation-terms{font-size:12px;line-height:1.6;padding-left:20px}.consultation-terms li{margin:5px 0}
 .consultation-accept{display:flex;align-items:flex-start;gap:8px;margin:12px 0;color:#30384e}.consultation-accept input{width:auto;margin-top:3px}
 .consultation-payment{padding:13px;border:1px dashed #aeb8ce;border-radius:10px;text-align:center;color:var(--gray)}
@@ -19,4 +23,4 @@
 .consultation-message__role{display:block;font-size:10px;font-weight:700;color:var(--gray)}.consultation-message__body{white-space:pre-wrap;overflow-wrap:anywhere}
 .consultation-composer textarea{min-height:76px;resize:vertical}.consultation-live{font-size:12px;color:var(--gray);margin-top:7px;min-height:18px}
 .consultation-panel button,.consultation-panel input[type="checkbox"]{min-height:44px}.consultation-panel textarea{font-size:16px;max-width:100%}
-.consultation-hidden{display:none!important}@media(max-width:480px){.consultation-panel{min-width:0;overflow:hidden}.consultation-actions{flex-direction:column}.consultation-heading img{width:52px;height:52px}.consultation-message{max-width:94%}.consultation-payment{padding:10px}.consultation-payment__qr{width:min(260px,88vw)}}
+.consultation-hidden{display:none!important}@media(max-width:480px){.consultation-panel{min-width:0;overflow:hidden}.consultation-actions{flex-direction:column}.consultation-heading img{width:52px;height:52px}.consultation-message{max-width:94%}.consultation-payment{padding:10px}.consultation-payment__qr{width:min(260px,88vw)}.consultation-history-header{align-items:flex-start}.consultation-history-header h3{padding-top:10px}.consultation-refresh{flex:0 0 auto;max-width:48%}.consultation-cancel{width:100%}}
