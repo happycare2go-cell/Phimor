@@ -17,12 +17,16 @@ function normalizeVerifiedPayment(event = {}) {
     }
   }
   if (event.eventType !== 'payment_succeeded') throw new ConsultationDomainError('PAYMENT_NOT_SUCCESSFUL');
+  if (typeof event.providerPaymentId !== 'string' || !event.providerPaymentId.trim()) {
+    throw new ConsultationDomainError('PAYMENT_REFERENCE_REQUIRED');
+  }
   const paidAt = new Date(event.paidAt || Date.now());
   if (Number.isNaN(paidAt.getTime())) throw new ConsultationDomainError('INVALID_PAYMENT_TIME');
   return Object.freeze({
     provider: event.provider.trim(), providerEventId: event.providerEventId.trim(),
     providerPaymentId: typeof event.providerPaymentId === 'string' ? event.providerPaymentId.trim() : null,
     orderId: event.orderId.trim(), amountMinor: event.amountMinor,
+    providerCheckoutId: typeof event.providerCheckoutId === 'string' ? event.providerCheckoutId.trim() : null,
     currency: event.currency, eventType: 'payment_succeeded',
     paidAt: paidAt.toISOString(),
     payloadHash: typeof event.payloadHash === 'string' && /^[a-f0-9]{64}$/i.test(event.payloadHash)
@@ -30,12 +34,22 @@ function normalizeVerifiedPayment(event = {}) {
   });
 }
 
+function assertProviderOrderLinkage(order, payment) {
+  if (order.provider && order.provider !== payment.provider) {
+    throw new ConsultationDomainError('PAYMENT_PROVIDER_MISMATCH', 409);
+  }
+  if (order.provider_checkout_id && order.provider_checkout_id !== payment.providerCheckoutId) {
+    throw new ConsultationDomainError('PAYMENT_CHECKOUT_MISMATCH', 409);
+  }
+}
+
 function assertDuplicatePaymentMatches(transactionRecord, payment) {
   if (!transactionRecord
     || transactionRecord.order_id !== payment.orderId
     || transactionRecord.provider !== payment.provider
     || transactionRecord.amount_minor !== payment.amountMinor
-    || transactionRecord.currency !== payment.currency) {
+    || transactionRecord.currency !== payment.currency
+    || transactionRecord.provider_payment_id !== payment.providerPaymentId) {
     throw new ConsultationDomainError('PAYMENT_EVENT_CONFLICT', 409);
   }
 }
@@ -59,15 +73,18 @@ function createConsultationPaymentService({
         amountMinor: order.amount_minor, currency: order.currency,
         durationMinutes: order.duration_minutes,
       });
+      assertProviderOrderLinkage(order, payment);
       if (payment.amountMinor !== order.amount_minor) throw new ConsultationDomainError('PAYMENT_AMOUNT_MISMATCH');
       if (payment.currency !== order.currency) throw new ConsultationDomainError('PAYMENT_CURRENCY_MISMATCH');
 
       const paymentRecord = await repository.insertPaymentTransaction({
         payment_transaction_id: paymentTransactionId(), order_id: order.order_id,
         provider: payment.provider, provider_event_id: payment.providerEventId,
-        provider_payment_id: payment.providerPaymentId, event_type: payment.eventType,
+        provider_payment_id: payment.providerPaymentId,
+        provider_checkout_id: payment.providerCheckoutId,
+        event_type: payment.eventType,
         amount_minor: payment.amountMinor, currency: payment.currency,
-        payload_hash: payment.payloadHash,
+        payload_hash: payment.payloadHash, provider_paid_at:payment.paidAt,
       });
       if (paymentRecord.duplicate) assertDuplicatePaymentMatches(paymentRecord.transaction, payment);
 
@@ -108,7 +125,8 @@ function createConsultationPaymentService({
 
 const defaultService = createConsultationPaymentService();
 module.exports = {
-  normalizeVerifiedPayment, assertDuplicatePaymentMatches, createConsultationPaymentService,
+  normalizeVerifiedPayment, assertDuplicatePaymentMatches, assertProviderOrderLinkage,
+  createConsultationPaymentService,
   provisionVerifiedConsultationPayment: defaultService.provisionVerifiedPayment,
   CONSULTATION_PRICE_MINOR, CONSULTATION_CURRENCY,
 };

@@ -4,7 +4,9 @@ const CONSULTATION_DURATION_MINUTES = 1_440;
 const CONSULTATION_MESSAGE_MAX_LENGTH = 4_000;
 
 const ORDER_STATES = Object.freeze(['draft', 'payment_pending', 'paid', 'failed', 'expired']);
-const PAYMENT_PROCESSING_STATES = Object.freeze(['received', 'verified', 'processed', 'rejected', 'error']);
+const PAYMENT_PROCESSING_STATES = Object.freeze([
+  'received', 'verified', 'processed', 'retry_required', 'rejected', 'error',
+]);
 const CONSULTATION_STATES = Object.freeze(['queued', 'active', 'resolved', 'closed']);
 const WAITING_ON_VALUES = Object.freeze(['none', 'customer', 'pharmacist']);
 const MESSAGE_SENDER_TYPES = Object.freeze(['customer', 'pharmacist', 'system']);

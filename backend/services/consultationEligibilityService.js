@@ -26,7 +26,8 @@ function createConsultationEligibilityService({
       durationMinutes:config.durationMinutes,
       durationHours:config.durationMinutes / 60,
       termsVersion:config.termsVersion,
-      checkoutAvailable:false,
+      checkoutAvailable:Boolean(config.termsVersion),
+      checkoutReasonCode:config.termsVersion ? null : 'CONSULTATION_TERMS_NOT_CONFIGURED',
     };
   }
   return { checkEligibility };

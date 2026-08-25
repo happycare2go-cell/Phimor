@@ -25,19 +25,106 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
-    async insertPaymentTransaction(record) {
+    async findOrder(orderId) {
+      const result = await queryFn('SELECT * FROM consultation_orders WHERE order_id = $1', [orderId]);
+      return result.rows[0] || null;
+    },
+
+    async markOrderPaymentPending(orderId, { provider, providerCheckoutId, paymentDueAt = null }) {
+      const result = await queryFn(
+        `UPDATE consultation_orders SET
+          status = 'payment_pending', provider = $2, provider_checkout_id = $3,
+          payment_due_at = $4, updated_at = CURRENT_TIMESTAMP
+         WHERE order_id = $1 AND status <> 'paid'
+         RETURNING *`,
+        [orderId, provider, providerCheckoutId, paymentDueAt]
+      );
+      return result.rows[0] || null;
+    },
+
+    async markOrderPaymentFailed(orderId) {
+      const result = await queryFn(
+        `UPDATE consultation_orders SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+         WHERE order_id = $1 AND status <> 'paid'
+         RETURNING *`,
+        [orderId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async ingestPaymentTransaction(record) {
       const inserted = await queryFn(
         `INSERT INTO payment_transactions (
           payment_transaction_id, order_id, provider, provider_event_id,
-          provider_payment_id, event_type, processing_status, amount_minor,
-          currency, signature_verified, payload_hash, received_at, attempts
-        ) VALUES ($1, $2, $3, $4, $5, $6, 'verified', $7, $8, TRUE, $9, CURRENT_TIMESTAMP, 1)
+          provider_payment_id, provider_checkout_id, event_type, processing_status, amount_minor,
+          currency, signature_verified, payload_hash, provider_paid_at,
+          received_at, attempts
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                  CURRENT_TIMESTAMP, 0)
         ON CONFLICT (provider, provider_event_id) DO NOTHING
         RETURNING *`,
         [
           record.payment_transaction_id, record.order_id, record.provider,
-          record.provider_event_id, record.provider_payment_id, record.event_type,
-          record.amount_minor, record.currency, record.payload_hash,
+          record.provider_event_id, record.provider_payment_id, record.provider_checkout_id,
+          record.event_type, record.processing_status, record.amount_minor,
+          record.currency, record.signature_verified, record.payload_hash,
+          record.provider_paid_at,
+        ]
+      );
+      if (inserted.rows[0]) return { transaction:inserted.rows[0], duplicate:false };
+      const existing = await queryFn(
+        'SELECT * FROM payment_transactions WHERE provider = $1 AND provider_event_id = $2',
+        [record.provider, record.provider_event_id]
+      );
+      return { transaction:existing.rows[0] || null, duplicate:true };
+    },
+
+    async findPaymentTransaction(provider, providerEventId) {
+      const result = await queryFn(
+        'SELECT * FROM payment_transactions WHERE provider = $1 AND provider_event_id = $2',
+        [provider, providerEventId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async findLatestPaymentTransactionForOrder(orderId) {
+      const result = await queryFn(
+        `SELECT * FROM payment_transactions
+         WHERE order_id = $1
+         ORDER BY received_at DESC, payment_transaction_id DESC
+         LIMIT 1`,
+        [orderId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async markPaymentTransactionVerified(paymentTransactionId) {
+      const result = await queryFn(
+        `UPDATE payment_transactions SET
+          signature_verified = TRUE, processing_status = 'verified',
+          processed_at = NULL, failure_code = NULL, attempts = attempts + 1
+         WHERE payment_transaction_id = $1
+         RETURNING *`,
+        [paymentTransactionId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async insertPaymentTransaction(record) {
+      const inserted = await queryFn(
+        `INSERT INTO payment_transactions (
+          payment_transaction_id, order_id, provider, provider_event_id,
+          provider_payment_id, provider_checkout_id, event_type, processing_status, amount_minor,
+          currency, signature_verified, payload_hash, provider_paid_at,
+          received_at, attempts
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'verified', $8, $9, TRUE, $10, $11, CURRENT_TIMESTAMP, 1)
+        ON CONFLICT (provider, provider_event_id) DO NOTHING
+        RETURNING *`,
+        [
+          record.payment_transaction_id, record.order_id, record.provider,
+          record.provider_event_id, record.provider_payment_id, record.provider_checkout_id,
+          record.event_type,
+          record.amount_minor, record.currency, record.payload_hash, record.provider_paid_at || null,
         ]
       );
       if (inserted.rows[0]) return { transaction: inserted.rows[0], duplicate: false };
