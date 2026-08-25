@@ -2,16 +2,20 @@ const { withTransaction } = require('../db');
 const { createConsultationRepository } = require('./consultationRepository');
 const { createConsultationPaymentIngestionService } = require('./consultationPaymentIngestionService');
 const { ConsultationDomainError } = require('../domain/consultation');
+const { createConsultationPaymentProvider } = require('../providers/consultationPaymentProviderFactory');
 
 function createConsultationPaymentReconciliationService({
   repository = createConsultationRepository(),
   transaction = withTransaction,
   ingestionService = null,
+  providerFactory = createConsultationPaymentProvider,
 } = {}) {
   const ingestion = ingestionService || createConsultationPaymentIngestionService({repository,transaction});
 
   async function reconcileOrder({ orderId, provider } = {}) {
-    if (!orderId || !provider || typeof provider.retrievePayment !== 'function') {
+    if (!orderId) throw new ConsultationDomainError('RECONCILIATION_INPUT_REQUIRED');
+    const paymentProvider=provider || providerFactory();
+    if (!paymentProvider || typeof paymentProvider.retrievePayment !== 'function') {
       throw new ConsultationDomainError('RECONCILIATION_INPUT_REQUIRED');
     }
     const initialOrder = await repository.findOrder(orderId);
@@ -21,7 +25,7 @@ function createConsultationPaymentReconciliationService({
       return { status:'processed', duplicate:true, order:initialOrder, consultationCase:existingCase };
     }
 
-    const payment = await provider.retrievePayment({
+    const payment = await paymentProvider.retrievePayment({
       orderId,
       providerCheckoutId:initialOrder.provider_checkout_id,
     });

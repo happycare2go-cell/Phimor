@@ -7,11 +7,15 @@ const { createConsultationReadService } = require('../services/consultationReadS
 const { createConsultationMessageService } = require('../services/consultationMessageService');
 const { createConsultationRateLimitService } = require('../services/consultationRateLimitService');
 const { classifyConsultationSafety } = require('../services/consultationSafetyService');
+const { createConsultationCheckoutService } = require('../services/consultationCheckoutService');
+const { createConsultationPaymentStatusService } = require('../services/consultationPaymentStatusService');
+const { createConsultationPaymentProvider } = require('../providers/consultationPaymentProviderFactory');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function consultationError(res, error) {
-  const code = error?.code || 'CONSULTATION_UNAVAILABLE';
+  const rawCode = error?.code || 'CONSULTATION_UNAVAILABLE';
+  const code = rawCode.startsWith('OMISE_') ? 'PAYMENT_PROVIDER_UNAVAILABLE' : rawCode;
   const status = Number.isInteger(error?.status) ? error.status : 400;
   if (status===429 && Number.isFinite(error?.retryAfterMs)) {
     res.setHeader('Retry-After',Math.max(1,Math.ceil(error.retryAfterMs/1000)));
@@ -34,6 +38,8 @@ function createConsultationsRouter(overrides = {}) {
   const reads = overrides.readService || createConsultationReadService(overrides.readDependencies);
   const messages = overrides.messageService || createConsultationMessageService(overrides.messageDependencies);
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
+  const checkout = overrides.checkoutService || createConsultationCheckoutService(overrides.checkoutDependencies);
+  const paymentStatus = overrides.paymentStatusService || createConsultationPaymentStatusService(overrides.paymentStatusDependencies);
 
   router.use(auth);
   router.use((req, res, next) => {
@@ -97,6 +103,28 @@ function createConsultationsRouter(overrides = {}) {
       });
     }
     return res.json(classifyConsultationSafety(req.body?.question));
+  }));
+
+  router.post('/checkout', asyncHandler(async (req,res)=>{
+    const keys=req.body&&typeof req.body==='object'?Object.keys(req.body):[];
+    if(keys.some((key)=>!['careProfileId','question','termsAccepted','termsVersion'].includes(key)))return res.status(400).json({status:'invalid_request',errorCode:'UNSUPPORTED_FIELD'});
+    if(!IDENTIFIER_PATTERN.test(req.body?.careProfileId||''))return res.status(400).json({status:'invalid_request',errorCode:'INVALID_CARE_PROFILE_ID'});
+    if(typeof req.body?.question!=='string'||!req.body.question.trim()||req.body.question.length>4000)return res.status(400).json({status:'invalid_request',errorCode:'INVALID_QUESTION'});
+    if(req.body?.termsAccepted!==true)return res.status(400).json({status:'invalid_request',errorCode:'TERMS_NOT_ACCEPTED'});
+    const safety=classifyConsultationSafety(req.body.question);
+    if(safety.action!=='pharmacist_consultation_eligible')return res.status(403).json(safety);
+    try{
+      rates.requireCheckout(req.user.lineUserId,req.consultationConfig);
+      const provider=overrides.paymentProvider||createConsultationPaymentProvider(overrides.paymentProviderOptions);
+      const result=await checkout.prepareCheckout({lineUserId:req.user.lineUserId,careProfileId:req.body.careProfileId,initialQuestion:req.body.question,termsAccepted:true,termsVersion:req.body.termsVersion,provider,config:req.consultationConfig});
+      return res.status(201).json({status:result.status,orderId:result.orderId,amountMinor:result.amountMinor,currency:result.currency,durationMinutes:result.durationMinutes,termsVersion:result.termsVersion,payment:result.paymentInstructions});
+    }catch(error){return consultationError(res,error);}
+  }));
+
+  router.get('/orders/:orderId/status',asyncHandler(async(req,res)=>{
+    if(!IDENTIFIER_PATTERN.test(req.params.orderId))return res.status(400).json({status:'invalid_request',errorCode:'INVALID_ORDER_ID'});
+    try{return res.json(await paymentStatus.getStatus({orderId:req.params.orderId,lineUserId:req.user.lineUserId}));}
+    catch(error){return consultationError(res,error);}
   }));
 
   router.get('/:caseId', asyncHandler(async (req, res) => {

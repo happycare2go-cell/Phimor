@@ -67,6 +67,7 @@ function createConsultationCheckoutService({
       durationMinutes:pendingOrder.duration_minutes,
       termsVersion:pendingOrder.terms_version,
       termsAcceptedAt:pendingOrder.terms_accepted_at,
+      paymentInstructions:checkout.paymentInstructions || null,
     };
   }
 

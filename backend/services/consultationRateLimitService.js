@@ -41,6 +41,9 @@ function createConsultationRateLimitService({ limiter = rateLimiter, configLoade
     checkCheckout(lineUserId, config = configLoader()) {
       return check(`consultation:checkout:${lineUserId}`, limits(config).checkoutAttemptsPer10Minutes, 10*60*1000);
     },
+    requireCheckout(lineUserId,config=configLoader()) {
+      return enforce(check(`consultation:checkout:${lineUserId}`, limits(config).checkoutAttemptsPer10Minutes, 10*60*1000));
+    },
     checkMessage({caseId,actorType,actorId}, config = configLoader()) {
       return checkMessage({caseId,actorType,actorId},config);
     },

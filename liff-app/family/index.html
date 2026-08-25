@@ -148,8 +148,9 @@
           <button type="button" class="btn btn-primary" id="consultationContinueButton" disabled>ดำเนินการต่อ</button>
         </div>
         <div id="consultationPayment" class="consultation-payment" hidden>
-          <strong>ระบบชำระเงินกำลังเตรียมเปิดใช้งาน</strong>
-          <p>ยังไม่มีการชำระเงินจริงหรือการสร้างคิวจากหน้านี้</p>
+          <strong>PromptPay • 100 บาท</strong>
+          <p id="consultationPaymentText">ระบบชำระเงินกำลังเตรียมเปิดใช้งาน</p>
+          <img id="consultationPaymentQr" class="consultation-payment__qr" alt="PromptPay QR สำหรับชำระ Consult Case" hidden>
         </div>
         <button type="button" class="btn btn-outline" id="consultationCancelButton">ยกเลิกและล้างคำถาม</button>
       </div>
@@ -436,7 +437,8 @@ async function ensureConsultationUI(){
   if(!window.PhimorFamilyConsultationUI)return;
   if(!CONSULTATION_UI){
     let controller=null;
-    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,onChange:(state)=>controller?.render(state)});
+    const checkoutAdapter=({careProfileId,question,termsVersion})=>consultationApi('/api/consultations/checkout',{method:'POST',body:JSON.stringify({careProfileId,question,termsAccepted:true,termsVersion})});
+    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,checkoutAdapter,onChange:(state)=>controller?.render(state)});
     controller=window.PhimorFamilyConsultationUI.createController({doc:document,session});
     CONSULTATION_UI={session,controller};
   }

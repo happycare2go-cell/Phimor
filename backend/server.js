@@ -15,6 +15,7 @@ const adminRouter = require('./routes/admin');
 const externalRouter = require('./routes/external');
 const plusRouter = require('./routes/plus');
 const consultationsRouter = require('./routes/consultations');
+const omiseWebhookRouter = require('./routes/omiseWebhook');
 const pharmacistConsultationsRouter = require('./routes/pharmacistConsultations');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
@@ -49,6 +50,7 @@ app.use(cors({
 }));
 
 app.use(webhookRouter);
+app.use('/api/payments/omise/webhook', express.raw({ type:'application/json', limit:'256kb' }), omiseWebhookRouter);
 app.use(express.json({ limit: '10mb' }));
 
 app.use('/api', (req, res, next) => {
