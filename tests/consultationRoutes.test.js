@@ -230,6 +230,25 @@ test('domain expiry errors return safe response without stack or database detail
   });
 });
 
+test('unexpected database errors become a generic safe unavailable envelope', async () => {
+  const databaseError=Object.assign(new Error('relation consultation_messages does not exist'),{
+    code:'42P01',status:500,stack:'PRIVATE_SQL_STACK',
+  });
+  await withApi({pharmacist:{
+    readService:reads(),
+    messageService:{async sendMessage(){throw databaseError;}},
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/CASE-1/messages',{
+      method:'POST',body:JSON.stringify({body:'ขอข้อมูลเพิ่ม',idempotencyKey:'K-SAFE'}),
+    },'U-PHARM');
+    assert.equal(response.status,503);
+    const body=await response.json();
+    assert.equal(body.errorCode,'CONSULTATION_UNAVAILABLE');
+    const serialized=JSON.stringify(body);
+    assert.doesNotMatch(serialized,/42P01|relation|PRIVATE_SQL_STACK/);
+  });
+});
+
 test('message and pharmacist acceptance routes enforce consultation-specific rate limits',async()=>{
   const seen=[];
   const rateLimitService={
