@@ -69,7 +69,11 @@ function parseQueueCursor(value) {
   } catch (_) { throw new ConsultationDomainError('INVALID_QUEUE_CURSOR'); }
 }
 
-function projectCase(row, { includeQuestion = false, includeClassification = false } = {}) {
+function projectCase(row, {
+  includeQuestion = false,
+  includeClassification = false,
+  includePaymentReference = false,
+} = {}) {
   const now=new Date(row.database_now || Date.now());
   const state = effectiveConsultationState(row, now);
   const expiresAt=row.expires_at ? new Date(row.expires_at) : null;
@@ -89,6 +93,7 @@ function projectCase(row, { includeQuestion = false, includeClassification = fal
     remainingSeconds,
     messageCursor:{lastSequence:Number(row.last_message_sequence || 0)},
   };
+  if (includePaymentReference) result.paymentReference = row.order_id;
   if (includeQuestion) result.initialQuestion = row.initial_question;
   if (includeClassification) {
     const classification=classifyConsultationSafety(row.initial_question || '');
@@ -145,7 +150,7 @@ function createConsultationReadService({
       if (careProfileId && row.care_profile_id !== careProfileId) continue;
       try {
         await authorizeFamilyCase(row, lineUserId);
-        allowed.push(projectCase(row));
+        allowed.push(projectCase(row, { includePaymentReference:true }));
       } catch (_) {
         // A revoked relationship must not leak a case through a collection response.
       }
@@ -156,7 +161,7 @@ function createConsultationReadService({
   async function getFamilyCase({ caseId, lineUserId } = {}) {
     const row = await repository.findCaseForRead(caseId);
     await authorizeFamilyCase(row, lineUserId);
-    return projectCase(row, { includeQuestion:true });
+    return projectCase(row, { includeQuestion:true, includePaymentReference:true });
   }
 
   async function listQueue({

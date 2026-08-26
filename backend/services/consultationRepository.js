@@ -216,6 +216,45 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async findPaymentSupportRecord(reference) {
+      const result = await queryFn(
+        `SELECT
+           o.order_id, o.status AS order_status, o.provisioning_status,
+           o.amount_minor, o.currency, o.provider, o.provider_checkout_id,
+           o.payment_due_at, o.paid_at, o.created_at, o.updated_at,
+           c.case_id, c.state AS case_state, c.queued_at, c.accepted_at,
+           c.expires_at, c.closed_at, c.close_reason,
+           p.provider_event_id, p.provider_payment_id,
+           p.processing_status AS payment_processing_status,
+           p.failure_code AS payment_failure_code,
+           p.received_at AS payment_received_at,
+           p.processed_at AS payment_processed_at
+         FROM consultation_orders o
+         LEFT JOIN consultation_cases c ON c.order_id = o.order_id
+         LEFT JOIN LATERAL (
+           SELECT pt.provider_event_id, pt.provider_payment_id,
+                  pt.processing_status, pt.failure_code,
+                  pt.received_at, pt.processed_at
+           FROM payment_transactions pt
+           WHERE pt.order_id = o.order_id
+           ORDER BY pt.received_at DESC, pt.payment_transaction_id DESC
+           LIMIT 1
+         ) p ON TRUE
+         WHERE o.order_id = $1
+            OR c.case_id = $1
+            OR o.provider_checkout_id = $1
+            OR EXISTS (
+              SELECT 1 FROM payment_transactions lookup
+              WHERE lookup.order_id = o.order_id
+                AND (lookup.provider_payment_id = $1 OR lookup.provider_event_id = $1)
+            )
+         ORDER BY o.created_at DESC
+         LIMIT 1`,
+        [reference]
+      );
+      return result.rows[0] || null;
+    },
+
     async listEligiblePharmacists() {
       const result = await queryFn(
         `SELECT pharmacist_id, line_user_id, status, license_verified_at

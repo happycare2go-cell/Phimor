@@ -17,6 +17,7 @@ const { createPharmacistAssistantService }=require('../backend/services/pharmaci
 const NOW='2026-08-25T10:00:00.000Z';
 const CASE={
   case_id:'CASE-1',care_profile_id:'CP-1',assigned_pharmacist_id:'PH-1',
+  customer_line_user_id:'U-FAMILY',
   state:'active',initial_question:'ยาครั้งนี้เปลี่ยนอะไร และมีนัดเมื่อไร',
   order_status:'paid',provisioning_status:'provisioned',
   accepted_at:'2026-08-25T00:00:00.000Z',expires_at:'2026-08-26T00:00:00.000Z',database_now:NOW,
@@ -41,6 +42,7 @@ function contextDependencies(overrides={}) {
       ];},
     },
     pharmacistAccounts:{async requireActive(){return {pharmacistId:'PH-1',status:'active',licenseVerifiedAt:NOW};}},
+    async authorize(input){assert.equal(input.lineUserId,'U-FAMILY');assert.equal(input.careProfileId,'CP-1');return {careProfile:PROFILE};},
     careProfiles:{async findOne(predicate){return predicate(PROFILE)?PROFILE:null;}},
     medicationSnapshots:{async findWhere(predicate){return SNAPSHOTS.filter(predicate);}},
     appointments:{async findWhere(predicate){return [{appointment_id:'A-1',care_profile_id:'CP-1',datetime:'2026-08-30T10:00:00.000Z',hospital:'Hospital',status:'active',phone:'0833333333'}].filter(predicate);}},
@@ -97,6 +99,20 @@ test('unassigned pharmacist is denied before clinical stores are read',async()=>
     careProfiles:{async findOne(){reads+=1;return PROFILE;}},
   });
   await assert.rejects(createConsultationContextBuilder(deps)({caseId:'CASE-1',pharmacistLineUserId:'U-X'}),{code:'CONSULTATION_ACCESS_DENIED'});
+  assert.equal(reads,0);
+});
+
+test('revoked Family access blocks fresh AI clinical context before profile stores are read',async()=>{
+  let reads=0;
+  const revoked=Object.assign(new Error('revoked'),{code:'MEMBERSHIP_REVOKED',status:403});
+  const deps=contextDependencies({
+    async authorize(){throw revoked;},
+    careProfiles:{async findOne(){reads+=1;return PROFILE;}},
+  });
+  await assert.rejects(
+    createConsultationContextBuilder(deps)({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM'}),
+    {code:'MEMBERSHIP_REVOKED'}
+  );
   assert.equal(reads,0);
 });
 

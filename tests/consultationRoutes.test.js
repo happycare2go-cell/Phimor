@@ -259,6 +259,20 @@ test('unexpected database errors become a generic safe unavailable envelope', as
   assert.doesNotMatch(JSON.stringify(operationalEvents),/consultation_messages|PRIVATE_SQL_STACK|ขอข้อมูลเพิ่ม|U-PHARM|CASE-1/);
 });
 
+test('assigned pharmacist context route returns separated contact/profile data without LINE IDs',async()=>{
+  const seen=[];
+  await withApi({pharmacist:{
+    readService:reads(),
+    caseContextService:{async getCaseContext(input){seen.push(input);return {caseId:input.caseId,contact:{displayName:'ญาติผู้ดูแล',pictureUrl:null},careProfile:{patientName:'คุณยาย'},currentMedications:[],upcomingAppointments:[]};}},
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/CASE-1/context',{},'U-PHARM');
+    assert.equal(response.status,200);const body=await response.json();
+    assert.equal(body.contact.displayName,'ญาติผู้ดูแล');assert.equal(body.careProfile.patientName,'คุณยาย');
+    assert.equal(JSON.stringify(body).includes('U-PHARM'),false);
+  });
+  assert.deepEqual(seen,[{caseId:'CASE-1',pharmacistLineUserId:'U-PHARM'}]);
+});
+
 test('resolve write failures have a distinct correlation reference without leaking PostgreSQL details',async()=>{
   const operationalEvents=[];
   const databaseError=Object.assign(new Error('null value violates constraint'),{code:'23502',detail:'PRIVATE_ROW'});
