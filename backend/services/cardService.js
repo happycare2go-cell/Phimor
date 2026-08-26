@@ -11,7 +11,7 @@ const { PendingCards, Residents, GroupBindings, CareProfiles, Appointments, Medi
 const aiProvider = require('../providers/aiProvider');
 const lineClient = require('../providers/lineClient');
 const { matchResident } = require('../utils/nameMatch');
-const { createLabDocumentIngestionService } = require('./labDocumentIngestionService');
+const { createLabDocumentIngestionService, sourceImageProjection } = require('./labDocumentIngestionService');
 
 let labDocumentIngestionService = null;
 
@@ -142,20 +142,27 @@ async function getCardForEdit(cardId, lineUserId = null) {
     if (!lineUserId) return { ok: false, reason: 'ไม่พบตัวตนผู้ตรวจสอบผล Lab' };
     const review = await getLabDocumentIngestionService().getReview({ cardId, lineUserId });
     if (!review.ok) {
+      const sourceImage = sourceImageProjection(card);
       return {
         ...review,
         card: {
           cardId: card.card_id, centerId: card.center_id, residentId: card.resident_id,
           status: card.status, documentSubtype: 'lab_report', createdAt: card.created_at,
         },
-        imageBase64: card.image_base64 || null,
-        imageMimeType: card.image_mime_type || null,
+        sourceImage,
+        imageBase64: sourceImage.status === 'available' ? card.image_base64 : null,
+        imageMimeType: sourceImage.mimeType,
       };
     }
     return review;
   }
   const resident = card.resident_id ? await Residents.findOne((r) => r.resident_id === card.resident_id) : null;
-  return { card, resident, current: card.edited_result || card.ai_result, imageBase64: card.image_base64 || null };
+  const sourceImage = sourceImageProjection(card);
+  return {
+    card, resident, current: card.edited_result || card.ai_result, sourceImage,
+    imageBase64: sourceImage.status === 'available' ? card.image_base64 : null,
+    imageMimeType: sourceImage.mimeType,
+  };
 }
 
 // ── FR-E3, E6, E7, E8: บันทึกการแก้ไข พร้อมทำเครื่องหมายว่าช่องไหนถูกแก้ ──
@@ -236,6 +243,13 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   if (!resident) return { ok:false, reason:'ผู้พักไม่ได้อยู่ในสาขานี้แล้ว กรุณายกเลิกรายการ' };
 
   if ((card.document_subtype || card.ai_result?.documentSubtype) === 'lab_report') {
+    if (card.lab_extraction_status !== 'reviewed') {
+      return {
+        ok: false,
+        reason: 'กรุณาเปิดหน้าตรวจสอบผล Lab เทียบเอกสารต้นฉบับ และบันทึกฉบับร่างก่อนยืนยัน',
+        requiresReview: true,
+      };
+    }
     let confirmed;
     try {
       confirmed = await getLabDocumentIngestionService().confirmReview({
@@ -246,7 +260,10 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
         ok: false,
         reason: error?.code === 'CONFIRMATION_REQUIRES_OBSERVATIONS'
           ? 'กรุณาตรวจสอบและเพิ่มรายการผล Lab อย่างน้อย 1 รายการก่อนยืนยัน'
-          : 'ยังยืนยันผล Lab ไม่สำเร็จ กรุณาตรวจสอบข้อมูลและลองใหม่',
+          : error?.code === 'LAB_REVIEW_REQUIRED'
+            ? 'กรุณาเปิดหน้าตรวจสอบผล Lab เทียบเอกสารต้นฉบับ และบันทึกฉบับร่างก่อนยืนยัน'
+            : 'ยังยืนยันผล Lab ไม่สำเร็จ กรุณาตรวจสอบข้อมูลและลองใหม่',
+        requiresReview: error?.code === 'LAB_REVIEW_REQUIRED',
       };
     }
     if (!confirmed.ok) return { ok: false, reason: 'ยังไม่สามารถสร้างผล Lab สำหรับ Care Profile นี้ได้' };

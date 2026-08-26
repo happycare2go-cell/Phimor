@@ -53,3 +53,23 @@ test('พนักงานทั่วไปผ่าน reviewer guard ได�
   assert.equal(nextCalled,false);
   assert.equal(response.statusCode,403);
 });
+
+test('crafted generic confirm request cannot bypass the persisted Lab reviewer step', async () => {
+  const { center, card } = await setup();
+  const { resident } = await centerService.addResident({ centerId: center.center_id, fullName: 'ผู้พัก Lab' });
+  await db.PendingCards.update((item) => item.card_id === card.card_id, {
+    resident_id: resident.resident_id,
+    document_subtype: 'lab_report',
+    ai_result: { documentSubtype: 'lab_report' },
+    lab_extraction_status: 'draft_created',
+  });
+  const response = await fetch(`${baseUrl}/api/cards/CARD1/confirm`, {
+    method: 'POST',
+    headers: { 'X-Line-User-Id': 'U_OWNER', 'content-type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.match(body.message, /หน้าตรวจสอบผล Lab/);
+  assert.equal((await db.PendingCards.findOne((item) => item.card_id === 'CARD1')).status, 'pending');
+});

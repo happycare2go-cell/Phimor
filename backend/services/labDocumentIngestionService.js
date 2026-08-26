@@ -14,6 +14,7 @@ const SAFE_REVIEW_OBSERVATION_FIELDS = Object.freeze([
   'sourceUnit', 'referenceRangeText', 'referenceLow', 'referenceHigh', 'abnormalFlagSource',
   'specimenSource', 'methodSource', 'sourcePage', 'sourceRegion', 'extractionConfidence',
 ]);
+const SAFE_REVIEW_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 class LabDocumentIngestionError extends Error {
   constructor(code, status = 400) {
@@ -35,6 +36,31 @@ function safeCardProjection(card) {
     labExtractionErrorCode: card.lab_extraction_error_code || null,
     createdAt: card.created_at,
   };
+}
+
+function sourceImageProjection(card) {
+  if (card.image_base64) {
+    if (!SAFE_REVIEW_IMAGE_MIME_TYPES.has(card.image_mime_type)) {
+      return { status: 'unsupported', mimeType: null, purgedAt: null };
+    }
+    return {
+      status: 'available',
+      mimeType: card.image_mime_type,
+      purgedAt: null,
+    };
+  }
+  if (card.source_image_purged_at) {
+    return { status: 'purged', mimeType: null, purgedAt: card.source_image_purged_at };
+  }
+  return { status: 'unavailable', mimeType: null, purgedAt: null };
+}
+
+function safeUncertainFields(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => typeof item === 'string' && item.trim())
+    .slice(0, 100)
+    .map((item) => item.normalize('NFC').trim().slice(0, 200));
 }
 
 function normalizeReviewPatch(input = {}) {
@@ -202,14 +228,16 @@ function createLabDocumentIngestionService(overrides = {}) {
     const ensured = await ensureDraftForPendingCard({ cardId, lineUserId });
     if (!ensured.ok) return ensured;
     const card = await cards.findOne((item) => item.card_id === cardId);
+    const sourceImage = sourceImageProjection(card);
     return {
       ok: true,
       card: safeCardProjection(card),
       labDraft: ensured.report,
       reviewStatus: ensured.report.status === 'draft' ? 'รอตรวจสอบ' : 'ยืนยันแล้ว',
-      uncertainFields: Array.isArray(card.lab_uncertain_fields) ? card.lab_uncertain_fields : [],
-      imageBase64: card.image_base64 || null,
-      imageMimeType: card.image_mime_type || null,
+      uncertainFields: safeUncertainFields(card.lab_uncertain_fields),
+      sourceImage,
+      imageBase64: sourceImage.status === 'available' ? card.image_base64 : null,
+      imageMimeType: sourceImage.mimeType,
     };
   }
 
@@ -238,6 +266,9 @@ function createLabDocumentIngestionService(overrides = {}) {
     if (ensured.report.status === 'confirmed') {
       return { ok: true, report: ensured.report, careProfileId: ensured.careProfileId, alreadyConfirmed: true };
     }
+    if (card.lab_extraction_status !== 'reviewed') {
+      throw new LabDocumentIngestionError('LAB_REVIEW_REQUIRED', 409);
+    }
     const report = await labs.confirmDraft({
       careProfileId: ensured.careProfileId,
       reportId: ensured.report.reportId,
@@ -259,5 +290,6 @@ function createLabDocumentIngestionService(overrides = {}) {
 
 module.exports = {
   createLabDocumentIngestionService, LabDocumentIngestionError,
-  safeCardProjection, normalizeReviewPatch, candidateToDraftInput,
+  safeCardProjection, sourceImageProjection, safeUncertainFields,
+  normalizeReviewPatch, candidateToDraftInput,
 };

@@ -32,7 +32,11 @@ function fakeIngestion(overrides = {}) {
     async extractDraftCandidate(input) { calls.push({ operation: 'extract', input }); return candidate(); },
     async ensureDraftForPendingCard(input) { calls.push({ operation: 'ensure', input }); return { ok: true, created: true, report, careProfileId: 'CP-1' }; },
     async getReview(input) { calls.push({ operation: 'get', input }); return { ok: true, card: { cardId: input.cardId, residentId: 'RES-1', documentSubtype: 'lab_report', status: 'pending' }, labDraft: report, imageBase64: null }; },
-    async updateReview(input) { calls.push({ operation: 'update', input }); return { ok: true, report: { ...report, ...input.labReport } }; },
+    async updateReview(input) {
+      calls.push({ operation: 'update', input });
+      await db.PendingCards.update((item) => item.card_id === input.cardId, { lab_extraction_status: 'reviewed' });
+      return { ok: true, report: { ...report, ...input.labReport } };
+    },
     async confirmReview(input) { calls.push({ operation: 'confirm', input }); return { ok: true, careProfileId: 'CP-1', report: { ...report, status: 'confirmed' } }; },
     ...overrides,
   };
@@ -99,6 +103,7 @@ test('Lab confirmation delegates to Lab 1A and never creates medication or appoi
   cardService.setLabDocumentIngestionServiceForTests(ingestion);
   aiProvider.queueMockResponse(labClassifier());
   const { card } = await cardService.handleIncomingPhoto({ centerId: center.center_id, imageBuffer: Buffer.from('lab'), submittedBy: 'U-OWNER' });
+  await cardService.patchCard(card.card_id, { labReport: { ...candidate().report, observations: candidate().observations } }, 'U-OWNER');
   const result = await cardService.confirmCard(card.card_id, 'U-OWNER', 'ผู้จัดการ');
   assert.equal(result.ok, true);
   assert.equal(result.labReport.status, 'confirmed');
@@ -108,6 +113,21 @@ test('Lab confirmation delegates to Lab 1A and never creates medication or appoi
   assert.equal((await db.MedicationSnapshots.findAll()).length, 0);
   const saved = await db.PendingCards.findOne((item) => item.card_id === card.card_id);
   assert.equal(saved.status, 'confirmed');
+});
+
+test('owner or manager cannot confirm an untouched Lab AI draft through the generic card path', async () => {
+  const { center } = await setup();
+  const ingestion = fakeIngestion();
+  cardService.setLabDocumentIngestionServiceForTests(ingestion);
+  aiProvider.queueMockResponse(labClassifier());
+  const { card } = await cardService.handleIncomingPhoto({ centerId: center.center_id, imageBuffer: Buffer.from('lab'), submittedBy: 'U-OWNER' });
+  await cardService.getCardForEdit(card.card_id, 'U-OWNER');
+  const result = await cardService.confirmCard(card.card_id, 'U-OWNER', 'ผู้จัดการ');
+  assert.equal(result.ok, false);
+  assert.equal(result.requiresReview, true);
+  assert.match(result.reason, /หน้าตรวจสอบผล Lab/);
+  assert.equal(ingestion.calls.filter((call) => call.operation === 'confirm').length, 0);
+  assert.equal((await db.PendingCards.findOne((item) => item.card_id === card.card_id)).status, 'pending');
 });
 
 test('ordinary center staff can review a Lab draft but Lab 1A remains confirmation authority', async () => {

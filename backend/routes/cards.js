@@ -97,7 +97,7 @@ router.post('/cards/:cardId/confirm', assertCardBelongsToRequesterCenter, requir
   const profile = await lineClient.getProfile(req.user.lineUserId);
   const result = await cardService.confirmCard(req.params.cardId, req.user.lineUserId, profile.displayName);
   if (!result.ok) {
-    const statusCode = result.alreadyConfirmed || result.expired ? 409 : 400;
+    const statusCode = result.alreadyConfirmed || result.expired || result.requiresReview ? 409 : 400;
     return res.status(statusCode).json({ error: 'bad_request', message: result.reason });
   }
   res.json(result);

@@ -10,6 +10,7 @@ const pages = {
   register: fs.readFileSync(path.join(root, 'register', 'index.html'), 'utf8'),
   admin: fs.readFileSync(path.join(root, 'system-admin', 'index.html'), 'utf8'),
 };
+const centerLabRuntime = fs.readFileSync(path.join(root, 'center-admin', 'lab-review-runtime.js'), 'utf8');
 
 test('ทุก LIFF page มี LINE SDK, init, login และข้อความผิดพลาดที่ผู้ใช้มองเห็น', () => {
   for (const [name, html] of Object.entries(pages)) {
@@ -69,5 +70,10 @@ test('Center reviewer แยก Lab draft จากข้อมูลยืน�
   assert.match(pages.center, /confirmLabReview\s*\(/);
   assert.match(pages.center, /\/api\/cards\/\$\{cardId\}\/confirm/);
   assert.match(pages.center, /ต้องให้เจ้าของหรือผู้จัดการศูนย์เป็นผู้ยืนยัน/);
+  assert.match(pages.center, /ข้อมูลที่ควรตรวจสอบเป็นพิเศษ/);
+  assert.match(pages.center, /ecSourceImageStatus/);
+  assert.match(pages.center, /\.\/lab-review-runtime\.js/);
+  assert.match(centerLabRuntime, /source\.mimeType \|\| payload\.imageMimeType/);
+  assert.doesNotMatch(pages.center, /data:image\/jpeg;base64,\$\{data\.imageBase64\}/);
   assert.doesNotMatch(pages.center, /loincCode|ucumUnit|comparisonKey/);
 });

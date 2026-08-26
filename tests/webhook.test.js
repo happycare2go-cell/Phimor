@@ -127,6 +127,25 @@ test('Flow เต็มผ่าน HTTP: พนักงานทักใน�
   assert.ok(familyPush, 'ครอบครัวต้องได้รับข้อความหลังผู้จัดการยืนยัน');
 });
 
+test('crafted LINE confirm_card postback cannot bypass Center Lab review', async () => {
+  const center = await centerService.createCenter({ name: 'ศูนย์ Lab', ownerLineId: 'U_OWNER' });
+  const { resident } = await centerService.addResident({ centerId: center.center_id, fullName: 'ผู้พัก Lab' });
+  await db.PendingCards.insert({
+    card_id: 'CARD-LAB-UNREVIEWED', center_id: center.center_id, resident_id: resident.resident_id,
+    document_subtype: 'lab_report', ai_result: { documentSubtype: 'lab_report' },
+    status: 'pending', lab_extraction_status: 'draft_created', created_at: new Date().toISOString(),
+  });
+  await postWebhook([{
+    type: 'postback', replyToken: 'RT-LAB-GUARD',
+    postback: { data: 'action=confirm_card&cardId=CARD-LAB-UNREVIEWED' },
+    source: { type: 'user', userId: 'U_OWNER' },
+  }]);
+  const card = await db.PendingCards.findOne((item) => item.card_id === 'CARD-LAB-UNREVIEWED');
+  assert.equal(card.status, 'pending');
+  const reply = lineClient.getSentLog().find((item) => item.type === 'reply' && item.replyToken === 'RT-LAB-GUARD');
+  assert.match(reply.messages[0].text, /หน้าตรวจสอบผล Lab/);
+});
+
 test('ส่งรูปในกลุ่มงานศูนย์ ต้องไม่ประมวลผล และแนะนำให้ส่งส่วนตัวแทน', async () => {
   const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
   await centerService.bindGroupToCenter({ centerId: center.center_id, groupId: 'G_CENTER', requesterLineId: 'U_OWNER' });

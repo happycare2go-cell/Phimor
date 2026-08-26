@@ -154,9 +154,24 @@ test('review updates delegate to Lab 1A and strip coding/normalization/trend fie
 test('human confirmation delegates exclusively to Lab 1A confirmDraft', async () => {
   const { service, state } = fixture();
   await service.ensureDraftForPendingCard({ cardId: 'CARD-1', lineUserId: 'U-MANAGER' });
+  await service.updateReview({
+    cardId: 'CARD-1', lineUserId: 'U-MANAGER',
+    labReport: { observations: [{ analyteNameSource: 'HbA1c', sourceValueText: '6.8' }] },
+  });
   const result = await service.confirmReview({ cardId: 'CARD-1', lineUserId: 'U-MANAGER' });
   assert.equal(result.report.status, 'confirmed');
   assert.equal(state.calls.filter((call) => call.operation === 'confirmDraft').length, 1);
+});
+
+test('Pending Card Lab confirmation requires a persisted human review state', async () => {
+  const { service, state } = fixture();
+  await service.ensureDraftForPendingCard({ cardId: 'CARD-1', lineUserId: 'U-MANAGER' });
+  await assert.rejects(
+    service.confirmReview({ cardId: 'CARD-1', lineUserId: 'U-MANAGER' }),
+    (error) => error.code === 'LAB_REVIEW_REQUIRED' && error.status === 409,
+  );
+  assert.equal(state.calls.filter((call) => call.operation === 'confirmDraft').length, 0);
+  assert.equal(state.reports[0].status, 'draft');
 });
 
 test('AI extraction failure records a safe failure and creates no report or confirmed data', async () => {
@@ -184,4 +199,43 @@ test('review projection contains no LINE IDs, contacts, or Lab Base64 field', as
   const labProjection = JSON.stringify({ card: review.card, labDraft: review.labDraft });
   assert.doesNotMatch(labProjection, /submitted_by|line_user|family_phone|emergency|image_base64|PRIVATE IMAGE/i);
   assert.ok(review.imageBase64, 'authorized Pending Card reviewer still receives the existing source-image channel');
+  assert.deepEqual(review.sourceImage, { status: 'available', mimeType: 'image/jpeg', purgedAt: null });
+});
+
+test('review projection distinguishes purged, unavailable, and unsupported source images safely', async () => {
+  const purged = fixture();
+  purged.state.cards[0].image_base64 = null;
+  purged.state.cards[0].source_image_purged_at = '2026-11-26T00:00:00.000Z';
+  await purged.service.ensureDraftForPendingCard({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  await purged.service.updateReview({
+    cardId: 'CARD-1', lineUserId: 'U-MANAGER',
+    labReport: { observations: [{ analyteNameSource: 'HbA1c', sourceValueText: '6.8' }] },
+  });
+  await purged.service.confirmReview({ cardId: 'CARD-1', lineUserId: 'U-MANAGER' });
+  const purgedReview = await purged.service.getReview({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  assert.deepEqual(purgedReview.sourceImage, { status: 'purged', mimeType: null, purgedAt: '2026-11-26T00:00:00.000Z' });
+  assert.equal(purgedReview.imageBase64, null);
+  assert.equal(purgedReview.labDraft.status, 'confirmed');
+  assert.equal(purgedReview.labDraft.observations[0].analyteNameSource, 'HbA1c');
+
+  const unavailable = fixture();
+  unavailable.state.cards[0].image_base64 = null;
+  await unavailable.service.ensureDraftForPendingCard({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  assert.equal((await unavailable.service.getReview({ cardId: 'CARD-1', lineUserId: 'U-STAFF' })).sourceImage.status, 'unavailable');
+
+  const unsupported = fixture();
+  unsupported.state.cards[0].image_mime_type = 'image/svg+xml';
+  await unsupported.service.ensureDraftForPendingCard({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  const unsupportedReview = await unsupported.service.getReview({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  assert.equal(unsupportedReview.sourceImage.status, 'unsupported');
+  assert.equal(unsupportedReview.imageBase64, null);
+  assert.equal(unsupportedReview.imageMimeType, null);
+});
+
+test('review projection preserves only bounded uncertain-field labels for human attention', async () => {
+  const { service, state } = fixture();
+  await service.ensureDraftForPendingCard({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  state.cards[0].lab_uncertain_fields = [' observations[0].sourceUnit ', null, '', '<b>hospitalName</b>'];
+  const review = await service.getReview({ cardId: 'CARD-1', lineUserId: 'U-STAFF' });
+  assert.deepEqual(review.uncertainFields, ['observations[0].sourceUnit', '<b>hospitalName</b>']);
 });
