@@ -183,7 +183,9 @@ test('AI audit is metadata-only with no LINE ID or raw Lab content', async () =>
   assert.equal(audit.purpose, 'lab_explanation');
   assert.equal(audit.requesterLineId, null);
   assert.equal(audit.resultStatus, 'success');
-  const serialized = JSON.stringify(audit);
+  const { requestedAt, completedAt, ...nonTemporalAudit } = audit;
+  assert.ok(requestedAt); assert.ok(completedAt);
+  const serialized = JSON.stringify(nonTemporalAudit);
   for (const forbidden of ['LINE-SECRET', 'คำถามลับ', '6.1', '6.5', 'HbA1c']) assert.equal(serialized.includes(forbidden), false);
   assert.ok(audit.inputCharacterCount > 0);
 });
