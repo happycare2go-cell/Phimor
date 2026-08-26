@@ -3,26 +3,47 @@ const { createConsultationRepository } = require('./consultationRepository');
 const { createConsultationPaymentIngestionService } = require('./consultationPaymentIngestionService');
 const { ConsultationDomainError } = require('../domain/consultation');
 const { createConsultationPaymentProvider } = require('../providers/consultationPaymentProviderFactory');
+const { createConsultationPharmacistNotificationService } = require('./consultationPharmacistNotificationService');
 
 function createConsultationPaymentReconciliationService({
   repository = createConsultationRepository(),
   transaction = withTransaction,
   ingestionService = null,
   providerFactory = createConsultationPaymentProvider,
+  pharmacistNotifications = null,
+  operationalLogger = console.error,
 } = {}) {
-  const ingestion = ingestionService || createConsultationPaymentIngestionService({repository,transaction});
+  const notifications=pharmacistNotifications || createConsultationPharmacistNotificationService({repository});
+  const ingestion = ingestionService || createConsultationPaymentIngestionService({
+    repository,transaction,pharmacistNotifications:notifications,operationalLogger,
+  });
+
+  async function recoverQueuedNotification(consultationCase) {
+    if (!consultationCase?.case_id) return;
+    try { await notifications.notifyQueuedCase({caseId:consultationCase.case_id}); }
+    catch (_) {
+      try {
+        if (typeof operationalLogger==='function') operationalLogger({
+          event:'consultation_notification_reconciliation_failed',
+          safeErrorCode:'CONSULTATION_NOTIFICATION_ENQUEUE_FAILED',
+        });
+      } catch (_) { /* reconciliation result remains authoritative */ }
+    }
+  }
 
   async function reconcileOrder({ orderId, provider } = {}) {
     if (!orderId) throw new ConsultationDomainError('RECONCILIATION_INPUT_REQUIRED');
-    const paymentProvider=provider || providerFactory();
-    if (!paymentProvider || typeof paymentProvider.retrievePayment !== 'function') {
-      throw new ConsultationDomainError('RECONCILIATION_INPUT_REQUIRED');
-    }
     const initialOrder = await repository.findOrder(orderId);
     if (!initialOrder) throw new ConsultationDomainError('ORDER_NOT_FOUND', 404);
     const existingCase = await repository.findCaseByOrderId(orderId);
     if (initialOrder.status === 'paid' && initialOrder.provisioning_status === 'provisioned' && existingCase) {
+      await recoverQueuedNotification(existingCase);
       return { status:'processed', duplicate:true, order:initialOrder, consultationCase:existingCase };
+    }
+
+    const paymentProvider=provider || providerFactory();
+    if (!paymentProvider || typeof paymentProvider.retrievePayment !== 'function') {
+      throw new ConsultationDomainError('RECONCILIATION_INPUT_REQUIRED');
     }
 
     const payment = await paymentProvider.retrievePayment({

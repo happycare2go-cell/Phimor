@@ -216,6 +216,19 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async listEligiblePharmacists() {
+      const result = await queryFn(
+        `SELECT pharmacist_id, line_user_id, status, license_verified_at
+         FROM pharmacist_accounts
+         WHERE status = 'active'
+           AND license_verified_at IS NOT NULL
+           AND line_user_id IS NOT NULL
+           AND btrim(line_user_id) <> ''
+         ORDER BY pharmacist_id`
+      );
+      return result.rows;
+    },
+
     async findCaseForUpdate(caseId) {
       const result = await queryFn(
         `SELECT c.*, o.status AS order_status, o.provisioning_status,

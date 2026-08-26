@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { withTransaction } = require('../db');
 const { createConsultationRepository } = require('./consultationRepository');
 const { createConsultationPaymentService } = require('./consultationPaymentService');
+const { createConsultationPharmacistNotificationService } = require('./consultationPharmacistNotificationService');
 const {
   ConsultationDomainError, CONSULTATION_PRICE_MINOR, CONSULTATION_CURRENCY,
 } = require('../domain/consultation');
@@ -60,9 +61,27 @@ function createConsultationPaymentIngestionService({
   repository = createConsultationRepository(),
   transaction = withTransaction,
   provisioner = null,
+  pharmacistNotifications = null,
+  operationalLogger = console.error,
   paymentTransactionId = () => `PAYTX-${randomUUID()}`,
 } = {}) {
   const paymentService = provisioner || createConsultationPaymentService({ repository, transaction });
+  const queuedNotifications = pharmacistNotifications
+    || createConsultationPharmacistNotificationService({repository});
+
+  async function notifyProvisionedCase(result) {
+    if (!result?.consultationCase?.case_id) return;
+    try {
+      await queuedNotifications.notifyQueuedCase({caseId:result.consultationCase.case_id});
+    } catch (_) {
+      try {
+        if (typeof operationalLogger === 'function') operationalLogger({
+          event:'consultation_notification_enqueue_failed',
+          safeErrorCode:'CONSULTATION_NOTIFICATION_ENQUEUE_FAILED',
+        });
+      } catch (_) { /* payment result remains authoritative */ }
+    }
+  }
 
   async function ingestVerifiedEvent(eventInput) {
     const event = normalizeIncomingPaymentEvent(eventInput);
@@ -162,7 +181,9 @@ function createConsultationPaymentIngestionService({
     if (transactionRecord.processing_status === 'processed') {
       const order = await repository.findOrder(event.orderId);
       const consultationCase = await repository.findCaseByOrderId(event.orderId);
-      return { status:'processed', duplicate:true, order, consultationCase };
+      const result={ status:'processed', duplicate:true, order, consultationCase };
+      await notifyProvisionedCase(result);
+      return result;
     }
     if (event.eventType !== 'payment_succeeded') return processNonSuccess(event, transactionRecord);
     try {
@@ -170,6 +191,7 @@ function createConsultationPaymentIngestionService({
         ...event, verified:true, signatureVerified:true,
         paidAt:event.paidAt || transactionRecord.provider_paid_at || transactionRecord.received_at,
       });
+      await notifyProvisionedCase(result);
       return { status:'processed', ...result };
     } catch (error) {
       const retryable = !NON_RETRYABLE_CODES.has(error?.code);
