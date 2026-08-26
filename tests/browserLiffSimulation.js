@@ -29,7 +29,11 @@ const LIFF_MOCK = `<script>window.liff={init:async()=>{},isLoggedIn:()=>true,log
 const SIMULATED_BACKEND_URL = 'https://phimor-backend.onrender.com';
 const RUNTIME_CONFIG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'runtime-config.js'), 'utf8');
 const CENTER_LAB_REVIEW_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'lab-review-runtime.js'), 'utf8');
+const FAMILY_PLUS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'plus-ui.js'), 'utf8');
+const FAMILY_CONSULTATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'consultation-ui.js'), 'utf8');
+const FAMILY_DOCTOR_VISIT_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'doctor-visit-ui.js'), 'utf8');
 const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.js'), 'utf8');
+const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
@@ -37,7 +41,11 @@ function localHtml(name) {
     .replace('<script src="../environment.js"></script>', `<script>window.PHIMOR_PUBLIC_BACKEND_URL=${JSON.stringify(SIMULATED_BACKEND_URL)};</script>`)
     .replace('<script src="../runtime-config.js"></script>', `<script>${RUNTIME_CONFIG_SOURCE}</script>`)
     .replace('<script src="./lab-review-runtime.js"></script>', `<script>${CENTER_LAB_REVIEW_SOURCE}</script>`)
-    .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`);
+    .replace('<script src="./plus-ui.js"></script>', `<script>${FAMILY_PLUS_SOURCE}</script>`)
+    .replace('<script src="./consultation-ui.js"></script>', `<script>${FAMILY_CONSULTATION_SOURCE}</script>`)
+    .replace('<script src="./doctor-visit-ui.js"></script>', `<script>${FAMILY_DOCTOR_VISIT_SOURCE}</script>`)
+    .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
+    .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`);
 }
 
 async function mockBackend(page, handler) {
@@ -65,8 +73,8 @@ async function familyConsentJourney(browser) {
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#consentOverlay')).display !== 'none');
   await page.getByRole('button', { name: 'ยอมรับและเริ่มใช้งาน' }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
-  assert.match(await page.locator('#profileLabel').textContent(), /ยังไม่มีข้อมูล/);
-  await page.locator('.tab[data-view="health"]').click();
+  assert.equal(await page.locator('#lineDisplayName').textContent(), 'ผู้ใช้จำลอง');
+  await page.locator('[data-family-destination="health"]').first().click();
   assert.strictEqual(await page.locator('#healthNoProfileState').isVisible(), true);
   assert.strictEqual(await page.locator('#healthProfileContent').isHidden(), true);
   assert.match(await page.locator('#healthNoProfileState').textContent(), /ยังไม่ได้เลือก Care Profile/);
@@ -99,7 +107,7 @@ async function familyHealthProfileSwitchJourney(browser) {
   });
   await page.setContent(localHtml('family'), { waitUntil:'domcontentloaded' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
-  await page.locator('.tab[data-view="health"]').click();
+  await page.locator('[data-family-destination="health"]').first().click();
   assert.strictEqual(await page.locator('#healthProfileContent').isVisible(), true);
   assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณยายทองดี');
   assert.strictEqual(await page.locator('#bloodType').inputValue(), 'A+');
@@ -135,6 +143,8 @@ async function familyConsultationJourney(browser) {
   });
   await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!document.querySelector('#consultationPanel').hidden);
+  await page.locator('[data-family-destination="consultation"]').first().click();
+  await page.waitForFunction(()=>document.querySelector('#view-services').classList.contains('active'));
   assert.match(await page.locator('#consultationPatient').textContent(),/คุณแม่จำลอง/);
   await page.locator('#consultationEntry').click();
   await page.locator('#consultationQuestion').fill('ควรหยุดยานี้ไหม');
@@ -170,6 +180,8 @@ async function familyLabResultsJourney(browser) {
   });
   await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!document.querySelector('#labResultsPanel').hidden);
+  await page.locator('[data-family-destination="lab"]').first().click();
+  await page.waitForFunction(()=>document.querySelector('#view-services').classList.contains('active'));
   assert.match(await page.locator('#labResultsPatient').textContent(),/คุณแม่ผลตรวจ/);
   await page.locator('#labResultsEntry').click();
   await page.waitForFunction(()=>document.querySelector('#labHistoryList').textContent.includes('โรงพยาบาลจำลอง'));
