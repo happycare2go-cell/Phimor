@@ -69,7 +69,7 @@ function parseQueueCursor(value) {
   } catch (_) { throw new ConsultationDomainError('INVALID_QUEUE_CURSOR'); }
 }
 
-function projectCase(row, { includeQuestion = false } = {}) {
+function projectCase(row, { includeQuestion = false, includeClassification = false } = {}) {
   const now=new Date(row.database_now || Date.now());
   const state = effectiveConsultationState(row, now);
   const expiresAt=row.expires_at ? new Date(row.expires_at) : null;
@@ -90,6 +90,11 @@ function projectCase(row, { includeQuestion = false } = {}) {
     messageCursor:{lastSequence:Number(row.last_message_sequence || 0)},
   };
   if (includeQuestion) result.initialQuestion = row.initial_question;
+  if (includeClassification) {
+    const classification=classifyConsultationSafety(row.initial_question || '');
+    result.topicCategory=classification.category || null;
+    result.triageCategory=classification.action || null;
+  }
   return result;
 }
 
@@ -198,13 +203,13 @@ function createConsultationReadService({
     const rows = repository.listCasesForPharmacist
       ? await repository.listCasesForPharmacist(pharmacist.pharmacistId,{collection})
       : await repository.listActiveCasesForPharmacist(pharmacist.pharmacistId);
-    return {items:rows.map((row)=>projectCase(row)).filter((item)=>item.state===collection)};
+    return {items:rows.map((row)=>projectCase(row,{includeClassification:true})).filter((item)=>item.state===collection)};
   }
 
   async function getPharmacistCase({ caseId, pharmacistLineUserId } = {}) {
     const row = await repository.findCaseForRead(caseId);
     await authorizePharmacistCase(row, pharmacistLineUserId);
-    return projectCase(row, { includeQuestion:true });
+    return projectCase(row, { includeQuestion:true, includeClassification:true });
   }
 
   async function listCaseMessages({

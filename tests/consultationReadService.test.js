@@ -94,6 +94,24 @@ test('repository queue SQL excludes unpaid and unprovisioned orders', async () =
   assert.match(calls[0].sql, /c\.state = 'queued'/);
 });
 
+test('repository customer list projects paid/provisioned invariants required by authorization', async () => {
+  const calls=[];
+  const repository=createConsultationRepository({queryFn:async(sql,params)=>{calls.push({sql:String(sql),params});return {rows:[caseRow()]};}});
+  const rows=await repository.listCasesForCustomer('U-CUSTOMER');
+  assert.equal(rows.length,1);
+  assert.match(calls[0].sql,/o\.status AS order_status/);
+  assert.match(calls[0].sql,/o\.provisioning_status/);
+  assert.match(calls[0].sql,/o\.status = 'paid'/);
+});
+
+test('valid paid/provisioned Family case survives fresh authorization list projection', async () => {
+  const h=harness({rows:[caseRow({state:'queued',waiting_on:'none',assigned_pharmacist_id:null,accepted_at:null,expires_at:null})]});
+  const result=await h.service.listFamilyCases({lineUserId:'U-CUSTOMER',careProfileId:'CP-1'});
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].caseId,'CASE-1');
+  assert.equal(result.items[0].state,'queued');
+});
+
 test('direct case access also rejects an inconsistent unpaid/unprovisioned case', async () => {
   const h = harness({rows:[caseRow({order_status:'draft',provisioning_status:'pending'})]});
   await assert.rejects(
@@ -111,6 +129,14 @@ test('pharmacist can read only an assigned case and active status is rechecked',
   assert.equal((await h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-1'})).caseId, 'CASE-1');
   await assert.rejects(() => h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-2'}), (e)=>e.code==='CONSULTATION_ACCESS_DENIED');
   await assert.rejects(() => h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-S'}), (e)=>e.code==='PHARMACIST_INACTIVE');
+});
+
+test('accepted pharmacist detail retains canonical topic and triage classification', async () => {
+  const h=harness();
+  const detail=await h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-1'});
+  assert.equal(detail.initialQuestion,'กินยาสองตัวนี้ด้วยกันได้ไหม');
+  assert.equal(detail.topicCategory,'drug_interaction');
+  assert.equal(detail.triageCategory,'pharmacist_consultation_eligible');
 });
 
 test('effective expiration makes case closed on reads without scheduler and preserves history', async () => {

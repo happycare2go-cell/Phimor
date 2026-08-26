@@ -12,11 +12,14 @@ const { createConsultationPaymentStatusService } = require('../services/consulta
 const { createConsultationPaymentProvider } = require('../providers/consultationPaymentProviderFactory');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_CONSULTATION_ERROR_CODE = /^(?:CONSULTATION|CASE|MESSAGE|QUESTION|PHARMACIST|CARE_PROFILE|PAYMENT|ORDER|TERMS|INTERNAL|UNAUTHENTICATED|INVALID|IDEMPOTENCY|RATE_LIMIT|EMERGENCY|RECONCILIATION|TRUSTED|UNSUPPORTED|ACCESS|MEMBERSHIP|CENTER)_[A-Z0-9_]+$/;
 
 function consultationError(res, error) {
   const rawCode = error?.code || 'CONSULTATION_UNAVAILABLE';
-  const code = rawCode.startsWith('OMISE_') ? 'PAYMENT_PROVIDER_UNAVAILABLE' : rawCode;
-  const status = Number.isInteger(error?.status) ? error.status : 400;
+  const code = rawCode.startsWith('OMISE_') ? 'PAYMENT_PROVIDER_UNAVAILABLE'
+    : SAFE_CONSULTATION_ERROR_CODE.test(rawCode) ? rawCode : 'CONSULTATION_UNAVAILABLE';
+  const status = code==='CONSULTATION_UNAVAILABLE' ? 503
+    : Number.isInteger(error?.status) ? error.status : 400;
   if (status===429 && Number.isFinite(error?.retryAfterMs)) {
     res.setHeader('Retry-After',Math.max(1,Math.ceil(error.retryAfterMs/1000)));
   }

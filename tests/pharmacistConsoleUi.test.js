@@ -108,6 +108,20 @@ test('countdown and closed state rendering are deterministic and informational',
   assert.match(consoleUI.closeReasonLabel('expired'),/ครบเวลา/);
 });
 
+test('accepted case header renders canonical initial question, topic and triage',()=>{
+  const doc=fakeDocument();const container=new FakeElement();
+  consoleUI.renderCaseHeader(doc,container,{
+    ...OPEN_CASE,
+    initialQuestion:'ยาสองตัวนี้กินด้วยกันได้ไหม',
+    topicCategory:'drug_interaction',
+    triageCategory:'pharmacist_consultation_eligible',
+  });
+  const visible=walkText(container).join('|');
+  assert.match(visible,/คำถามตั้งต้น: ยาสองตัวนี้กินด้วยกันได้ไหม/);
+  assert.match(visible,/drug_interaction/);
+  assert.match(visible,/pharmacist_consultation_eligible/);
+});
+
 test('state and waiting-on labels are Thai and do not collapse resolved into closed',()=>{assert.equal(consoleUI.stateLabel('active'),'กำลังปรึกษา');assert.equal(consoleUI.stateLabel('resolved'),'ตอบประเด็นหลักแล้ว');assert.equal(consoleUI.stateLabel('closed'),'หมดเวลาปรึกษาแล้ว');assert.equal(consoleUI.waitingOnLabel('pharmacist','active'),'รอเภสัชกรตอบ');assert.equal(consoleUI.waitingOnLabel('customer','active'),'รอข้อมูลจากผู้ใช้');});
 
 test('message polling uses afterSequence, deterministic order and no duplicates',async()=>{
@@ -179,6 +193,28 @@ test('assistant generation is explicit and never happens during case select or p
   await harness.session.generateAssistant();assert.equal(harness.calls.filter((item)=>item.path.endsWith('/assistant')).length,1);
 });
 
+test('assistant generation exposes an immediate visible loading state and prevents duplicates',async()=>{
+  let release;const pending=new Promise((resolve)=>{release=resolve;});
+  const harness=createHarness(async(pathValue)=>{
+    if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;
+    if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};
+    if(pathValue.endsWith('/assistant'))return pending;
+    return standardHandler(pathValue);
+  });
+  await harness.session.selectCase('CASE-1');
+  const first=harness.session.generateAssistant();
+  assert.equal(harness.state().assistant.status,'loading');
+  assert.equal(harness.state().assistantBusy,true);
+  assert.deepEqual(await harness.session.generateAssistant(),{ignored:true});
+  const doc=fakeDocument();const container=new FakeElement();
+  consoleUI.renderAssistant(doc,container,harness.state().assistant);
+  assert.match(walkText(container).join('|'),/กำลังจัดเตรียมสรุป/);
+  release({status:'available',assistant:{caseSummary:'สรุปสำเร็จ'}});
+  await first;
+  assert.equal(harness.state().assistantBusy,false);
+  assert.equal(harness.state().assistant.assistant.caseSummary,'สรุปสำเร็จ');
+});
+
 test('assistant structured sections and source attribution render as text',()=>{
   const doc=fakeDocument();const container=new FakeElement();
   consoleUI.renderAssistant(doc,container,{status:'available',contextTimestamp:'2026-08-25T10:00:00Z',assistant:{caseSummary:'summary',recordedFacts:[{text:'recorded',sourceCategory:'care_profile'}],responseGuidance:[{text:'guidance',sourceCategory:'general_ai_knowledge'}],disclaimer:'review'}});
@@ -201,6 +237,17 @@ test('assistant failure leaves manual chat messageable and hides raw provider er
   assert.equal(harness.state().assistant.status,'unavailable');assert.equal(consoleUI.canMessage(harness.state().selectedCase),true);
   const doc=fakeDocument();const container=new FakeElement();consoleUI.renderAssistant(doc,container,harness.state().assistant);
   assert.doesNotMatch(walkText(container).join('|'),/gemini|AI_TIMEOUT|stack/);
+});
+
+test('known message-send failures map to useful safe Thai states',()=>{
+  assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_EXPIRED'),/หมดเวลา/);
+  assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_ACCESS_DENIED'),/สิทธิ์/);
+  assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_RATE_LIMITED'),/ถี่เกินไป/);
+  assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_NOT_ACTIVE'),/สถานะเคส/);
+  assert.match(consoleUI.messageSendErrorMessage('UNEXPECTED_DATABASE_ERROR'),/ชั่วคราว/);
+  assert.doesNotMatch(consoleUI.messageSendErrorMessage('UNEXPECTED_DATABASE_ERROR'),/DATABASE|SQL/);
+  assert.match(consoleUI.assistantErrorMessage('AI_TIMEOUT'),/นานเกินไป/);
+  assert.match(consoleUI.assistantErrorMessage('AI_RATE_LIMIT'),/รอสักครู่/);
 });
 
 test('there is no AI auto-send or automatic copy-to-composer path',()=>{

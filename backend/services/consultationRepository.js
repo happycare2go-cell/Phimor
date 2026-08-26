@@ -246,7 +246,9 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
 
     async listCasesForCustomer(lineUserId) {
       const result = await queryFn(
-        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now,
+        `SELECT c.*, o.initial_question,
+                o.status AS order_status, o.provisioning_status,
+                CURRENT_TIMESTAMP AS database_now,
                 COALESCE((SELECT MAX(m.message_sequence)
                           FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
                   AS last_message_sequence
@@ -293,7 +295,9 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       const predicate = collectionPredicates[collection];
       if (!predicate) throw new Error('Unsupported consultation collection');
       const result = await queryFn(
-        `SELECT c.*, o.initial_question, CURRENT_TIMESTAMP AS database_now,
+        `SELECT c.*, o.initial_question,
+                o.status AS order_status, o.provisioning_status,
+                CURRENT_TIMESTAMP AS database_now,
                 COALESCE((SELECT MAX(m.message_sequence)
                           FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
                   AS last_message_sequence

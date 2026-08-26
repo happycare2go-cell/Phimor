@@ -264,6 +264,24 @@ test('active pharmacist acceptance sets a DB-timed window of exactly 24 hours', 
   assert.equal(new Date(accepted.expires_at)-new Date(accepted.accepted_at), 24*60*60*1000);
 });
 
+test('assigned pharmacist can send immediately after valid atomic acceptance', async () => {
+  const h=createMemoryHarness();
+  h.state.cases.set('CASE-1',{
+    ...activeCase(),state:'queued',waiting_on:'none',assigned_pharmacist_id:null,
+    accepted_at:null,expires_at:null,
+  });
+  const cases=createConsultationCaseService({repository:h.repository,transaction:h.transaction,eventId:()=>'E-ACCEPT-SEND'});
+  await cases.acceptCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-1'});
+  const messages=messageService(h);
+  const sent=await messages.sendMessage({
+    caseId:'CASE-1',actor:{type:'pharmacist',lineUserId:'U-PHARM-1'},
+    body:'ขอข้อมูลเพิ่มเติม',idempotencyKey:'K-AFTER-ACCEPT',
+  });
+  assert.equal(sent.message.sender_type,'pharmacist');
+  assert.equal(sent.message.message_sequence,1);
+  assert.equal(h.state.cases.get('CASE-1').waiting_on,'customer');
+});
+
 test('two pharmacists accepting concurrently produce exactly one winner', async () => {
   const h = createMemoryHarness(); h.state.cases.set('CASE-1', { ...activeCase(), state:'queued', waiting_on:'none', assigned_pharmacist_id:null, accepted_at:null, expires_at:null });
   const service = createConsultationCaseService({ repository:h.repository, transaction:h.transaction });

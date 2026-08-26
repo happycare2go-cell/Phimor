@@ -43,6 +43,8 @@
   function stateLabel(value){return ({queued:'รอเภสัชกร',active:'กำลังปรึกษา',resolved:'ตอบประเด็นหลักแล้ว',closed:'หมดเวลาปรึกษาแล้ว'})[value]||'ไม่ทราบสถานะ';}
   function waitingOnLabel(value,state){if(['queued','resolved','closed'].includes(state))return 'ไม่มีฝ่ายที่กำลังรอคำตอบ';return value==='pharmacist'?'รอเภสัชกรตอบ':value==='customer'?'รอข้อมูลจากผู้ใช้':'ไม่มีฝ่ายที่กำลังรอคำตอบ';}
   function accessStateMessage(access,error){if(access==='allowed')return '';if(access==='loading')return 'กำลังตรวจสอบสิทธิ์…';if(access==='denied')return 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน Pharmacist Console กรุณาติดต่อผู้ดูแลระบบ';if(error==='CONSULTATION_DISABLED')return 'ระบบปรึกษาเภสัชกรยังไม่เปิดใช้งาน';return 'ไม่สามารถเชื่อมต่อ Pharmacist Console ได้ กรุณาลองใหม่';}
+  function assistantErrorMessage(code){return ({AI_TIMEOUT:'AI Assistant ใช้เวลานานเกินไป กรุณาลองใหม่ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_RATE_LIMIT:'AI Assistant มีคำขอจำนวนมาก กรุณารอสักครู่แล้วลองใหม่',AI_INVALID_RESPONSE:'AI Assistant ไม่สามารถจัดรูปแบบข้อมูลได้ กรุณาลองใหม่',AI_UNAVAILABLE:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_PROVIDER_ERROR:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ'})[code]||'AI Assistant ไม่พร้อมใช้งานในขณะนี้ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ';}
+  function messageSendErrorMessage(code){if(['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code))return 'เคสนี้หมดเวลาหรือปิดแล้ว จึงไม่สามารถส่งข้อความใหม่ได้';if(['CONSULTATION_ACCESS_DENIED','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED'].includes(code))return 'สิทธิ์เข้าถึงเคสนี้ไม่พร้อมใช้งาน กรุณารีเฟรชหรือติดต่อผู้ดูแลระบบ';if(code==='CONSULTATION_RATE_LIMITED')return 'ส่งข้อความถี่เกินไป กรุณารอสักครู่';if(['CONSULTATION_NOT_ACCEPTED','CONSULTATION_NOT_ACTIVE','INVALID_WAITING_ON_STATE'].includes(code))return 'สถานะเคสยังไม่อนุญาตให้ส่งข้อความ กรุณารีเฟรชเคส';return 'ระบบส่งข้อความไม่พร้อมชั่วคราว กรุณาลองใหม่';}
   function createIdempotencyKey(cryptoApi=globalThis.crypto){
     if(cryptoApi&&typeof cryptoApi.randomUUID==='function') return cryptoApi.randomUUID();
     return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -183,7 +185,7 @@
         if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         const retryAfterSeconds=Math.max(0,Number(error?.retryAfterSeconds)||0);
         const code=apiErrorCode(error),closed=['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code);
-        patch({sending:false,error:code,retryAfterSeconds,statusMessage:code==='CONSULTATION_RATE_LIMITED'?'ส่งข้อความถี่เกินไป กรุณารอสักครู่':closed?'เคสนี้หมดเวลาปรึกษาแล้ว':'ส่งข้อความไม่สำเร็จ'});
+        patch({sending:false,error:code,retryAfterSeconds,statusMessage:messageSendErrorMessage(code)});
         if(rateLimitTimer!==null)cancelSchedule(rateLimitTimer);
         if(retryAfterSeconds>0)rateLimitTimer=schedule(()=>{rateLimitTimer=null;patch({retryAfterSeconds:0,statusMessage:''});},retryAfterSeconds*1000);
         if(closed)await pollOnce();
@@ -204,13 +206,13 @@
     async function generateAssistant(){
       const caseId=state.selectedCase?.caseId;
       if(!caseId||state.assistantBusy||effectiveClosed(state.selectedCase))return {ignored:true};
-      const requestRevision=token(); patch({assistantBusy:true,assistant:null,error:null});
+      const requestRevision=token(); patch({assistantBusy:true,assistant:{status:'loading'},error:null});
       try{
         const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/assistant`,{method:'POST',body:JSON.stringify({refresh:true})});
         if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         patch({assistantBusy:false,assistant:result}); return result;
       }catch(error){
-        if(current(requestRevision))patch({assistantBusy:false,assistant:{status:'unavailable'},error:apiErrorCode(error)});
+        if(current(requestRevision)){const code=apiErrorCode(error);patch({assistantBusy:false,assistant:{status:'unavailable',errorCode:code},error:code});}
         return {error:apiErrorCode(error)};
       }
     }
@@ -226,8 +228,11 @@
     if(!result || !result.status){
       textElement(doc,container,'p','empty-state','เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ');return;
     }
+    if(result.status==='loading'){
+      textElement(doc,container,'p','assistant-loading','กำลังจัดเตรียมสรุปเพื่อช่วยเภสัชกร กรุณารอสักครู่…');return;
+    }
     if(result.status!=='available'){
-      textElement(doc,container,'p','assistant-unavailable','AI Assistant ไม่พร้อมใช้งานในขณะนี้ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ');return;
+      textElement(doc,container,'p','assistant-unavailable',assistantErrorMessage(result.errorCode));return;
     }
     const assistant=result.assistant||{};
     textElement(doc,container,'h3','assistant-summary',safeText(assistant.caseSummary,'ไม่พบข้อมูลสรุป'));
@@ -264,6 +269,20 @@
       container.appendChild(card);
     });
   }
+  function renderCaseHeader(doc,container,selectedCase){
+    clearNode(container);container.className=`case-header${selectedCase?` case-header--${effectiveClosed(selectedCase)?'closed':selectedCase.state}`:''}`;
+    if(!selectedCase)return;
+    textElement(doc,container,'h2','',`เคส ${selectedCase.caseId}`);
+    textElement(doc,container,'span',`state-chip state-chip--${effectiveClosed(selectedCase)?'closed':selectedCase.state}`,stateLabel(effectiveClosed(selectedCase)?'closed':selectedCase.state));
+    textElement(doc,container,'span','waiting-chip',waitingOnLabel(selectedCase.waitingOn,selectedCase.state));
+    textElement(doc,container,'span','countdown',formatDuration(selectedCase.remainingSeconds));
+    if(selectedCase.topicCategory)textElement(doc,container,'span','case-chip',selectedCase.topicCategory);
+    if(selectedCase.triageCategory)textElement(doc,container,'span','case-chip',selectedCase.triageCategory);
+    if(selectedCase.initialQuestion)textElement(doc,container,'p','case-initial-question',`คำถามตั้งต้น: ${selectedCase.initialQuestion}`);
+    if(selectedCase.acceptedAt)textElement(doc,container,'small','',`รับเคส: ${new Date(selectedCase.acceptedAt).toLocaleString('th-TH')}`);
+    if(selectedCase.expiresAt)textElement(doc,container,'small','',`หมดเวลา: ${new Date(selectedCase.expiresAt).toLocaleString('th-TH')}`);
+    if(effectiveClosed(selectedCase))textElement(doc,container,'small','closed-reason',closeReasonLabel(selectedCase.closeReason));
+  }
 
   function createController({doc,session}){
     const elements={
@@ -280,22 +299,13 @@
       doc.querySelectorAll('[data-tab]').forEach((button)=>button.classList?.toggle('active',button.dataset.tab===state.tab));
       renderQueue(doc,elements.list,state.collections[state.tab],{acceptingCaseId:state.acceptingCaseId,showAccept:state.tab==='queue',onSelect:session.selectCase,onAccept:session.acceptCase});
       elements.loadMore.hidden=state.tab!=='queue'||!state.queueHasMore;
-      clearNode(elements.header);
-      elements.header.className=`case-header${state.selectedCase?` case-header--${effectiveClosed(state.selectedCase)?'closed':state.selectedCase.state}`:''}`;
-      if(state.selectedCase){
-        textElement(doc,elements.header,'h2','',`เคส ${state.selectedCase.caseId}`);
-        textElement(doc,elements.header,'span',`state-chip state-chip--${effectiveClosed(state.selectedCase)?'closed':state.selectedCase.state}`,stateLabel(effectiveClosed(state.selectedCase)?'closed':state.selectedCase.state));
-        textElement(doc,elements.header,'span','waiting-chip',waitingOnLabel(state.selectedCase.waitingOn,state.selectedCase.state));
-        textElement(doc,elements.header,'span','countdown',formatDuration(state.selectedCase.remainingSeconds));
-        if(state.selectedCase.acceptedAt)textElement(doc,elements.header,'small','',`รับเคส: ${new Date(state.selectedCase.acceptedAt).toLocaleString('th-TH')}`);
-        if(state.selectedCase.expiresAt)textElement(doc,elements.header,'small','',`หมดเวลา: ${new Date(state.selectedCase.expiresAt).toLocaleString('th-TH')}`);
-        if(effectiveClosed(state.selectedCase))textElement(doc,elements.header,'small','closed-reason',closeReasonLabel(state.selectedCase.closeReason));
-      }
+      renderCaseHeader(doc,elements.header,state.selectedCase);
       renderMessages(doc,elements.messages,state.messages);
       const writable=state.selectedCase&&canMessage(state.selectedCase)&&state.retryAfterSeconds===0;
       elements.composer.disabled=!writable||state.sending;elements.send.disabled=!writable||state.sending||!elements.composer.value.trim();
       elements.resolve.disabled=!writable||state.selectedCase?.state!=='active'||state.resolving;elements.resolve.hidden=!state.selectedCase;
       elements.assistantButton.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.assistantBusy;
+      elements.assistantButton.textContent=state.assistantBusy?'กำลังสร้างสรุป…':'สร้างสรุปช่วยตอบ';
       elements.assistantRefresh.disabled=elements.assistantButton.disabled;elements.assistantRefresh.hidden=state.assistant?.status!=='available';
       renderAssistant(doc,elements.assistant,state.assistant);
     }
@@ -340,5 +350,5 @@
     }catch(error){access.hidden=false;access.textContent=error?.message==='LIFF_ID_PHARMACIST_MISSING'?'ยังไม่ได้ตั้งค่า Pharmacist LIFF กรุณาติดต่อผู้ดูแลระบบ':'ไม่สามารถเปิด Pharmacist Console ได้';return null;}
   }
 
-  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,createIdempotencyKey,createConsoleSession,renderAssistant,renderMessages,renderQueue,createController,createHttpClient,bootstrap};
+  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,messageSendErrorMessage,createIdempotencyKey,createConsoleSession,renderAssistant,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
 }));
