@@ -50,6 +50,17 @@ test('generic middleware pharmacist denial maps to a terminal access-denied stat
   assert.equal(state().access,'denied');assert.match(consoleUI.accessStateMessage(state().access,state().error),/ไม่มีสิทธิ์/);
 });
 
+test('safe backend correlation reference reaches the pharmacist error UI without raw provider details',async()=>{
+  const client=consoleUI.createHttpClient({backendUrl:'https://backend.example',idToken:'TOKEN',fetchImpl:async()=>({
+    ok:false,status:503,headers:{get:()=>null},json:async()=>({errorCode:'CONSULTATION_UNAVAILABLE',correlationId:'CREF-UI'}),
+  })});
+  await assert.rejects(()=>client('/api/pharmacist/consultations/CASE-1/messages'),(error)=>{
+    assert.equal(error.correlationId,'CREF-UI');assert.equal(error.errorCode,'CONSULTATION_UNAVAILABLE');return true;
+  });
+  assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_UNAVAILABLE','CREF-UI'),/CREF-UI/);
+  assert.doesNotMatch(consoleUI.messageSendErrorMessage('CONSULTATION_UNAVAILABLE','CREF-UI'),/SQL|DATABASE|provider/i);
+});
+
 test('feature disabled and network failures leave loading state safely',async()=>{
   for(const code of ['CONSULTATION_DISABLED','REQUEST_FAILED']){const {session,state}=createHarness(async()=>{throw Object.assign(new Error('raw'),{errorCode:code});});await session.initialize();assert.equal(state().access,'error');assert.doesNotMatch(consoleUI.accessStateMessage(state().access,state().error),/raw/);}
   assert.match(consoleUI.accessStateMessage('error','CONSULTATION_DISABLED'),/ยังไม่เปิดใช้งาน/);

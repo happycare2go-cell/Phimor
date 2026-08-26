@@ -445,7 +445,7 @@ async function ensurePlusUI() {
 async function consultationApi(path,opts={}) {
   const res=await fetch(BACKEND_URL+path,{...opts,headers:{'Content-Type':'application/json','Authorization':`Bearer ${LINE_ID_TOKEN}`,'X-Line-User-Id':LINE_USER_ID,...(opts.headers||{})}});
   const data=await res.json().catch(()=>({}));
-  if(!res.ok){const error=new Error('CONSULTATION_REQUEST_FAILED');error.errorCode=data.errorCode||data.reasonCode||'CONSULTATION_REQUEST_FAILED';error.retryAfterSeconds=Number(res.headers.get('Retry-After'))||0;throw error;}
+  if(!res.ok){const error=new Error('CONSULTATION_REQUEST_FAILED');error.errorCode=data.errorCode||data.reasonCode||'CONSULTATION_REQUEST_FAILED';error.retryAfterSeconds=Number(res.headers.get('Retry-After'))||0;error.correlationId=typeof data.correlationId==='string'?data.correlationId:null;throw error;}
   return data;
 }
 async function ensureConsultationUI(){

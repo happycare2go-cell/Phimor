@@ -22,6 +22,10 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   const messages = overrides.messageService || createConsultationMessageService(overrides.messageDependencies);
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
   const assistant = overrides.assistantService || createPharmacistAssistantService(overrides.assistantDependencies);
+  const writeDiagnostics = (action) => ({
+    action, logger:overrides.operationalLogger,
+    correlationIdFactory:overrides.correlationIdFactory,
+  });
 
   router.use(auth);
   router.use((req, res, next) => {
@@ -87,7 +91,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
     try {
       await cases.resolveCase({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId});
       return res.json(await reads.getPharmacistCase({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
-    } catch (error) { return consultationError(res,error); }
+    } catch (error) { return consultationError(res,error,writeDiagnostics('pharmacist_resolve')); }
   }));
 
   router.post('/:caseId/assistant',asyncHandler(async(req,res)=>{
@@ -125,7 +129,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
           createdAt:result.message.created_at,
         },
       });
-    } catch (error) { return consultationError(res, error); }
+    } catch (error) { return consultationError(res, error,writeDiagnostics('pharmacist_message_send')); }
   }));
 
   return router;

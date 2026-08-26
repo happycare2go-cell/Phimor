@@ -28,6 +28,7 @@
   function safePaymentQrUrl(value){if(typeof value!=='string')return null;try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?url.toString():null;}catch(_){return null;}}
   function renderPaymentQr(element,paymentInstructions){const qr=safePaymentQrUrl(paymentInstructions?.qrImageUrl);if(!element)return qr;if(qr){element.src=qr;element.hidden=false;}else{element.removeAttribute?.('src');element.hidden=true;}return qr;}
   function safeError(error){return safeText(error?.errorCode||error?.code,'REQUEST_FAILED');}
+  function supportReference(error){return typeof error?.correlationId==='string'&&error.correlationId?` (รหัสอ้างอิง ${error.correlationId})`:'';}
   function createFamilyConsultationSession({request,onChange=()=>{},schedule=setTimeout,cancelSchedule=clearTimeout,pollSeconds=5,cryptoApi=globalThis.crypto,now=()=>new Date(),checkoutAdapter=null,paymentStatusAdapter=null}={}){
     if(typeof request!=='function')throw new Error('request is required');
     let generation=0,pollTimer=null,paymentTimer=null,pollingEnabled=true;
@@ -130,7 +131,7 @@
         const result=await request(`/api/consultations/${encodeURIComponent(caseId)}/messages`,{method:'POST',body:JSON.stringify({body:text,idempotencyKey:createIdempotencyKey(cryptoApi)})});
         if(!current(token,profileId)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         replace({messages:mergeMessages(state.messages,result?.message?[result.message]:[]),nextSequence:Math.max(state.nextSequence,Number(result?.message?.sequence)||0)});await pollOnce();return result;
-      }catch(error){const code=safeError(error),closed=['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code);if(current(token,profileId)){replace({statusMessage:code==='CONSULTATION_RATE_LIMITED'?'ส่งข้อความถี่เกินไป กรุณารอสักครู่':closed?'การปรึกษานี้สิ้นสุดแล้ว':'ส่งข้อความไม่สำเร็จ'});if(closed)await pollOnce();}return {error:code};}
+      }catch(error){const code=safeError(error),closed=['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code);if(current(token,profileId)){replace({statusMessage:code==='CONSULTATION_RATE_LIMITED'?'ส่งข้อความถี่เกินไป กรุณารอสักครู่':closed?'การปรึกษานี้สิ้นสุดแล้ว':`ส่งข้อความไม่สำเร็จ${supportReference(error)}`});if(closed)await pollOnce();}return {error:code};}
       finally{if(current(token,profileId))replace({sending:false});}
     }
     function unmount(){clearClinicalState();state={...state,profileId:null,patientName:'',visible:false,eligibility:null};notify();}
@@ -150,5 +151,5 @@
     }
     el.entry.addEventListener('click',()=>session.openQuestion());el.refresh.addEventListener('click',()=>session.refreshCases());el.question.addEventListener('input',()=>session.setQuestion(el.question.value));el.check.addEventListener('click',()=>session.checkQuestion());el.eligibleContinue.addEventListener('click',()=>session.continueEligible());el.cancel.addEventListener('click',()=>{session.cancelDraft();el.question.value='';});el.termsCheck.addEventListener('change',()=>session.acceptTerms(el.termsCheck.checked));el.continueButton.addEventListener('click',()=>session.continueToPayment());el.composer.addEventListener('input',()=>render(session.snapshot()));el.send.addEventListener('click',async()=>{const value=el.composer.value;const result=await session.sendMessage(value);if(!result?.ignored&&!result?.error)el.composer.value='';render(session.snapshot());});doc.addEventListener?.('visibilitychange',()=>session.setDocumentVisible(doc.visibilityState!=='hidden'));render(session.snapshot());return {render};
   }
-  return Object.freeze({COLLECTIONS,COLLECTION_LABELS,normalizeMessages,mergeMessages,effectiveClosed,canMessage,remainingLabel,categorizeCases,paymentStatusLabel,safePaymentQrUrl,renderPaymentQr,createFamilyConsultationSession,renderMessages,renderCaseGroups,createController});
+  return Object.freeze({COLLECTIONS,COLLECTION_LABELS,normalizeMessages,mergeMessages,effectiveClosed,canMessage,remainingLabel,categorizeCases,paymentStatusLabel,safePaymentQrUrl,renderPaymentQr,supportReference,createFamilyConsultationSession,renderMessages,renderCaseGroups,createController});
 }));

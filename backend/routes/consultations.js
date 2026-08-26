@@ -10,11 +10,12 @@ const { classifyConsultationSafety } = require('../services/consultationSafetySe
 const { createConsultationCheckoutService } = require('../services/consultationCheckoutService');
 const { createConsultationPaymentStatusService } = require('../services/consultationPaymentStatusService');
 const { createConsultationPaymentProvider } = require('../providers/consultationPaymentProviderFactory');
+const { recordConsultationWriteFailure } = require('../services/consultationOperationalDiagnostics');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SAFE_CONSULTATION_ERROR_CODE = /^(?:CONSULTATION|CASE|MESSAGE|QUESTION|PHARMACIST|CARE_PROFILE|PAYMENT|ORDER|TERMS|INTERNAL|UNAUTHENTICATED|INVALID|IDEMPOTENCY|RATE_LIMIT|EMERGENCY|RECONCILIATION|TRUSTED|UNSUPPORTED|ACCESS|MEMBERSHIP|CENTER)_[A-Z0-9_]+$/;
 
-function consultationError(res, error) {
+function consultationError(res, error, diagnostics = {}) {
   const rawCode = error?.code || 'CONSULTATION_UNAVAILABLE';
   const code = rawCode.startsWith('OMISE_') ? 'PAYMENT_PROVIDER_UNAVAILABLE'
     : SAFE_CONSULTATION_ERROR_CODE.test(rawCode) ? rawCode : 'CONSULTATION_UNAVAILABLE';
@@ -26,10 +27,13 @@ function consultationError(res, error) {
   const responseStatus=status===401 ? 'unauthenticated' : status===403 ? 'denied'
     : status===429 ? 'rate_limited'
       : ['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code) ? 'closed' : 'unavailable';
+  const correlationId = status >= 500 && diagnostics.action
+    ? recordConsultationWriteFailure(error, diagnostics) : null;
   return res.status(status >= 500 ? 503 : status).json({
     status:responseStatus,
     errorCode:code,
     message:status >= 500 ? 'ระบบคำปรึกษายังไม่พร้อม กรุณาลองใหม่ภายหลัง' : 'ไม่สามารถดำเนินการคำขอนี้ได้',
+    ...(correlationId ? { correlationId } : {}),
   });
 }
 
@@ -43,6 +47,10 @@ function createConsultationsRouter(overrides = {}) {
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
   const checkout = overrides.checkoutService || createConsultationCheckoutService(overrides.checkoutDependencies);
   const paymentStatus = overrides.paymentStatusService || createConsultationPaymentStatusService(overrides.paymentStatusDependencies);
+  const writeDiagnostics = (action) => ({
+    action, logger:overrides.operationalLogger,
+    correlationIdFactory:overrides.correlationIdFactory,
+  });
 
   router.use(auth);
   router.use((req, res, next) => {
@@ -169,7 +177,7 @@ function createConsultationsRouter(overrides = {}) {
           createdAt:result.message.created_at,
         },
       });
-    } catch (error) { return consultationError(res, error); }
+    } catch (error) { return consultationError(res, error, writeDiagnostics('family_message_send')); }
   }));
 
   return router;
