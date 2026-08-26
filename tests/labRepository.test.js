@@ -85,3 +85,23 @@ test('Pending Card provenance lookup and purge updates are relational and parame
   assert.match(calls[1].sql,/storage_status = 'available'/);
   assert.deepEqual(calls[1].params,['CARD-1','2026-08-26T00:00:00.000Z']);
 });
+
+test('trend history query uses only latest confirmed versions and exact verified identity', async () => {
+  const {repository,calls}=recorder([]);
+  await repository.listConfirmedObservationHistory({
+    careProfileId:'CP-SECRET',identityType:'loinc_code',identityValue:'4548-4',limit:20,offset:0,
+  });
+  assert.match(calls[0].sql,/MAX\(version_no\).*status = 'confirmed'/s);
+  assert.match(calls[0].sql,/r\.status = 'confirmed'/);
+  assert.match(calls[0].sql,/o\.loinc_code = \$2/);
+  assert.match(calls[0].sql,/o\.loinc_verification_source IS NOT NULL/);
+  assert.doesNotMatch(calls[0].sql,/draft|voided|CP-SECRET|4548-4/i);
+  assert.deepEqual(calls[0].params,['CP-SECRET','4548-4',21,0]);
+
+  await repository.listConfirmedObservationHistory({
+    careProfileId:'CP-1',identityType:'comparison_key',identityValue:'hba1c',limit:10,offset:10,
+  });
+  assert.match(calls[1].sql,/o\.comparison_key = \$2/);
+  assert.deepEqual(calls[1].params,['CP-1','hba1c',11,10]);
+  assert.doesNotMatch(calls[1].sql,/analyte_name_source\s*=|similarity|levenshtein/i);
+});

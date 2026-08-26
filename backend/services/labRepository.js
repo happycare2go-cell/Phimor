@@ -264,6 +264,42 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
       );
       return result.rows;
     },
+
+    async listConfirmedObservationHistory({
+      careProfileId, identityType, identityValue, limit, offset = 0,
+    }) {
+      const identityClause = identityType === 'loinc_code'
+        ? `o.loinc_code = $2
+           AND o.loinc_verification_source IS NOT NULL
+           AND o.loinc_verified_by IS NOT NULL
+           AND o.loinc_verified_at IS NOT NULL`
+        : 'o.comparison_key = $2';
+      const result = await queryFn(
+        `WITH latest_confirmed AS (
+           SELECT report_group_id, MAX(version_no) AS version_no
+           FROM lab_reports
+           WHERE care_profile_id = $1 AND status = 'confirmed'
+           GROUP BY report_group_id
+         )
+         SELECT
+           o.*,
+           r.report_id, r.report_group_id, r.version_no,
+           r.status AS report_status, r.specimen_collected_at, r.reported_at,
+           r.confirmed_at, r.laboratory_name, r.hospital_name
+         FROM lab_observations o
+         INNER JOIN lab_reports r ON r.report_id = o.report_id
+         INNER JOIN latest_confirmed lc
+           ON lc.report_group_id = r.report_group_id AND lc.version_no = r.version_no
+         WHERE r.care_profile_id = $1 AND r.status = 'confirmed'
+           AND ${identityClause}
+         ORDER BY
+           COALESCE(r.specimen_collected_at, '-infinity'::timestamptz) DESC,
+           r.report_id DESC, o.observation_id DESC
+         LIMIT $3 OFFSET $4`,
+        [careProfileId, identityValue, limit + 1, offset]
+      );
+      return result.rows;
+    },
   };
   return repository;
 }
