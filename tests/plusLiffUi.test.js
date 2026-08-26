@@ -46,11 +46,12 @@ test('Family LIFF มี panel ทดสอบที่ซ่อนเป็น�
   assert.doesNotMatch(panel, /59\s*บาท|สมัคร/);
 });
 
-test('Family LIFF มี quick action ครบหกรายการ', () => {
+test('Family LIFF มี quick action รวมปุ่มถามหมออะไรดี', () => {
   for (const action of plusUI.QUICK_ACTIONS) {
     assert.match(familyHtml, new RegExp(`data-plus-action="${action.id}"`));
   }
-  assert.equal(plusUI.QUICK_ACTIONS.length, 6);
+  assert.equal(plusUI.QUICK_ACTIONS.length, 7);
+  assert.equal(plusUI.QUICK_ACTIONS.find((item) => item.id === 'doctor-questions').doctorQuestions, true);
 });
 
 test('switch Care Profile ล้างบทสนทนาและคำขอล่าสุด', async () => {
@@ -107,6 +108,15 @@ test('unavailable และ needs_review แสดงข้อความปล
   assert.equal(review.retryable, true);
 });
 
+test('Plus-required response แสดงสถานะสิทธิ์โดยไม่เปิดเผยข้อมูล backend', () => {
+  const view = plusUI.responseToViewModel({
+    status: 'unavailable', errorCode: 'PLUS_FEATURE_NOT_INCLUDED', raw: 'database secret',
+  });
+  assert.equal(view.title, 'ฟีเจอร์นี้ใช้สิทธิ์พี่หมอ Plus');
+  assert.equal(view.retryable, false);
+  assert.doesNotMatch(`${view.title}${view.summary}`, /database|secret/);
+});
+
 test('AI HTML ถูก render เป็น text และไม่ใช้ innerHTML', () => {
   const doc = fakeDocument();
   const container = new FakeElement('div');
@@ -130,6 +140,20 @@ test('double-submit ถูกป้องกันระหว่าง request 
   await first;
 });
 
+test('doctor-question generation uses existing visible loading state', async () => {
+  let resolveRequest;
+  const snapshots = [];
+  const pending = new Promise((resolve) => { resolveRequest = resolve; });
+  const session = plusUI.createSession({ send: async () => pending, onChange: (state) => snapshots.push(state) });
+  session.setProfile('CP-1');
+  const request = session.submit(plusUI.buildDoctorQuestionRequest('CP-1'), 'ถามหมออะไรดี');
+  assert.equal(session.snapshot().busy, true);
+  resolveRequest({ status: 'questions', questions: [] });
+  await request;
+  assert.equal(session.snapshot().busy, false);
+  assert.equal(snapshots.some((state) => state.busy), true);
+});
+
 test('ask request ส่งเฉพาะ question และ purposeHint ที่ UI กำหนด', () => {
   const request = plusUI.buildAskRequest('cp_1', 'มียาอะไร', 'medication_summary');
   assert.equal(request.path, '/api/plus/care-profiles/cp_1/ask');
@@ -142,6 +166,56 @@ test('appointment preparation ใช้ Care Profile และ appointment ท�
   assert.equal(request.path, '/api/plus/care-profiles/cp_1/appointments/appt_9/prepare');
   assert.deepEqual(request.body, {});
   assert.equal(plusUI.QUICK_ACTIONS.find((item) => item.id === 'prepare').requiresAppointment, true);
+});
+
+test('ถามหมออะไรดี request ส่งเฉพาะ Care Profile appointment และ focus ที่อนุญาต', () => {
+  const request = plusUI.buildDoctorQuestionRequest('cp_1', 'appt_9', 'อยากถามเรื่องยา');
+  assert.equal(request.path, '/api/care-profile/cp_1/doctor-questions');
+  assert.deepEqual(request.body, { appointmentId: 'appt_9', focus: 'อยากถามเรื่องยา' });
+  assert.equal('context' in request.body || 'provider' in request.body || 'lineUserId' in request.body, false);
+});
+
+test('structured doctor questions render as text with loading-compatible response model', () => {
+  const response = {
+    status: 'questions', title: 'คำถามที่อยากถามคุณหมอ', summary: 'เตรียมไว้ก่อนพบแพทย์',
+    questions: [{ id: 'Q1', category: 'medication', question: '<img src=x onerror=alert(1)>', rationale: 'วิธีใช้ยังไม่ครบ' }],
+    missingInformation: [{ code: 'MISSING', label: 'ยังไม่มีวิธีใช้ยา' }],
+    safetyNotice: 'แพทย์เป็นผู้ตัดสินใจ', disclaimer: 'ไม่ใช่การวินิจฉัย',
+  };
+  const view = plusUI.responseToViewModel(response);
+  assert.equal(view.kind, 'doctor-questions');
+  assert.equal(view.questions[0].question, '<img src=x onerror=alert(1)>');
+  assert.deepEqual(view.missingInformation, ['ยังไม่มีวิธีใช้ยา']);
+  const doc = fakeDocument();
+  const container = new FakeElement('div');
+  plusUI.renderResponse(doc, container, response, { copyText() {} });
+  assert.equal(container.children[0].children[2].children[0].children[0].textContent, '<img src=x onerror=alert(1)>');
+});
+
+test('copy-all format เหมาะกับ LINE และไม่ใส่ Care Profile/LINE/internal IDs', () => {
+  const text = plusUI.formatDoctorQuestionsForCopy({ questions: [
+    { id: 'INTERNAL-1', category: 'lab', question: 'ควรถามเรื่องผลตรวจอย่างไร?' },
+    { id: 'INTERNAL-2', category: 'medication', question: 'ควรยืนยันวิธีใช้ยาอย่างไร?' },
+  ] });
+  assert.match(text, /^คำถามที่อยากถามคุณหมอ/);
+  assert.match(text, /1\. ควรถามเรื่องผลตรวจอย่างไร/);
+  assert.match(text, /ไม่ใช่การวินิจฉัยหรือคำแนะนำให้ปรับยา/);
+  assert.doesNotMatch(text, /INTERNAL|Care Profile|LINE ID/);
+});
+
+test('copy-all button invokes injected clipboard helper and never browser storage', () => {
+  let copied = '';
+  const doc = fakeDocument();
+  const container = new FakeElement('div');
+  plusUI.renderResponse(doc, container, {
+    status: 'questions', title: 'คำถาม', summary: 'สรุป',
+    questions: [{ id: 'Q1', category: 'condition', question: 'ควรถามอะไร?', rationale: 'ข้อมูลประกอบ' }],
+    missingInformation: [], safetyNotice: 'ปลอดภัย', disclaimer: 'ไม่ใช่คำวินิจฉัย',
+  }, { copyText(value) { copied = value; } });
+  const button = container.children[0].children.find((child) => child.tagName === 'button');
+  button.listeners.click();
+  assert.match(copied, /ควรถามอะไร/);
+  assert.doesNotMatch(plusSource, /localStorage|sessionStorage/);
 });
 
 test('Plus UI ไม่เก็บคำถามหรือคำตอบใน browser storage และไม่ log response', () => {

@@ -199,6 +199,7 @@
         <button type="button" data-plus-action="medication-diff">ยาเปลี่ยนจากครั้งก่อน</button>
         <button type="button" data-plus-action="appointments">นัดหมาย</button>
         <button type="button" data-plus-action="prepare">เตรียมก่อนพบแพทย์</button>
+        <button type="button" data-plus-action="doctor-questions">ถามหมออะไรดี</button>
       </div>
       <div class="plus-appointment-picker" id="plusAppointmentPicker" hidden></div>
       <div class="plus-messages" id="plusMessages" role="log" aria-live="polite" aria-label="บทสนทนากับพี่หมอ Plus"></div>
@@ -437,6 +438,7 @@ async function ensurePlusUI() {
       request: plusApi,
       getCurrentProfile: () => currentProfile,
       pharmacistUrl: PHARMACIST_LINE_OA_URL,
+      copyText: copyForwardText,
     });
   }
   PLUS_UI.setProfile(currentProfile);

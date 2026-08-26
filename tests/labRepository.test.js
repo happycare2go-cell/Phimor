@@ -105,3 +105,16 @@ test('trend history query uses only latest confirmed versions and exact verified
   assert.deepEqual(calls[1].params,['CP-1','hba1c',11,10]);
   assert.doesNotMatch(calls[1].sql,/analyte_name_source\s*=|similarity|levenshtein/i);
 });
+
+test('doctor-question Lab context query is bounded to recent latest confirmed reports', async () => {
+  const { repository, calls } = recorder([]);
+  await repository.listRecentConfirmedObservations({
+    careProfileId: 'CP-PRIVATE', reportLimit: 5, observationLimit: 24,
+  });
+  assert.match(calls[0].sql, /MAX\(version_no\).*status = 'confirmed'/s);
+  assert.match(calls[0].sql, /r\.status = 'confirmed'/);
+  assert.match(calls[0].sql, /LIMIT \$2/);
+  assert.match(calls[0].sql, /LIMIT \$3/);
+  assert.doesNotMatch(calls[0].sql, /draft|voided|CP-PRIVATE/i);
+  assert.deepEqual(calls[0].params, ['CP-PRIVATE', 5, 24]);
+});

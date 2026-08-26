@@ -11,6 +11,7 @@
     { id: 'medication-diff', label: 'ยาเปลี่ยนจากครั้งก่อน', question: 'รอบล่าสุดเปลี่ยนยาอะไร', purposeHint: 'medication_diff' },
     { id: 'appointments', label: 'นัดหมาย', question: 'มีนัดอะไรต่อไป', purposeHint: 'appointment_summary' },
     { id: 'prepare', label: 'เตรียมก่อนพบแพทย์', question: 'ช่วยเตรียมคำถามก่อนไปพบแพทย์', purposeHint: 'doctor_visit_preparation', requiresAppointment: true },
+    { id: 'doctor-questions', label: 'ถามหมออะไรดี', doctorQuestions: true },
   ]);
 
   function isInternalEntitlement(value) {
@@ -25,38 +26,80 @@
     return Array.isArray(value) ? value.filter((item) => typeof item === 'string').slice(0, 30) : [];
   }
 
+  function safeQuestionList(value) {
+    return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object'
+      && typeof item.question === 'string').slice(0, 8).map((item, index) => ({
+      id: safeText(item.id, `Q${index + 1}`), category: safeText(item.category, 'clarification'),
+      question: item.question, rationale: safeText(item.rationale),
+    })) : [];
+  }
+
+  function safeMissingInformation(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 20).map((item) => {
+      if (typeof item === 'string') return item;
+      return item && typeof item.label === 'string' ? item.label : '';
+    }).filter(Boolean);
+  }
+
   function responseToViewModel(response = {}) {
+    if (response.status === 'questions') {
+      return {
+        kind: 'doctor-questions', title: safeText(response.title, 'คำถามที่อยากถามคุณหมอ'),
+        summary: safeText(response.summary), questions: safeQuestionList(response.questions),
+        keyPoints: [], missingInformation: safeMissingInformation(response.missingInformation),
+        safetyNotice: safeText(response.safetyNotice), disclaimer: safeText(response.disclaimer), retryable: false,
+      };
+    }
     if (response.status === 'answer') {
       return {
         kind: 'answer', title: 'คำอธิบายจากพี่หมอ', summary: safeText(response.data?.summary, 'ไม่พบข้อมูลที่สามารถสรุปได้'),
         keyPoints: safeList(response.data?.keyPoints), missingInformation: safeList(response.data?.missingInformation),
-        disclaimer: safeText(response.data?.disclaimer), retryable: false,
+        questions: [], safetyNotice: '', disclaimer: safeText(response.data?.disclaimer), retryable: false,
       };
     }
     if (response.status === 'escalation' && response.type === 'pharmacist') {
       return {
         kind: 'pharmacist', title: 'เรื่องยา พี่หมอไม่เดา',
         summary: 'คำถามนี้ควรให้เภสัชกรหรือแพทย์ช่วยตรวจสอบเพื่อความชัดเจน',
-        keyPoints: [], missingInformation: [], disclaimer: safeText(response.message), retryable: false,
+        keyPoints: [], questions: [], missingInformation: [], safetyNotice: '', disclaimer: safeText(response.message), retryable: false,
       };
     }
     if (response.status === 'escalation') {
       return {
         kind: 'medical', title: 'ควรปรึกษาบุคลากรทางการแพทย์',
         summary: safeText(response.message, 'คำถามนี้ควรได้รับการประเมินจากแพทย์หรือบุคลากรทางการแพทย์'),
-        keyPoints: [], missingInformation: [], disclaimer: '', retryable: false,
+        keyPoints: [], questions: [], missingInformation: [], safetyNotice: '', disclaimer: '', retryable: false,
       };
     }
     if (response.status === 'needs_review') {
       return {
         kind: 'needs_review', title: 'พี่หมอยังไม่มั่นใจว่าคำถามนี้ควรตอบในรูปแบบไหน',
-        summary: 'ลองถามใหม่ให้สั้นและชัดขึ้น หรือเลือกหัวข้อด้านบน', keyPoints: [], missingInformation: [], disclaimer: '', retryable: true,
+        summary: 'ลองถามใหม่ให้สั้นและชัดขึ้น หรือเลือกหัวข้อด้านบน', keyPoints: [], questions: [], missingInformation: [], safetyNotice: '', disclaimer: '', retryable: true,
+      };
+    }
+    if (response.status === 'unavailable'
+      && /^(?:PLUS_|NO_PLUS_|ENTITLEMENT_|INTERNAL_ENTITLEMENT)/.test(safeText(response.errorCode))) {
+      return {
+        kind: 'unavailable', title: 'ฟีเจอร์นี้ใช้สิทธิ์พี่หมอ Plus',
+        summary: 'บัญชีนี้ยังไม่มีสิทธิ์ใช้ระบบช่วยเตรียมคำถาม',
+        keyPoints: [], questions: [], missingInformation: [], safetyNotice: '', disclaimer: '', retryable: false,
       };
     }
     return {
       kind: 'unavailable', title: 'ตอนนี้พี่หมอยังช่วยอธิบายไม่ได้',
-      summary: 'กรุณาลองใหม่อีกครั้งภายหลัง', keyPoints: [], missingInformation: [], disclaimer: '', retryable: true,
+      summary: 'กรุณาลองใหม่อีกครั้งภายหลัง', keyPoints: [], questions: [], missingInformation: [], safetyNotice: '', disclaimer: '', retryable: true,
     };
+  }
+
+  function formatDoctorQuestionsForCopy(view) {
+    const questions = safeQuestionList(view?.questions);
+    if (!questions.length) return '';
+    return [
+      'คำถามที่อยากถามคุณหมอ', '',
+      ...questions.map((item, index) => `${index + 1}. ${item.question}`),
+      '', 'ข้อมูลจากพี่หมอใช้เพื่อช่วยเตรียมคำถาม ไม่ใช่การวินิจฉัยหรือคำแนะนำให้ปรับยา',
+    ].join('\n');
   }
 
   function appendTextElement(doc, parent, tag, className, text) {
@@ -71,13 +114,30 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
-  function renderResponse(doc, container, response, { pharmacistUrl = '' } = {}) {
+  function renderResponse(doc, container, response, { pharmacistUrl = '', copyText = null } = {}) {
     clearNode(container);
     const view = responseToViewModel(response);
     const card = doc.createElement('div');
     card.className = `plus-response plus-response--${view.kind}`;
     appendTextElement(doc, card, 'h4', 'plus-response__title', view.title);
     appendTextElement(doc, card, 'p', 'plus-response__summary', view.summary);
+    if (view.questions?.length) {
+      const list = doc.createElement('ol');
+      list.className = 'plus-doctor-questions';
+      view.questions.forEach((item) => {
+        const listItem = doc.createElement('li');
+        appendTextElement(doc, listItem, 'div', 'plus-doctor-question__text', item.question);
+        if (item.rationale) appendTextElement(doc, listItem, 'p', 'plus-doctor-question__rationale', item.rationale);
+        list.appendChild(listItem);
+      });
+      card.appendChild(list);
+      const copyButton = appendTextElement(doc, card, 'button', 'btn btn-outline plus-copy-questions', 'คัดลอกคำถามทั้งหมด');
+      copyButton.type = 'button';
+      copyButton.addEventListener('click', () => {
+        if (typeof copyText === 'function') copyText(formatDoctorQuestionsForCopy(view));
+      });
+      if (typeof copyText !== 'function') copyButton.disabled = true;
+    }
     if (view.keyPoints.length) {
       const list = doc.createElement('ul');
       list.className = 'plus-response__list';
@@ -91,6 +151,7 @@
       view.missingInformation.forEach((item) => appendTextElement(doc, list, 'li', '', item));
       card.appendChild(list);
     }
+    if (view.safetyNotice) appendTextElement(doc, card, 'p', 'plus-response__safety', view.safetyNotice);
     if (view.disclaimer) appendTextElement(doc, card, 'p', 'plus-response__disclaimer', view.disclaimer);
     if (view.kind === 'pharmacist') {
       const button = appendTextElement(doc, card, 'button', 'btn btn-outline plus-pharmacist-button', 'ปรึกษาเภสัชกร');
@@ -116,6 +177,16 @@
     return {
       path: `/api/plus/care-profiles/${encodeURIComponent(careProfileId)}/appointments/${encodeURIComponent(appointmentId)}/prepare`,
       body: {},
+    };
+  }
+
+  function buildDoctorQuestionRequest(careProfileId, appointmentId = null, focus = '') {
+    return {
+      path: `/api/care-profile/${encodeURIComponent(careProfileId)}/doctor-questions`,
+      body: {
+        ...(appointmentId ? { appointmentId } : {}),
+        ...(focus ? { focus } : {}),
+      },
     };
   }
 
@@ -167,7 +238,7 @@
     };
   }
 
-  function createController({ doc, request, getCurrentProfile, pharmacistUrl = '' }) {
+  function createController({ doc, request, getCurrentProfile, pharmacistUrl = '', copyText = null }) {
     const panel = doc.getElementById('plusPanel');
     const messages = doc.getElementById('plusMessages');
     const input = doc.getElementById('plusQuestion');
@@ -185,7 +256,7 @@
         else {
           const bubble = doc.createElement('div');
           bubble.className = 'plus-bubble plus-bubble--assistant';
-          renderResponse(doc, bubble, message.response, { pharmacistUrl });
+          renderResponse(doc, bubble, message.response, { pharmacistUrl, copyText });
           messages.appendChild(bubble);
         }
       });
@@ -236,6 +307,13 @@
       if (!action || !profile) return;
       if (action.requiresAppointment) return renderAppointmentPicker();
       appointmentPicker.hidden = true;
+      if (action.doctorQuestions) {
+        const appointment = Array.isArray(profile.upcomingAppointments) ? profile.upcomingAppointments[0] : null;
+        const appointmentId = appointment?.appointment_id || appointment?.appointmentId || null;
+        return session.submit(
+          buildDoctorQuestionRequest(profile.profile.care_profile_id, appointmentId), action.label
+        );
+      }
       return session.submit(buildAskRequest(profile.profile.care_profile_id, action.question, action.purposeHint), action.label);
     }
 
@@ -270,6 +348,7 @@
 
   return {
     QUICK_ACTIONS, isInternalEntitlement, responseToViewModel, renderResponse,
-    buildAskRequest, buildPreparationRequest, createSession, createController,
+    formatDoctorQuestionsForCopy, buildAskRequest, buildPreparationRequest,
+    buildDoctorQuestionRequest, createSession, createController,
   };
 }));

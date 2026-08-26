@@ -300,6 +300,40 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
       );
       return result.rows;
     },
+
+    async listRecentConfirmedObservations({ careProfileId, reportLimit = 5, observationLimit = 24 }) {
+      const result = await queryFn(
+        `WITH latest_confirmed AS (
+           SELECT report_group_id, MAX(version_no) AS version_no
+           FROM lab_reports
+           WHERE care_profile_id = $1 AND status = 'confirmed'
+           GROUP BY report_group_id
+         ), recent_reports AS (
+           SELECT r.*
+           FROM lab_reports r
+           INNER JOIN latest_confirmed lc
+             ON lc.report_group_id = r.report_group_id AND lc.version_no = r.version_no
+           WHERE r.care_profile_id = $1 AND r.status = 'confirmed'
+           ORDER BY
+             COALESCE(r.specimen_collected_at, r.reported_at, r.confirmed_at) DESC,
+             r.report_id DESC
+           LIMIT $2
+         )
+         SELECT
+           o.*,
+           r.report_id, r.report_group_id, r.version_no,
+           r.status AS report_status, r.specimen_collected_at, r.reported_at,
+           r.confirmed_at, r.laboratory_name, r.hospital_name
+         FROM recent_reports r
+         INNER JOIN lab_observations o ON o.report_id = r.report_id
+         ORDER BY
+           COALESCE(r.specimen_collected_at, r.reported_at, r.confirmed_at) DESC,
+           r.report_id DESC, o.source_ordinal ASC
+         LIMIT $3`,
+        [careProfileId, reportLimit, observationLimit]
+      );
+      return result.rows;
+    },
   };
   return repository;
 }
