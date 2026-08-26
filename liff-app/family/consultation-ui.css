@@ -14,6 +14,7 @@
 .consultation-payment{padding:13px;border:1px dashed #aeb8ce;border-radius:10px;text-align:center;color:var(--gray)}
 .consultation-payment__qr{display:block;width:min(260px,100%);height:auto;margin:12px auto;border-radius:12px;background:#fff}
 .consultation-payment__qr[hidden]{display:none!important}
+.consultation-payment-reference,.consultation-case__reference{overflow-wrap:anywhere;font-size:12px;color:#475467}
 .consultation-groups{display:grid;gap:10px;margin-top:14px}.consultation-group h4{margin:0 0 6px;color:var(--navy);font-size:13px}
 .consultation-case{width:100%;min-height:48px;padding:11px;text-align:left;background:#fff;border:1px solid #e0e5f0;border-radius:9px;margin:4px 0;color:#26324e;overflow-wrap:anywhere}
 .consultation-case--active{border-left:4px solid #0f6e56}.consultation-case--resolved{border-left:4px solid #d6a62f;background:#fffdf5}.consultation-case--closed{border-left:4px solid #7a8498;background:#f5f6f8}.consultation-case__state{font-weight:700;color:#26324e!important}

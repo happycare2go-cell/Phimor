@@ -7,6 +7,9 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { centerCanAccessResident } = require('../middleware/auth');
 const cardService = require('../services/cardService');
 const lineClient = require('../providers/lineClient');
+const { LabDomainError } = require('../domain/lab');
+const { CareProfileAuthorizationError } = require('../services/careProfileAuthorizationService');
+const { LabDocumentIngestionError } = require('../services/labDocumentIngestionService');
 
 router.use(requireAuth);
 
@@ -48,18 +51,45 @@ function requireCardApprover(req, res, next) {
   next();
 }
 
+function requireCardReviewer(req, res, next) {
+  const isLab = (req.card.document_subtype || req.card.ai_result?.documentSubtype) === 'lab_report';
+  if (isLab || ['owner', 'manager'].includes(req.cardStaffRole)) return next();
+  return res.status(403).json({ error: 'forbidden', message: 'เฉพาะเจ้าของหรือผู้จัดการเท่านั้นที่ดูและแก้รายละเอียดได้' });
+}
+
+function labReviewError(res, error) {
+  const expected = error instanceof LabDomainError || error instanceof CareProfileAuthorizationError
+    || error instanceof LabDocumentIngestionError;
+  const status = expected && Number.isInteger(error.status) ? error.status : 503;
+  return res.status(status).json({
+    error: status === 403 ? 'forbidden' : status === 404 ? 'not_found' : 'lab_review_unavailable',
+    message: status >= 500 ? 'ระบบตรวจสอบผล Lab ยังไม่พร้อม กรุณาลองใหม่ภายหลัง' : error.message,
+  });
+}
+
 // GET /api/cards/:id — ข้อมูลการ์ดสำหรับหน้าแก้ไข
-router.get('/cards/:cardId', assertCardBelongsToRequesterCenter, requireCardApprover, asyncHandler(async (req, res) => {
-  const result = await cardService.getCardForEdit(req.params.cardId);
-  res.json(result);
+router.get('/cards/:cardId', assertCardBelongsToRequesterCenter, requireCardReviewer, asyncHandler(async (req, res) => {
+  try {
+    const result = await cardService.getCardForEdit(req.params.cardId, req.user.lineUserId);
+    if (result?.needsCareProfile) {
+      return res.status(409).json({ error: 'care_profile_required', message: 'กรุณาผูกผู้พักกับ Care Profile ก่อนตรวจสอบผล Lab' });
+    }
+    return res.json(result);
+  } catch (error) { return labReviewError(res, error); }
 }));
 
 // PATCH /api/cards/:id — บันทึกข้อมูลที่แก้ไข
-router.patch('/cards/:cardId', assertCardBelongsToRequesterCenter, requireCardApprover, asyncHandler(async (req, res) => {
-  const { residentId, appointment, medications, doctorNote, editedFields } = req.body;
-  const result = await cardService.patchCard(req.params.cardId, { residentId, appointment, medications, doctorNote, editedFields });
-  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.json(result.card);
+router.patch('/cards/:cardId', assertCardBelongsToRequesterCenter, requireCardReviewer, asyncHandler(async (req, res) => {
+  const { residentId, appointment, medications, doctorNote, labReport, editedFields } = req.body;
+  try {
+    const result = await cardService.patchCard(
+      req.params.cardId,
+      { residentId, appointment, medications, doctorNote, labReport, editedFields },
+      req.user.lineUserId
+    );
+    if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+    return res.json(result.card);
+  } catch (error) { return labReviewError(res, error); }
 }));
 
 // POST /api/cards/:id/confirm — ยืนยันและส่งให้ครอบครัว
@@ -67,7 +97,7 @@ router.post('/cards/:cardId/confirm', assertCardBelongsToRequesterCenter, requir
   const profile = await lineClient.getProfile(req.user.lineUserId);
   const result = await cardService.confirmCard(req.params.cardId, req.user.lineUserId, profile.displayName);
   if (!result.ok) {
-    const statusCode = result.alreadyConfirmed || result.expired ? 409 : 400;
+    const statusCode = result.alreadyConfirmed || result.expired || result.requiresReview ? 409 : 400;
     return res.status(statusCode).json({ error: 'bad_request', message: result.reason });
   }
   res.json(result);
@@ -78,9 +108,11 @@ router.post('/cards/:cardId/select-resident', assertCardBelongsToRequesterCenter
   const { residentId } = req.body;
   const ok = await centerCanAccessResident(req.card.center_id, residentId);
   if (!ok) return res.status(400).json({ error: 'bad_request', message: 'ผู้พักนี้ไม่ได้อยู่ในศูนย์เดียวกับการ์ด' });
-  const result = await cardService.selectResidentForCard(req.params.cardId, residentId);
+  const result = await cardService.selectResidentForCard(req.params.cardId, residentId, req.user.lineUserId);
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
   res.json({ ok: true });
 }));
 
 module.exports = router;
+module.exports.requireCardReviewer = requireCardReviewer;
+module.exports.labReviewError = labReviewError;

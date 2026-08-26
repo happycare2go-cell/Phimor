@@ -2,8 +2,10 @@
 const { loadV2Config } = require('../config/v2Config');
 const { createAIProvider } = require('./AIProviderFactory');
 const { DOCUMENT_PROMPT, validateDocumentResult } = require('./documentAI');
+const { LAB_DOCUMENT_PROMPT, validateLabExtractionResult } = require('./labDocumentAI');
 
 const mockQueue = [];
+const labMockQueue = [];
 let providerOverride = null;
 let defaultProvider = null;
 
@@ -26,11 +28,27 @@ async function interpretDocument(imageBuffer, imageMimeType = 'image/jpeg') {
   });
 }
 
-// Lab interpretation remains intentionally outside Foundation 1C.
-const interpretLabResult = async () => ({});
+async function interpretLabDocument(imageBuffer, imageMimeType = 'image/jpeg') {
+  if (process.env.NODE_ENV === 'test' && labMockQueue.length > 0) {
+    return validateLabExtractionResult(labMockQueue.shift());
+  }
+  const config = loadV2Config();
+  return getProvider().generateStructured({
+    task: 'lab_document_extraction',
+    systemInstructions: LAB_DOCUMENT_PROMPT,
+    context: null,
+    input: { imageBuffer, imageMimeType },
+    outputSchema: validateLabExtractionResult,
+    timeoutMs: config.ai.timeoutMs,
+  });
+}
+
+const interpretLabResult = interpretLabDocument;
 const queueMockResponse = (response) => { mockQueue.push(response); };
+const queueLabMockResponse = (response) => { labMockQueue.push(response); };
 const clearMockQueue = () => {
   mockQueue.splice(0, mockQueue.length);
+  labMockQueue.splice(0, labMockQueue.length);
   providerOverride = null;
   defaultProvider = null;
 };
@@ -40,5 +58,6 @@ const setProviderForTests = (provider) => {
 };
 
 module.exports = {
-  interpretDocument, interpretLabResult, queueMockResponse, clearMockQueue, setProviderForTests,
+  interpretDocument, interpretLabDocument, interpretLabResult,
+  queueMockResponse, queueLabMockResponse, clearMockQueue, setProviderForTests,
 };

@@ -140,7 +140,14 @@ async function notifyApproversAndSubmitter(event, card, center) {
     await lineClient.pushMessage(approver.line_user_id, [flex.confirmCardFlex({ cardId: card.card_id, residentName: resident.full_name, room: resident.room, data })]);
   }
   if (event?.replyToken) {
-    await safeReply(event.replyToken, { type: 'text', text: `รับข้อมูลของ ${resident.full_name} แล้วค่ะ\nส่งให้ผู้จัดการตรวจสอบและยืนยันเรียบร้อย` });
+    const isLab = data.documentSubtype === 'lab_report';
+    const editUrl = isLab
+      ? `\nตรวจและแก้ฉบับร่างได้ที่\nhttps://liff.line.me/${process.env.LIFF_ID_CENTER_ADMIN || 'YOUR_LIFF_ID'}?view=edit-card&cardId=${card.card_id}`
+      : '';
+    await safeReply(event.replyToken, {
+      type: 'text',
+      text: `รับข้อมูลของ ${resident.full_name} แล้วค่ะ\n${isLab ? 'ผล Lab ยังเป็นฉบับรอตรวจสอบ' : 'ส่งให้ผู้จัดการตรวจสอบและยืนยันเรียบร้อย'}${editUrl}`,
+    });
   }
 }
 
@@ -164,7 +171,7 @@ async function handlePostback(event) {
         if (!card || !membership || !entitlement.allowed) {
           return safeReply(event.replyToken, { type: 'text', text: '⚠️ คุณไม่มีสิทธิ์เลือกผู้พักสำหรับรายการนี้' });
         }
-        const result = await cardService.selectResidentForCard(cardId, residentId);
+        const result = await cardService.selectResidentForCard(cardId, residentId, lineUserId);
         if (!result.ok) return safeReply(event.replyToken, { type: 'text', text: result.reason });
 
         const updatedCard = await PendingCards.findOne((c) => c.card_id === cardId);
@@ -195,7 +202,10 @@ async function handlePostback(event) {
         const card = await PendingCards.findOne((c) => c.card_id === cardId);
         if (card) {
            const center = await Centers.findOne((c) => c.center_id === card.center_id);
-           const allowed = await centerService.canApprove(card.center_id, lineUserId);
+           const isLab = (card.document_subtype || card.ai_result?.documentSubtype) === 'lab_report';
+           const membership = isLab ? await CenterStaff.findOne((s) =>
+             s.center_id === card.center_id && s.line_user_id === lineUserId && (!s.status || s.status === 'active')) : null;
+           const allowed = isLab ? Boolean(membership) : await centerService.canApprove(card.center_id, lineUserId);
            const entitlement = require('../services/subscriptionService').entitlement(center);
            if (!allowed || !entitlement.allowed) return safeReply(event.replyToken, { type: 'text', text: '⚠️ ไม่สามารถแก้ไขได้ กรุณาตรวจสอบบทบาทและสิทธิ์แพ็กเกจของศูนย์' });
         }

@@ -44,7 +44,8 @@
   function waitingOnLabel(value,state){if(['queued','resolved','closed'].includes(state))return 'ไม่มีฝ่ายที่กำลังรอคำตอบ';return value==='pharmacist'?'รอเภสัชกรตอบ':value==='customer'?'รอข้อมูลจากผู้ใช้':'ไม่มีฝ่ายที่กำลังรอคำตอบ';}
   function accessStateMessage(access,error){if(access==='allowed')return '';if(access==='loading')return 'กำลังตรวจสอบสิทธิ์…';if(access==='denied')return 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน Pharmacist Console กรุณาติดต่อผู้ดูแลระบบ';if(error==='CONSULTATION_DISABLED')return 'ระบบปรึกษาเภสัชกรยังไม่เปิดใช้งาน';return 'ไม่สามารถเชื่อมต่อ Pharmacist Console ได้ กรุณาลองใหม่';}
   function assistantErrorMessage(code){return ({AI_TIMEOUT:'AI Assistant ใช้เวลานานเกินไป กรุณาลองใหม่ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_RATE_LIMIT:'AI Assistant มีคำขอจำนวนมาก กรุณารอสักครู่แล้วลองใหม่',AI_INVALID_RESPONSE:'AI Assistant ไม่สามารถจัดรูปแบบข้อมูลได้ กรุณาลองใหม่',AI_UNAVAILABLE:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_PROVIDER_ERROR:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ'})[code]||'AI Assistant ไม่พร้อมใช้งานในขณะนี้ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ';}
-  function messageSendErrorMessage(code){if(['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code))return 'เคสนี้หมดเวลาหรือปิดแล้ว จึงไม่สามารถส่งข้อความใหม่ได้';if(['CONSULTATION_ACCESS_DENIED','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED'].includes(code))return 'สิทธิ์เข้าถึงเคสนี้ไม่พร้อมใช้งาน กรุณารีเฟรชหรือติดต่อผู้ดูแลระบบ';if(code==='CONSULTATION_RATE_LIMITED')return 'ส่งข้อความถี่เกินไป กรุณารอสักครู่';if(['CONSULTATION_NOT_ACCEPTED','CONSULTATION_NOT_ACTIVE','INVALID_WAITING_ON_STATE'].includes(code))return 'สถานะเคสยังไม่อนุญาตให้ส่งข้อความ กรุณารีเฟรชเคส';return 'ระบบส่งข้อความไม่พร้อมชั่วคราว กรุณาลองใหม่';}
+  function supportReference(correlationId){return correlationId?` (รหัสอ้างอิง ${correlationId})`:'';}
+  function messageSendErrorMessage(code,correlationId=null){if(['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code))return 'เคสนี้หมดเวลาหรือปิดแล้ว จึงไม่สามารถส่งข้อความใหม่ได้';if(['CONSULTATION_ACCESS_DENIED','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED'].includes(code))return 'สิทธิ์เข้าถึงเคสนี้ไม่พร้อมใช้งาน กรุณารีเฟรชหรือติดต่อผู้ดูแลระบบ';if(code==='CONSULTATION_RATE_LIMITED')return 'ส่งข้อความถี่เกินไป กรุณารอสักครู่';if(['CONSULTATION_NOT_ACCEPTED','CONSULTATION_NOT_ACTIVE','INVALID_WAITING_ON_STATE'].includes(code))return 'สถานะเคสยังไม่อนุญาตให้ส่งข้อความ กรุณารีเฟรชเคส';return `ระบบส่งข้อความไม่พร้อมชั่วคราว กรุณาลองใหม่${supportReference(correlationId)}`;}
   function createIdempotencyKey(cryptoApi=globalThis.crypto){
     if(cryptoApi&&typeof cryptoApi.randomUUID==='function') return cryptoApi.randomUUID();
     return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -57,6 +58,7 @@
     let state={
       access:'loading',tab:'queue',collections:{queue:[],active:[],resolved:[],closed:[]},
       queueCursor:null,queueHasMore:false,selectedCase:null,messages:[],lastSequence:0,
+      caseContext:null,caseContextLoading:false,
       assistant:null,assistantBusy:false,sending:false,acceptingCaseId:null,resolving:false,
       error:null,statusMessage:'',retryAfterSeconds:0,
     };
@@ -118,16 +120,21 @@
       revision+=1; stopPolling();
       if(rateLimitTimer!==null){cancelSchedule(rateLimitTimer);rateLimitTimer=null;}
       const requestRevision=token();
-      patch({selectedCase:null,messages:[],lastSequence:0,assistant:null,error:null,statusMessage:'กำลังโหลดเคส…',sending:false,resolving:false,retryAfterSeconds:0});
+      patch({selectedCase:null,messages:[],lastSequence:0,caseContext:null,caseContextLoading:false,assistant:null,error:null,statusMessage:'กำลังโหลดเคส…',sending:false,resolving:false,retryAfterSeconds:0});
       try{
         const detail=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}`);
         if(!current(requestRevision)) return {ignored:true,stale:true};
-        patch({selectedCase:detail,statusMessage:''});
-        const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/messages?afterSequence=0&limit=50`);
+        patch({selectedCase:detail,statusMessage:'',caseContextLoading:!effectiveClosed(detail)});
+        const [messagesResult,contextResult]=await Promise.all([
+          request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/messages?afterSequence=0&limit=50`),
+          effectiveClosed(detail)
+            ? Promise.resolve(null)
+            : request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/context`).catch((error)=>({status:'unavailable',errorCode:apiErrorCode(error)})),
+        ]);
         if(!current(requestRevision)||state.selectedCase?.caseId!==caseId) return {ignored:true,stale:true};
-        const messages=normalizedMessages(result.items);
-        patch({messages,lastSequence:Number(result.nextSequence)||messages.at(-1)?.sequence||0});
-        schedulePoll(); return {detail,messages};
+        const messages=normalizedMessages(messagesResult.items);
+        patch({messages,lastSequence:Number(messagesResult.nextSequence)||messages.at(-1)?.sequence||0,caseContext:contextResult,caseContextLoading:false});
+        schedulePoll(); return {detail,messages,context:contextResult};
       }catch(error){
         if(current(requestRevision)) patch({error:apiErrorCode(error),statusMessage:'เปิดเคสไม่สำเร็จ'});
         return {error:apiErrorCode(error)};
@@ -185,7 +192,7 @@
         if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         const retryAfterSeconds=Math.max(0,Number(error?.retryAfterSeconds)||0);
         const code=apiErrorCode(error),closed=['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code);
-        patch({sending:false,error:code,retryAfterSeconds,statusMessage:messageSendErrorMessage(code)});
+        patch({sending:false,error:code,retryAfterSeconds,statusMessage:messageSendErrorMessage(code,error?.correlationId)});
         if(rateLimitTimer!==null)cancelSchedule(rateLimitTimer);
         if(retryAfterSeconds>0)rateLimitTimer=schedule(()=>{rateLimitTimer=null;patch({retryAfterSeconds:0,statusMessage:''});},retryAfterSeconds*1000);
         if(closed)await pollOnce();
@@ -201,7 +208,7 @@
         await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/resolve`,{method:'POST',body:'{}'});
         if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         const result=await pollOnce(); patch({resolving:false}); await Promise.all([loadCollection('active'),loadCollection('resolved')]); return result;
-      }catch(error){if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};patch({resolving:false,error:apiErrorCode(error),statusMessage:'เปลี่ยนสถานะไม่สำเร็จ'});return {error:apiErrorCode(error)};}
+      }catch(error){if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};patch({resolving:false,error:apiErrorCode(error),statusMessage:`เปลี่ยนสถานะไม่สำเร็จ${supportReference(error?.correlationId)}`});return {error:apiErrorCode(error)};}
     }
     async function generateAssistant(){
       const caseId=state.selectedCase?.caseId;
@@ -216,13 +223,40 @@
         return {error:apiErrorCode(error)};
       }
     }
-    function clearSelection(){revision+=1;stopPolling();patch({selectedCase:null,messages:[],lastSequence:0,assistant:null,statusMessage:''});}
+    function clearSelection(){revision+=1;stopPolling();patch({selectedCase:null,messages:[],lastSequence:0,caseContext:null,caseContextLoading:false,assistant:null,statusMessage:''});}
     function handleVisibilityChange(){if(documentHidden())stopPolling();else schedulePoll();}
     return {snapshot,initialize,loadCollection,switchTab,selectCase,acceptCase,pollOnce,sendMessage,resolveCase,generateAssistant,clearSelection,stopPolling,schedulePoll,handleVisibilityChange};
   }
 
   function clearNode(node){while(node?.firstChild)node.removeChild(node.firstChild);}
   function textElement(doc,parent,tag,className,text){const el=doc.createElement(tag);if(className)el.className=className;el.textContent=safeText(text);parent.appendChild(el);return el;}
+  function contextValue(value,fallback='ไม่ระบุ'){if(Array.isArray(value))return value.length?value.join(', '):fallback;if(value===null||value===undefined||value==='')return fallback;return String(value);}
+  function renderCaseContext(doc,container,context,{loading=false}={}){
+    clearNode(container);
+    if(loading){container.hidden=false;textElement(doc,container,'p','case-context__status','กำลังโหลดข้อมูลผู้ติดต่อและ Care Profile…');return;}
+    if(!context){container.hidden=true;return;}
+    container.hidden=false;
+    if(context.status==='unavailable'){
+      textElement(doc,container,'p','case-context__status','ข้อมูล Care Profile ไม่พร้อมใช้งาน กรุณาตอบจากข้อมูลในบทสนทนาและสอบถามผู้ใช้เพิ่มเติม');return;
+    }
+    const contactSection=doc.createElement('section');contactSection.className='case-context__contact';
+    textElement(doc,contactSection,'h3','','ผู้ติดต่อผ่าน LINE');
+    const contactRow=doc.createElement('div');contactRow.className='case-context__contact-row';
+    if(context.contact?.pictureUrl){const image=doc.createElement('img');image.className='case-context__avatar';image.src=context.contact.pictureUrl;image.alt='รูปโปรไฟล์ LINE ของผู้ติดต่อ';image.addEventListener?.('error',()=>{image.hidden=true;});contactRow.appendChild(image);}
+    const contactCopy=doc.createElement('div');textElement(doc,contactCopy,'strong','',contextValue(context.contact?.displayName,'ผู้ติดต่อผ่าน LINE'));textElement(doc,contactCopy,'p','case-context__hint','บัญชีผู้ติดต่ออาจเป็นญาติหรือผู้ดูแล ไม่จำเป็นต้องเป็นผู้รับการดูแล');contactRow.appendChild(contactCopy);contactSection.appendChild(contactRow);container.appendChild(contactSection);
+
+    const profile=context.careProfile||{};const profileSection=doc.createElement('section');profileSection.className='case-context__profile';
+    textElement(doc,profileSection,'h3','','Care Profile ของผู้รับการดูแล');
+    const fields=[['ชื่อ',profile.patientName],['เพศ',profile.gender],['กรุ๊ปเลือด',profile.bloodType],['ส่วนสูง',profile.heightCm===null?null:`${profile.heightCm} ซม.`],['น้ำหนัก',profile.weightKg===null?null:`${profile.weightKg} กก.`],['โรคประจำตัว',profile.chronicConditions],['แพ้ยา',profile.drugAllergies],['แพ้อาหาร',profile.foodAllergies],['ข้อจำกัดการเคลื่อนไหว',profile.mobilityLimitations]];
+    const grid=doc.createElement('dl');grid.className='case-context__grid';fields.forEach(([label,value])=>{const item=doc.createElement('div');textElement(doc,item,'dt','',label);textElement(doc,item,'dd','',contextValue(value));grid.appendChild(item);});profileSection.appendChild(grid);container.appendChild(profileSection);
+
+    const medicationSection=doc.createElement('section');medicationSection.className='case-context__medications';textElement(doc,medicationSection,'h3','','ยาปัจจุบันที่บันทึกไว้');
+    const medications=safeArray(context.currentMedications);if(!medications.length)textElement(doc,medicationSection,'p','case-context__hint','ยังไม่มีรายการยาปัจจุบัน');else{const list=doc.createElement('ul');medications.forEach((item)=>{const details=[item.dose,item.instruction,item.condition].filter(Boolean).join(' · ');textElement(doc,list,'li','',`${contextValue(item.name)}${details?` — ${details}`:''}`);});medicationSection.appendChild(list);}container.appendChild(medicationSection);
+
+    const appointmentSection=doc.createElement('section');appointmentSection.className='case-context__appointments';textElement(doc,appointmentSection,'h3','','นัดหมายที่กำลังจะมาถึง');
+    const appointments=safeArray(context.upcomingAppointments);if(!appointments.length)textElement(doc,appointmentSection,'p','case-context__hint','ยังไม่มีนัดหมายที่กำลังจะมาถึง');else{const list=doc.createElement('ul');appointments.forEach((item)=>{const when=item.datetime?new Date(item.datetime).toLocaleString('th-TH'):'ไม่ระบุเวลา';textElement(doc,list,'li','',`${contextValue(item.hospital)} · ${when}${item.reasonForVisit?` · ${item.reasonForVisit}`:''}`);});appointmentSection.appendChild(list);}container.appendChild(appointmentSection);
+    textElement(doc,container,'small','case-context__timestamp',`ข้อมูล Care Profile ณ ${context.generatedAt?new Date(context.generatedAt).toLocaleString('th-TH'):'เวลาที่เปิดเคส'}`);
+  }
   function renderAssistant(doc,container,result={}){
     clearNode(container);
     if(!result || !result.status){
@@ -288,6 +322,7 @@
     const elements={
       access:doc.getElementById('accessState'),app:doc.getElementById('consoleApp'),list:doc.getElementById('caseList'),
       header:doc.getElementById('caseHeader'),messages:doc.getElementById('chatMessages'),composer:doc.getElementById('messageComposer'),
+      context:doc.getElementById('caseContext'),
       send:doc.getElementById('sendMessageButton'),resolve:doc.getElementById('resolveButton'),assistant:doc.getElementById('assistantContent'),
       assistantButton:doc.getElementById('generateAssistantButton'),status:doc.getElementById('statusLive'),loadMore:doc.getElementById('loadMoreButton'),
       assistantRefresh:doc.getElementById('refreshAssistantButton'),
@@ -300,6 +335,7 @@
       renderQueue(doc,elements.list,state.collections[state.tab],{acceptingCaseId:state.acceptingCaseId,showAccept:state.tab==='queue',onSelect:session.selectCase,onAccept:session.acceptCase});
       elements.loadMore.hidden=state.tab!=='queue'||!state.queueHasMore;
       renderCaseHeader(doc,elements.header,state.selectedCase);
+      renderCaseContext(doc,elements.context,state.caseContext,{loading:state.caseContextLoading});
       renderMessages(doc,elements.messages,state.messages);
       const writable=state.selectedCase&&canMessage(state.selectedCase)&&state.retryAfterSeconds===0;
       elements.composer.disabled=!writable||state.sending;elements.send.disabled=!writable||state.sending||!elements.composer.value.trim();
@@ -328,7 +364,7 @@
     return async function request(path,options={}){
       const response=await fetchImpl(backendUrl+path,{...options,headers:{'Content-Type':'application/json','Authorization':`Bearer ${idToken}`,...(options.headers||{})}});
       let body={};try{body=await response.json();}catch(_){body={};}
-      if(!response.ok){const error=new Error('request failed');const rawCode=body.errorCode||body.code||body.error;error.errorCode=rawCode==='pharmacist_access_denied'?'PHARMACIST_ACCESS_DENIED':rawCode||'REQUEST_FAILED';error.status=response.status;error.retryAfterSeconds=Number(response.headers?.get?.('Retry-After'))||0;throw error;}
+      if(!response.ok){const error=new Error('request failed');const rawCode=body.errorCode||body.code||body.error;error.errorCode=rawCode==='pharmacist_access_denied'?'PHARMACIST_ACCESS_DENIED':rawCode||'REQUEST_FAILED';error.status=response.status;error.retryAfterSeconds=Number(response.headers?.get?.('Retry-After'))||0;error.correlationId=safeText(body.correlationId)||null;throw error;}
       return body;
     };
   }
@@ -350,5 +386,5 @@
     }catch(error){access.hidden=false;access.textContent=error?.message==='LIFF_ID_PHARMACIST_MISSING'?'ยังไม่ได้ตั้งค่า Pharmacist LIFF กรุณาติดต่อผู้ดูแลระบบ':'ไม่สามารถเปิด Pharmacist Console ได้';return null;}
   }
 
-  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,messageSendErrorMessage,createIdempotencyKey,createConsoleSession,renderAssistant,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
+  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,supportReference,messageSendErrorMessage,createIdempotencyKey,createConsoleSession,renderCaseContext,renderAssistant,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
 }));

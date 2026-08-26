@@ -9,6 +9,7 @@ const { createConsultationMessageService } = require('../services/consultationMe
 const { createConsultationRateLimitService } = require('../services/consultationRateLimitService');
 const { consultationError } = require('./consultations');
 const { createPharmacistAssistantService } = require('../services/pharmacistAssistantService');
+const { createConsultationCaseContextService } = require('../services/consultationCaseContextService');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -22,6 +23,12 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   const messages = overrides.messageService || createConsultationMessageService(overrides.messageDependencies);
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
   const assistant = overrides.assistantService || createPharmacistAssistantService(overrides.assistantDependencies);
+  const caseContext = overrides.caseContextService
+    || createConsultationCaseContextService(overrides.caseContextDependencies);
+  const writeDiagnostics = (action) => ({
+    action, logger:overrides.operationalLogger,
+    correlationIdFactory:overrides.correlationIdFactory,
+  });
 
   router.use(auth);
   router.use((req, res, next) => {
@@ -73,6 +80,16 @@ function createPharmacistConsultationsRouter(overrides = {}) {
     } catch (error) { return consultationError(res, error); }
   }));
 
+  router.get('/:caseId/context', asyncHandler(async (req, res) => {
+    if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CASE_ID' });
+    try {
+      return res.json(await caseContext.getCaseContext({
+        caseId:req.params.caseId,
+        pharmacistLineUserId:req.user.lineUserId,
+      }));
+    } catch (error) { return consultationError(res, error); }
+  }));
+
   router.post('/:caseId/accept', asyncHandler(async (req, res) => {
     if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CASE_ID' });
     try {
@@ -87,7 +104,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
     try {
       await cases.resolveCase({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId});
       return res.json(await reads.getPharmacistCase({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
-    } catch (error) { return consultationError(res,error); }
+    } catch (error) { return consultationError(res,error,writeDiagnostics('pharmacist_resolve')); }
   }));
 
   router.post('/:caseId/assistant',asyncHandler(async(req,res)=>{
@@ -125,7 +142,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
           createdAt:result.message.created_at,
         },
       });
-    } catch (error) { return consultationError(res, error); }
+    } catch (error) { return consultationError(res, error,writeDiagnostics('pharmacist_message_send')); }
   }));
 
   return router;

@@ -120,7 +120,7 @@ test('Family payment status exposes queued case only after paid provisioning',as
   const base={order_id:'ORDER-1',customer_line_user_id:'U-1',care_profile_id:'CP-1',amount_minor:10000,currency:'THB',payment_due_at:null};
   for(const scenario of [{order:{...base,status:'payment_pending',provisioning_status:'pending'},caseRow:null,expected:'payment_pending'},{order:{...base,status:'paid',provisioning_status:'pending'},caseRow:null,expected:'payment_confirming'},{order:{...base,status:'paid',provisioning_status:'provisioned'},caseRow:{case_id:'CASE-1'},expected:'queued'}]){
     const service=createConsultationPaymentStatusService({repository:{async findOrder(){return scenario.order;},async findCaseByOrderId(){return scenario.caseRow;}},authorize:async()=>({allowed:true})});
-    const result=await service.getStatus({orderId:'ORDER-1',lineUserId:'U-1'});assert.equal(result.status,scenario.expected);assert.equal(result.caseId,scenario.expected==='queued'?'CASE-1':null);
+    const result=await service.getStatus({orderId:'ORDER-1',lineUserId:'U-1'});assert.equal(result.status,scenario.expected);assert.equal(result.caseId,scenario.expected==='queued'?'CASE-1':null);assert.equal(result.paymentReference,'ORDER-1');
   }
 });
 

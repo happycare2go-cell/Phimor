@@ -16,9 +16,18 @@ function mascotHero(filename, backgroundColor = '#F5F7FA') {
 
 // ── S5: การ์ดยืนยันก่อนส่งให้ครอบครัว — ชื่อผู้พักต้องใหญ่ที่สุด (ข้อ E1) ──
 function confirmCardFlex({ cardId, residentName, room, data }) {
+  const isLab = data.documentSubtype === 'lab_report';
   const bodyContents = [
     { type: 'text', text: residentName + (room ? ` · ห้อง ${room}` : ''), weight: 'bold', size: 'xl', wrap: true, color: '#1C2B64' },
   ];
+
+  if (isLab) {
+    bodyContents.push(
+      { type: 'separator', margin: 'md' },
+      { type: 'text', text: '🧪 ผลตรวจ Lab · รอตรวจสอบ', weight: 'bold', size: 'sm', margin: 'md', color: '#8A6D1F' },
+      { type: 'text', text: 'กรุณาเปิดเอกสารต้นฉบับ ตรวจและแก้ข้อมูลที่ AI สกัด ก่อนยืนยันทุกครั้ง', size: 'xs', color: '#5A6580', wrap: true },
+    );
+  }
 
   if (data.appointment) {
     bodyContents.push(
@@ -55,11 +64,13 @@ function confirmCardFlex({ cardId, residentName, room, data }) {
       },
       body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: bodyContents },
       footer: {
-        type: 'box', layout: 'horizontal', spacing: 'sm',
-        contents: [
-          { type: 'button', style: 'secondary', action: { type: 'postback', label: 'แก้ไขก่อนส่ง', data: `action=edit_card&cardId=${cardId}` } },
-          { type: 'button', style: 'primary', color: '#1C2B64', action: { type: 'postback', label: 'ส่งเลย', data: `action=confirm_card&cardId=${cardId}` } },
-        ],
+        type: 'box', layout: isLab ? 'vertical' : 'horizontal', spacing: 'sm',
+        contents: isLab
+          ? [{ type: 'button', style: 'primary', color: '#1C2B64', action: { type: 'postback', label: 'ตรวจสอบผล Lab', data: `action=edit_card&cardId=${cardId}` } }]
+          : [
+            { type: 'button', style: 'secondary', action: { type: 'postback', label: 'แก้ไขก่อนส่ง', data: `action=edit_card&cardId=${cardId}` } },
+            { type: 'button', style: 'primary', color: '#1C2B64', action: { type: 'postback', label: 'ส่งเลย', data: `action=confirm_card&cardId=${cardId}` } },
+          ],
       },
     },
   };

@@ -7,6 +7,7 @@
 .plus-badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#111;color:#fff;font-size:9px;font-weight:800;letter-spacing:.06em}
 .plus-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}
 .plus-actions button{min-height:44px;padding:9px;border:1px solid #ccd6ec;border-radius:10px;background:#fff;color:var(--navy);font:600 12px inherit;cursor:pointer}
+.plus-actions button[data-plus-action="doctor-questions"]{grid-column:1/-1;border-color:#d7b45a;background:#fff8e8;font-weight:800}
 .plus-actions button:disabled{opacity:.55;cursor:wait}
 .plus-messages{display:flex;flex-direction:column;gap:9px;max-height:440px;overflow-y:auto;margin:10px 0;padding:2px}
 .plus-bubble{max-width:92%;padding:10px 12px;border-radius:14px;line-height:1.55;overflow-wrap:anywhere}
@@ -21,6 +22,12 @@
 .plus-response__list--missing{color:#6a5360}
 .plus-response__section-label{margin-top:10px;color:#6a5360;font-size:11px;font-weight:700}
 .plus-response__disclaimer{margin:10px 0 0;padding-top:8px;border-top:1px solid #edf0f6;color:#6a7285;font-size:11px;line-height:1.55}
+.plus-response__safety{margin:10px 0 0;padding:9px;border-radius:9px;background:#fff7df;color:#5e4b1d;font-size:11px;line-height:1.55}
+.plus-doctor-questions{margin:10px 0 0;padding-left:22px;color:#24304b}
+.plus-doctor-questions li{margin:0 0 11px;padding-left:3px}
+.plus-doctor-question__text{font-size:13px;font-weight:700;line-height:1.55}
+.plus-doctor-question__rationale{margin:3px 0 0;color:#667086;font-size:11px;line-height:1.5}
+.plus-copy-questions{width:100%;margin-top:4px;min-height:44px}
 .plus-pharmacist-button{margin-top:10px}
 .plus-compose{display:flex;align-items:flex-end;gap:8px}
 .plus-compose textarea{min-height:46px;max-height:120px;resize:vertical}

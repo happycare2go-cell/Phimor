@@ -13,6 +13,7 @@ const {
 } = require('./medicationDiffService');
 const { isUpcomingAppointment, projectAppointmentSummary } = require('./appointmentSummaryService');
 const { classifyConsultationSafety } = require('./consultationSafetyService');
+const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 
 const DEFAULT_MESSAGE_WINDOW = 12;
 const MAX_CONVERSATION_CHARACTERS = 6000;
@@ -91,7 +92,7 @@ function conciseDiff(previousSnapshot, currentSnapshot, previousItems, currentIt
 function createConsultationContextBuilder({
   repository=createConsultationRepository(), pharmacistAccounts=null,
   careProfiles=CareProfiles, medicationSnapshots=MedicationSnapshots, appointments=Appointments,
-  loadMedications=loadSnapshotMedications,
+  loadMedications=loadSnapshotMedications, authorize=authorizeCareProfileAccess,
 }={}) {
   const accounts=pharmacistAccounts || createPharmacistAccountService({repository});
   return async function buildConsultationContext({caseId,pharmacistLineUserId,now=new Date()}={}) {
@@ -106,6 +107,12 @@ function createConsultationContextBuilder({
     if (!['active','resolved'].includes(state)) {
       throw new ConsultationDomainError(state==='closed'?'CONSULTATION_EXPIRED':'CONSULTATION_NOT_ACTIVE',409);
     }
+    await authorize({
+      lineUserId:consultationCase.customer_line_user_id,
+      careProfileId:consultationCase.care_profile_id,
+      permission:'view',
+      requireActiveCenter:true,
+    });
     const profile=await careProfiles.findOne((item)=>item.care_profile_id===consultationCase.care_profile_id);
     if (!profile || ['inactive','revoked','deleted'].includes(profile.status)) {
       throw new ConsultationDomainError('CARE_PROFILE_NOT_FOUND',404);

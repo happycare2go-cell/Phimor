@@ -50,6 +50,17 @@ test('generic middleware pharmacist denial maps to a terminal access-denied stat
   assert.equal(state().access,'denied');assert.match(consoleUI.accessStateMessage(state().access,state().error),/ไม่มีสิทธิ์/);
 });
 
+test('safe backend correlation reference reaches the pharmacist error UI without raw provider details',async()=>{
+  const client=consoleUI.createHttpClient({backendUrl:'https://backend.example',idToken:'TOKEN',fetchImpl:async()=>({
+    ok:false,status:503,headers:{get:()=>null},json:async()=>({errorCode:'CONSULTATION_UNAVAILABLE',correlationId:'CREF-UI'}),
+  })});
+  await assert.rejects(()=>client('/api/pharmacist/consultations/CASE-1/messages'),(error)=>{
+    assert.equal(error.correlationId,'CREF-UI');assert.equal(error.errorCode,'CONSULTATION_UNAVAILABLE');return true;
+  });
+  assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_UNAVAILABLE','CREF-UI'),/CREF-UI/);
+  assert.doesNotMatch(consoleUI.messageSendErrorMessage('CONSULTATION_UNAVAILABLE','CREF-UI'),/SQL|DATABASE|provider/i);
+});
+
 test('feature disabled and network failures leave loading state safely',async()=>{
   for(const code of ['CONSULTATION_DISABLED','REQUEST_FAILED']){const {session,state}=createHarness(async()=>{throw Object.assign(new Error('raw'),{errorCode:code});});await session.initialize();assert.equal(state().access,'error');assert.doesNotMatch(consoleUI.accessStateMessage(state().access,state().error),/raw/);}
   assert.match(consoleUI.accessStateMessage('error','CONSULTATION_DISABLED'),/ยังไม่เปิดใช้งาน/);
@@ -269,14 +280,50 @@ test('case switching clears clinical UI state and stale in-flight responses are 
   assert.equal(JSON.stringify(harness.state()).includes('secret old'),false);
 });
 
+test('assigned case loads LINE contact and Care Profile context separately from chat',async()=>{
+  const context={
+    generatedAt:'2026-08-25T10:00:00Z',
+    contact:{displayName:'ญาติผู้ติดต่อ',pictureUrl:'https://profile.line-scdn.net/avatar'},
+    careProfile:{patientName:'คุณยาย',chronicConditions:['เบาหวาน'],drugAllergies:'Penicillin'},
+    currentMedications:[{name:'Metformin',dose:'500 mg',instruction:'หลังอาหาร'}],
+    upcomingAppointments:[{hospital:'โรงพยาบาลทดสอบ',datetime:'2026-08-26T10:00:00Z'}],
+  };
+  const harness=createHarness(async(pathValue)=>{
+    if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;
+    if(pathValue.endsWith('/CASE-1/context'))return context;
+    if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};
+    return standardHandler(pathValue);
+  });
+  await harness.session.selectCase('CASE-1');
+  assert.equal(harness.state().caseContext.contact.displayName,'ญาติผู้ติดต่อ');
+  assert.ok(harness.calls.some((item)=>item.path.endsWith('/CASE-1/context')));
+  const doc=fakeDocument(),container=new FakeElement();consoleUI.renderCaseContext(doc,container,context);
+  const visible=walkText(container).join('|');
+  assert.match(visible,/ผู้ติดต่อผ่าน LINE|ญาติผู้ติดต่อ|อาจเป็นญาติหรือผู้ดูแล/);
+  assert.match(visible,/Care Profile ของผู้รับการดูแล|คุณยาย|เบาหวาน|Penicillin|Metformin|โรงพยาบาลทดสอบ/);
+  assert.doesNotMatch(visible,/lineUserId|family_phone|emergency_contact|Health History/);
+});
+
+test('Care Profile context failure does not block pharmacist chat',async()=>{
+  const harness=createHarness(async(pathValue)=>{
+    if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;
+    if(pathValue.endsWith('/CASE-1/context'))throw Object.assign(new Error('private'),{errorCode:'CONSULTATION_ACCESS_DENIED'});
+    if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};
+  });
+  await harness.session.selectCase('CASE-1');
+  assert.equal(harness.state().caseContext.status,'unavailable');
+  assert.equal(consoleUI.canMessage(harness.state().selectedCase),true);
+  assert.equal(JSON.stringify(harness.state()).includes('private'),false);
+});
+
 test('privacy contract avoids browser storage, URL clinical state and browser logging',()=>{
   assert.doesNotMatch(source,/localStorage|sessionStorage/);assert.doesNotMatch(source,/console\.(log|info|debug|error)\s*\(/);
   assert.doesNotMatch(source,/history\.pushState|history\.replaceState|location\.search/);
 });
 
-test('console source and markup expose no LINE IDs contacts Health History or Care Profile writes',()=>{
+test('console exposes separated contact/profile projection but no LINE IDs phones Health History or writes',()=>{
   for(const forbidden of ['family_phone','emergency_contact_phone','healthHistory','Health History','lineUserId','CareProfiles.update','updateCareProfileHealth'])assert.equal(source.includes(forbidden),false,forbidden);
-  assert.doesNotMatch(html,/family phone|เบอร์ผู้ติดต่อ|Health History/);
+  assert.match(html,/id="caseContext"/);assert.doesNotMatch(html,/family phone|เบอร์ผู้ติดต่อ|Health History/);
 });
 
 test('runtime backend and pharmacist LIFF ID have no production or browser fallback',()=>{

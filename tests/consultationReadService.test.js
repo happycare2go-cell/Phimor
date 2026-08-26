@@ -61,6 +61,7 @@ test('Family reads only the purchased case with fresh Care Profile authorization
   const h = harness();
   const detail = await h.service.getFamilyCase({caseId:'CASE-1',lineUserId:'U-CUSTOMER'});
   assert.equal(detail.caseId, 'CASE-1');
+  assert.equal(detail.paymentReference, 'ORD-1');
   assert.equal(detail.initialQuestion, 'กินยาสองตัวนี้ด้วยกันได้ไหม');
   await assert.rejects(() => h.service.getFamilyCase({caseId:'CASE-1',lineUserId:'U-OTHER'}), (e)=>e.code==='CONSULTATION_ACCESS_DENIED');
 });
@@ -110,6 +111,7 @@ test('valid paid/provisioned Family case survives fresh authorization list proje
   assert.equal(result.items.length,1);
   assert.equal(result.items[0].caseId,'CASE-1');
   assert.equal(result.items[0].state,'queued');
+  assert.equal(result.items[0].paymentReference,'ORD-1');
 });
 
 test('direct case access also rejects an inconsistent unpaid/unprovisioned case', async () => {
@@ -127,6 +129,7 @@ test('direct case access also rejects an inconsistent unpaid/unprovisioned case'
 test('pharmacist can read only an assigned case and active status is rechecked', async () => {
   const h = harness();
   assert.equal((await h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-1'})).caseId, 'CASE-1');
+  assert.equal((await h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-1'})).paymentReference, undefined);
   await assert.rejects(() => h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-2'}), (e)=>e.code==='CONSULTATION_ACCESS_DENIED');
   await assert.rejects(() => h.service.getPharmacistCase({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM-S'}), (e)=>e.code==='PHARMACIST_INACTIVE');
 });

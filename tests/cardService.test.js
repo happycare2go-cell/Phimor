@@ -205,6 +205,8 @@ test('E4: รูปต้นฉบับต้องถูกเก็บไว�
 
   const forEdit = await cardService.getCardForEdit(result.card.card_id);
   assert.strictEqual(forEdit.imageBase64, result.card.image_base64, 'getCardForEdit ต้องคืนรูปด้วยเสมอ (ข้อ E4)');
+  assert.strictEqual(forEdit.imageMimeType, 'image/jpeg', 'reviewer ต้องใช้ MIME จริงจาก backend');
+  assert.deepStrictEqual(forEdit.sourceImage, { status:'available', mimeType:'image/jpeg', purgedAt:null });
 });
 
 test('E8: editedFields ต้องบันทึกว่าช่องไหนถูกแก้ไขโดยมนุษย์', async () => {

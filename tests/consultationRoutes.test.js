@@ -231,12 +231,15 @@ test('domain expiry errors return safe response without stack or database detail
 });
 
 test('unexpected database errors become a generic safe unavailable envelope', async () => {
+  const operationalEvents=[];
   const databaseError=Object.assign(new Error('relation consultation_messages does not exist'),{
     code:'42P01',status:500,stack:'PRIVATE_SQL_STACK',
   });
   await withApi({pharmacist:{
     readService:reads(),
     messageService:{async sendMessage(){throw databaseError;}},
+    operationalLogger:(event)=>operationalEvents.push(event),
+    correlationIdFactory:()=> 'CREF-TEST-MESSAGE',
   }},async(api)=>{
     const response=await api('/api/pharmacist/consultations/CASE-1/messages',{
       method:'POST',body:JSON.stringify({body:'ขอข้อมูลเพิ่ม',idempotencyKey:'K-SAFE'}),
@@ -244,9 +247,73 @@ test('unexpected database errors become a generic safe unavailable envelope', as
     assert.equal(response.status,503);
     const body=await response.json();
     assert.equal(body.errorCode,'CONSULTATION_UNAVAILABLE');
+    assert.equal(body.correlationId,'CREF-TEST-MESSAGE');
     const serialized=JSON.stringify(body);
-    assert.doesNotMatch(serialized,/42P01|relation|PRIVATE_SQL_STACK/);
+    assert.doesNotMatch(serialized,/42P01|consultation_messages|PRIVATE_SQL_STACK/);
   });
+  assert.deepEqual(operationalEvents,[{
+    event:'consultation_write_failed',action:'pharmacist_message_send',
+    correlationId:'CREF-TEST-MESSAGE',failureCategory:'database_schema',
+    safeErrorCode:'CONSULTATION_UNAVAILABLE',
+  }]);
+  assert.doesNotMatch(JSON.stringify(operationalEvents),/consultation_messages|PRIVATE_SQL_STACK|ขอข้อมูลเพิ่ม|U-PHARM|CASE-1/);
+});
+
+test('assigned pharmacist context route returns separated contact/profile data without LINE IDs',async()=>{
+  const seen=[];
+  await withApi({pharmacist:{
+    readService:reads(),
+    caseContextService:{async getCaseContext(input){seen.push(input);return {caseId:input.caseId,contact:{displayName:'ญาติผู้ดูแล',pictureUrl:null},careProfile:{patientName:'คุณยาย'},currentMedications:[],upcomingAppointments:[]};}},
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/CASE-1/context',{},'U-PHARM');
+    assert.equal(response.status,200);const body=await response.json();
+    assert.equal(body.contact.displayName,'ญาติผู้ดูแล');assert.equal(body.careProfile.patientName,'คุณยาย');
+    assert.equal(JSON.stringify(body).includes('U-PHARM'),false);
+  });
+  assert.deepEqual(seen,[{caseId:'CASE-1',pharmacistLineUserId:'U-PHARM'}]);
+});
+
+test('resolve write failures have a distinct correlation reference without leaking PostgreSQL details',async()=>{
+  const operationalEvents=[];
+  const databaseError=Object.assign(new Error('null value violates constraint'),{code:'23502',detail:'PRIVATE_ROW'});
+  await withApi({pharmacist:{
+    readService:reads(),caseService:{async resolveCase(){throw databaseError;}},
+    operationalLogger:(event)=>operationalEvents.push(event),correlationIdFactory:()=> 'CREF-TEST-RESOLVE',
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/CASE-1/resolve',{method:'POST',body:'{}'},'U-PHARM');
+    assert.equal(response.status,503);const body=await response.json();
+    assert.equal(body.correlationId,'CREF-TEST-RESOLVE');
+    assert.doesNotMatch(JSON.stringify(body),/23502|constraint|PRIVATE_ROW/);
+  });
+  assert.equal(operationalEvents[0].action,'pharmacist_resolve');
+  assert.equal(operationalEvents[0].failureCategory,'database_constraint');
+  assert.doesNotMatch(JSON.stringify(operationalEvents),/23502|null value|PRIVATE_ROW|U-PHARM|CASE-1/);
+});
+
+test('Family write failure is correlated while expected domain denial is not operationally logged',async()=>{
+  const operationalEvents=[];let correlationCalls=0;
+  const failure=Object.assign(new Error('connection terminated'),{code:'08006'});
+  await withApi({family:{
+    readService:reads(),messageService:{async sendMessage(){throw failure;}},
+    operationalLogger:(event)=>operationalEvents.push(event),
+    correlationIdFactory:()=>{correlationCalls+=1;return 'CREF-TEST-FAMILY';},
+  }},async(api)=>{
+    const response=await api('/api/consultations/CASE-1/messages',{method:'POST',body:JSON.stringify({body:'private body',idempotencyKey:'K'})},'U-FAMILY');
+    assert.equal(response.status,503);assert.equal((await response.json()).correlationId,'CREF-TEST-FAMILY');
+  });
+  assert.equal(correlationCalls,1);assert.equal(operationalEvents[0].failureCategory,'database_connection');
+  assert.doesNotMatch(JSON.stringify(operationalEvents),/private body|U-FAMILY|CASE-1/);
+
+  const expected=Object.assign(new Error('private'),{code:'CONSULTATION_ACCESS_DENIED',status:403});
+  await withApi({family:{
+    readService:reads(),messageService:{async sendMessage(){throw expected;}},
+    operationalLogger:(event)=>operationalEvents.push(event),
+    correlationIdFactory:()=>{correlationCalls+=1;return 'SHOULD-NOT-EXIST';},
+  }},async(api)=>{
+    const response=await api('/api/consultations/CASE-1/messages',{method:'POST',body:JSON.stringify({body:'x',idempotencyKey:'K'})},'U-FAMILY');
+    assert.equal(response.status,403);assert.equal((await response.json()).correlationId,undefined);
+  });
+  assert.equal(correlationCalls,1);assert.equal(operationalEvents.length,1);
 });
 
 test('message and pharmacist acceptance routes enforce consultation-specific rate limits',async()=>{

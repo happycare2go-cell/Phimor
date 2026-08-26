@@ -14,6 +14,9 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
 const { Centers, Residents, CareProfiles, AuditLog, DataSubjectRequests, AdminUsers, audit, id, now } = require('../db');
 const subscriptionService = require('../services/subscriptionService');
+const { createConsultationPaymentSupportService } = require('../services/consultationPaymentSupportService');
+
+const consultationPaymentSupport = createConsultationPaymentSupportService();
 
 // Bootstrap ครั้งแรกต้องมีทั้ง LINE identity และ ADMIN_API_KEY ปัจจุบัน
 // หลังสำเร็จ LINE account นี้เข้าใช้งานได้ด้วย ID token โดยไม่ต้องกรอก shared key อีก
@@ -32,6 +35,27 @@ router.post('/bootstrap', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.use(requireAdminKey);
+
+// Exact-reference lookup for payment incidents. The projection intentionally
+// excludes LINE identities, the consultation question and Care Profile data.
+router.get('/consultation-payments/lookup', asyncHandler(async (req, res) => {
+  try {
+    const result = await consultationPaymentSupport.lookup({ reference:req.query.reference });
+    await audit('admin.consultation_payment_lookup', req.admin.actor, { found:true });
+    return res.json(result);
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    if (status < 500) {
+      await audit('admin.consultation_payment_lookup', req.admin.actor, { found:false, errorCode:error.code });
+    }
+    return res.status(status).json({
+      error:status === 404 ? 'not_found' : status === 400 ? 'bad_request' : 'internal_error',
+      errorCode:error?.code || 'PAYMENT_LOOKUP_FAILED',
+      message:status === 404 ? 'ไม่พบรายการจากเลขอ้างอิงนี้'
+        : status === 400 ? 'เลขอ้างอิงไม่ถูกต้อง' : 'ตรวจสอบรายการชำระเงินไม่สำเร็จ',
+    });
+  }
+}));
 
 // POST /api/admin/centers — สร้างบัญชีศูนย์ใหม่ (ข้อ FR-A1)
 // ใช้ระหว่างทีมงานคุยกับเจ้าของศูนย์ตัวต่อตัวตอน Onboarding
