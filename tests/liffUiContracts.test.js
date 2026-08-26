@@ -61,3 +61,13 @@ test('ลิงก์เชิญและรหัสผูกกลุ่ม�
   assert.match(pages.center, /LAST_STAFF_BINDING_TEXT/);
   assert.match(pages.center, /LAST_FAMILY_INVITE_TEXT/);
 });
+
+test('Center reviewer แยก Lab draft จากข้อมูลยืนยันและใช้ confirmation endpoint เดิม', () => {
+  assert.match(pages.center, /ผลตรวจ Lab · รอตรวจสอบ/);
+  assert.match(pages.center, /ข้อมูลนี้สกัดจากเอกสารด้วย AI และยังไม่ใช่ข้อมูลที่ยืนยันแล้ว/);
+  assert.match(pages.center, /saveLabReview\s*\(/);
+  assert.match(pages.center, /confirmLabReview\s*\(/);
+  assert.match(pages.center, /\/api\/cards\/\$\{cardId\}\/confirm/);
+  assert.match(pages.center, /ต้องให้เจ้าของหรือผู้จัดการศูนย์เป็นผู้ยืนยัน/);
+  assert.doesNotMatch(pages.center, /loincCode|ucumUnit|comparisonKey/);
+});

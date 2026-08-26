@@ -73,3 +73,15 @@ test('list SQL scopes every query to Care Profile and hides drafts unless explic
   assert.match(calls[0].sql,/\$2::boolean = TRUE AND status = 'draft'/);
   assert.deepEqual(calls[0].params,['CP-1',false,false,21]);
 });
+
+test('Pending Card provenance lookup and purge updates are relational and parameterized', async () => {
+  const {repository,calls}=recorder([{report_id:'LABR-1'}]);
+  await repository.findReportByPendingCardId('CARD-1');
+  await repository.markPendingCardSourcePurged('CARD-1','2026-08-26T00:00:00.000Z');
+  assert.match(calls[0].sql,/INNER JOIN lab_report_sources/);
+  assert.match(calls[0].sql,/s\.pending_card_id = \$1/);
+  assert.deepEqual(calls[0].params,['CARD-1']);
+  assert.match(calls[1].sql,/storage_status = 'purged'/);
+  assert.match(calls[1].sql,/storage_status = 'available'/);
+  assert.deepEqual(calls[1].params,['CARD-1','2026-08-26T00:00:00.000Z']);
+});

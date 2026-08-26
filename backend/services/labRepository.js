@@ -116,6 +116,31 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async findReportByPendingCardId(pendingCardId) {
+      const result = await queryFn(
+        `SELECT r.*, CURRENT_TIMESTAMP AS database_now
+         FROM lab_reports r
+         INNER JOIN lab_report_sources s ON s.report_id = r.report_id
+         WHERE s.source_kind = 'pending_card' AND s.pending_card_id = $1
+         ORDER BY r.created_at ASC, r.report_id ASC
+         LIMIT 1`,
+        [pendingCardId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async markPendingCardSourcePurged(pendingCardId, purgedAt) {
+      const result = await queryFn(
+        `UPDATE lab_report_sources SET
+           storage_status = 'purged', purged_at = $2
+         WHERE source_kind = 'pending_card' AND pending_card_id = $1
+           AND storage_status = 'available'
+         RETURNING source_id, report_id`,
+        [pendingCardId, purgedAt]
+      );
+      return result.rows;
+    },
+
     async findLatestVersionForUpdate(reportGroupId) {
       const result = await queryFn(
         `SELECT *, CURRENT_TIMESTAMP AS database_now FROM lab_reports

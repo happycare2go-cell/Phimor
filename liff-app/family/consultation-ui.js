@@ -23,7 +23,7 @@
     const hours=Math.floor(seconds/3600),minutes=Math.floor((seconds%3600)/60);
     return `เหลือเวลา ${hours} ชม. ${minutes} นาที`;
   }
-  function categorizeCases(items){const result={queued:[],active:[],resolved:[],closed:[]};safeArray(items).forEach((item)=>{const state=effectiveClosed(item)?'closed':item.state;if(result[state])result[state].push({...item,state});});return result;}
+  function categorizeCases(items,now=new Date()){const result={queued:[],active:[],resolved:[],closed:[]};safeArray(items).forEach((item)=>{const state=effectiveClosed(item,now)?'closed':item.state;if(result[state])result[state].push({...item,state});});return result;}
   function paymentStatusLabel(status){return ({payment_pending:'สแกน QR ด้วยแอปธนาคารเพื่อชำระ 100 บาท',payment_confirming:'กำลังตรวจสอบการชำระเงินกับผู้ให้บริการ',queued:'ชำระเงินแล้ว • รอเภสัชกรรับเคส',failed:'การชำระเงินไม่สำเร็จ กรุณาเริ่มรายการใหม่',expired:'รายการชำระเงินหมดอายุ กรุณาเริ่มรายการใหม่',unavailable:'ระบบชำระเงินยังไม่พร้อมใช้งาน'})[status]||'กำลังเตรียมรายการชำระเงิน';}
   function safePaymentQrUrl(value){if(typeof value!=='string')return null;try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?url.toString():null;}catch(_){return null;}}
   function renderPaymentQr(element,paymentInstructions){const qr=safePaymentQrUrl(paymentInstructions?.qrImageUrl);if(!element)return qr;if(qr){element.src=qr;element.hidden=false;}else{element.removeAttribute?.('src');element.hidden=true;}return qr;}
@@ -32,14 +32,14 @@
   function createFamilyConsultationSession({request,onChange=()=>{},schedule=setTimeout,cancelSchedule=clearTimeout,pollSeconds=5,cryptoApi=globalThis.crypto,now=()=>new Date(),checkoutAdapter=null,paymentStatusAdapter=null}={}){
     if(typeof request!=='function')throw new Error('request is required');
     let generation=0,pollTimer=null,paymentTimer=null,pollingEnabled=true;
-    let state={profileId:null,patientName:'',visible:false,eligibility:null,screen:'overview',question:'',safety:null,termsAccepted:false,paymentStatus:null,paymentOrderId:null,paymentInstructions:null,collections:categorizeCases([]),selectedCase:null,messages:[],nextSequence:0,loading:false,sending:false,statusMessage:'',retryAfterSeconds:0};
+    let state={profileId:null,patientName:'',visible:false,eligibility:null,screen:'overview',question:'',safety:null,termsAccepted:false,paymentStatus:null,paymentOrderId:null,paymentInstructions:null,collections:categorizeCases([],now()),selectedCase:null,messages:[],nextSequence:0,loading:false,sending:false,statusMessage:'',retryAfterSeconds:0};
     const snapshot=()=>({...state,collections:Object.fromEntries(COLLECTIONS.map((key)=>[key,[...state.collections[key]]])),messages:[...state.messages]});
     const notify=()=>onChange(snapshot());
     const replace=(patch)=>{state={...state,...patch};notify();};
     const current=(token,profileId=state.profileId)=>token===generation&&profileId===state.profileId;
     function stopPolling(){if(pollTimer!==null)cancelSchedule(pollTimer);pollTimer=null;}
     function stopPaymentPolling(){if(paymentTimer!==null)cancelSchedule(paymentTimer);paymentTimer=null;}
-    function clearClinicalState(){stopPolling();stopPaymentPolling();generation+=1;state={...state,screen:'overview',question:'',safety:null,termsAccepted:false,paymentStatus:null,paymentOrderId:null,paymentInstructions:null,collections:categorizeCases([]),selectedCase:null,messages:[],nextSequence:0,loading:false,sending:false,statusMessage:'',retryAfterSeconds:0};}
+    function clearClinicalState(){stopPolling();stopPaymentPolling();generation+=1;state={...state,screen:'overview',question:'',safety:null,termsAccepted:false,paymentStatus:null,paymentOrderId:null,paymentInstructions:null,collections:categorizeCases([],now()),selectedCase:null,messages:[],nextSequence:0,loading:false,sending:false,statusMessage:'',retryAfterSeconds:0};}
     async function checkEligibility(){
       if(!state.profileId){replace({visible:false,eligibility:null});return {availability:'unavailable'};}
       const token=generation,profileId=state.profileId;
@@ -64,8 +64,8 @@
       try{
         const result=await request(`/api/consultations?careProfileId=${encodeURIComponent(profileId)}`);
         if(!current(token,profileId))return {ignored:true,stale:true};
-        replace({collections:categorizeCases(result?.items),statusMessage:''});return result;
-      }catch(error){if(current(token,profileId)){const denied=safeError(error)==='CONSULTATION_ACCESS_DENIED';if(denied)stopPolling();replace({...(denied?{collections:categorizeCases([]),selectedCase:null,messages:[],nextSequence:0}:{}),statusMessage:denied?'ไม่สามารถเข้าถึงการปรึกษาของ Care Profile นี้ได้':'โหลดรายการคำปรึกษาไม่สำเร็จ'});}return {error:safeError(error)};}
+        replace({collections:categorizeCases(result?.items,now()),statusMessage:''});return result;
+      }catch(error){if(current(token,profileId)){const denied=safeError(error)==='CONSULTATION_ACCESS_DENIED';if(denied)stopPolling();replace({...(denied?{collections:categorizeCases([],now()),selectedCase:null,messages:[],nextSequence:0}:{}),statusMessage:denied?'ไม่สามารถเข้าถึงการปรึกษาของ Care Profile นี้ได้':'โหลดรายการคำปรึกษาไม่สำเร็จ'});}return {error:safeError(error)};}
     }
     function openQuestion(){if(!state.visible)return {ignored:true};stopPaymentPolling();replace({screen:'question',question:'',safety:null,termsAccepted:false,paymentStatus:null,paymentOrderId:null,paymentInstructions:null,statusMessage:''});return snapshot();}
     function setQuestion(value){replace({question:safeText(value).slice(0,4000)});}

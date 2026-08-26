@@ -40,3 +40,16 @@ test('ศูนย์ถูกระงับหรือแพ็กเกจ�
   await db.Centers.update((c) => c.center_id === center.center_id, { status: 'suspended' });
   assert.strictEqual((await getCard('U_MANAGER')).status, 402);
 });
+
+test('พนักงานทั่วไปผ่าน reviewer guard ได้เฉพาะ Lab draft และยังไม่ใช่ confirmer', () => {
+  const router = require('../backend/routes/cards');
+  let nextCalled = false;
+  const response = { statusCode:null, body:null, status(code){this.statusCode=code;return this;}, json(body){this.body=body;return this;} };
+  router.requireCardReviewer({ card:{document_subtype:'lab_report'}, cardStaffRole:'staff' }, response, () => { nextCalled=true; });
+  assert.equal(nextCalled,true);
+
+  nextCalled=false; response.statusCode=null; response.body=null;
+  router.requireCardReviewer({ card:{document_subtype:'medication'}, cardStaffRole:'staff' }, response, () => { nextCalled=true; });
+  assert.equal(nextCalled,false);
+  assert.equal(response.statusCode,403);
+});

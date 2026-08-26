@@ -21,7 +21,7 @@
   .card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
   .card h3{margin:0 0 10px;font-size:15px;color:var(--navy)}
   label{display:block;font-size:12px;color:var(--gray);margin:10px 0 4px}
-  input[type=text],input[type=tel],input[type=number],input[type=date],input[type=time],textarea,select{
+  input[type=text],input[type=tel],input[type=number],input[type=date],input[type=time],input[type=datetime-local],textarea,select{
     width:100%;padding:10px 12px;border:1px solid #D8DEEC;border-radius:9px;font-size:14px;font-family:inherit;background:#fff}
   textarea{resize:vertical;min-height:60px}
   .btn{display:inline-block;padding:11px 18px;border-radius:9px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
@@ -64,6 +64,10 @@
   .doc-thumb{width:100%;border-radius:10px;margin-bottom:12px;background:#eee;max-height:220px;object-fit:contain}
   .edited-flag{background:#FFF6E4;padding:2px 6px;border-radius:5px;font-size:10px;color:#8A6D1F;margin-left:6px}
   .choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:7px}.choice-chip{display:flex;gap:7px;align-items:center;border:1px solid #D9DFEC;border-radius:9px;padding:8px;font-size:12px}.choice-chip input{width:auto;margin:0}
+  .lab-review-status{display:inline-flex;align-items:center;gap:6px;background:#FFF6E4;color:#7A5200;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700}
+  .lab-observation{border:1px solid #D8DEEC;border-radius:12px;padding:12px;margin-top:10px;background:#FAFBFD}
+  .lab-observation__header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .lab-review-note{font-size:12px;line-height:1.65;color:var(--gray);margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -163,6 +167,7 @@
     <label>ผู้พัก <span id="ecResidentFlag"></span></label>
     <select id="ecResident" onchange="markEdited('resident')"></select>
 
+    <div id="ecGenericAppointmentFields">
     <label style="margin-top:16px">โรงพยาบาล / แผนก <span id="ecHospitalFlag"></span></label>
     <input type="text" id="ecHospital" oninput="markEdited('hospital')">
 
@@ -177,20 +182,45 @@
     <label>เหตุผลที่นัด / หัตถการ</label><input type="text" id="ecReason" oninput="markEdited('apnote')">
     <label>โรคหรือภาวะที่เกี่ยวข้อง (ต้องยืนยันจากเอกสาร)</label><input type="text" id="ecCondition" oninput="markEdited('apnote')">
     <label>ชื่อแพทย์</label><input type="text" id="ecDoctorName" oninput="markEdited('apnote')">
+    </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="ecGenericMedicationCard">
     <label style="margin:0 0 8px">รายการยา <span id="ecMedFlag"></span></label>
     <div id="ecMedList"></div>
     <button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="addMedRow()">+ เพิ่มรายการยา</button>
   </div>
 
-  <div class="card">
+  <div class="card" id="ecGenericDoctorNoteCard">
     <label>คำสั่งแพทย์ <span id="ecDoctorFlag"></span></label>
     <textarea id="ecDoctorNote" oninput="markEdited('doctornote')"></textarea>
   </div>
 
-  <button class="btn btn-primary" onclick="saveCardEdit()">บันทึกและกลับไปตรวจ</button>
+  <div id="ecLabReview" style="display:none">
+    <div class="card">
+      <h3>ผลตรวจ Lab · รอตรวจสอบ</h3>
+      <div class="lab-review-status" id="ecLabStatus">รอตรวจสอบ</div>
+      <p class="lab-review-note">ข้อมูลนี้สกัดจากเอกสารด้วย AI และยังไม่ใช่ข้อมูลที่ยืนยันแล้ว กรุณาเทียบกับภาพต้นฉบับทุกช่อง</p>
+      <label>ห้องปฏิบัติการ</label><input type="text" id="ecLabLaboratory" oninput="markEdited('labReport')">
+      <label>โรงพยาบาล</label><input type="text" id="ecLabHospital" oninput="markEdited('labReport')">
+      <div class="row">
+        <div><label>วัน–เวลาเก็บสิ่งส่งตรวจ</label><input type="datetime-local" id="ecLabCollectedAt" onchange="markEdited('labReport')"></div>
+        <div><label>วัน–เวลาออกรายงาน</label><input type="datetime-local" id="ecLabReportedAt" onchange="markEdited('labReport')"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>รายการผลตรวจ</h3>
+      <div id="ecLabObservationList"></div>
+      <button class="btn btn-outline btn-sm" type="button" onclick="addLabObservationRow()">+ เพิ่มรายการผลตรวจ</button>
+    </div>
+    <button class="btn btn-primary" id="ecLabSaveButton" type="button" onclick="saveLabReview()">บันทึกฉบับรอตรวจสอบ</button>
+    <div id="ecLabConfirmArea" class="card" style="margin-top:12px">
+      <p class="lab-review-note" id="ecLabConfirmNote">หลังตรวจครบแล้ว ผู้มีสิทธิ์ยืนยันต้องกดยืนยันอย่างชัดเจน</p>
+      <button class="btn btn-gold" id="ecLabConfirmButton" type="button" onclick="confirmLabReview()">ยืนยันผล Lab</button>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" id="ecGenericSaveButton" onclick="saveCardEdit()">บันทึกและกลับไปตรวจ</button>
 </div>
 
 <!-- ═══ S3: แก้ไขผู้พัก (Modal) ═══ -->
@@ -672,14 +702,15 @@ function applySubscription(center) {
 }
 
 // ── S4: แก้ไขการ์ดก่อนส่ง (ข้อ E3-E8) ──
-let currentCard = null, currentCardOriginal = null, medRowSeq = 0;
+let currentCard = null, currentCardOriginal = null, medRowSeq = 0, labObservationSeq = 0;
 const editedFieldSet = new Set();
 
 async function loadEditCard(cardId) {
   const groupId = new URLSearchParams(location.search).get('groupId') || '';
   const data = await api(`/api/cards/${cardId}`, { headers: { 'X-Line-Group-Id': groupId } });
   currentCard = data;
-  currentCardOriginal = JSON.parse(JSON.stringify(data.current)); // เก็บค่าดั้งเดิมไว้เทียบตอนบันทึก (ข้อ E8)
+  const isLab = data.card?.documentSubtype === 'lab_report' || data.card?.document_subtype === 'lab_report';
+  currentCardOriginal = JSON.parse(JSON.stringify(isLab ? data.labDraft : data.current)); // เก็บค่าดั้งเดิมไว้เทียบตอนบันทึก (ข้อ E8)
 
   // ข้อ E4: แสดงรูปต้นฉบับค้างไว้ให้เทียบ
   if (data.imageBase64) {
@@ -692,9 +723,15 @@ async function loadEditCard(cardId) {
   // ข้อ E6: เปลี่ยนผู้พักได้จากหน้านี้ — โหลดรายชื่อทั้งศูนย์มาให้เลือก
   const residentsData = await api('/api/residents?centerId=' + CENTER_ID);
   const sel = document.getElementById('ecResident');
+  const selectedResidentId = data.card.residentId || data.card.resident_id;
   sel.innerHTML = residentsData.residents.map(r =>
-    `<option value="${r.resident_id}" ${r.resident_id===data.card.resident_id?'selected':''}>${esc(r.full_name)}${r.room?' · ห้อง '+esc(r.room):''}</option>`
+    `<option value="${r.resident_id}" ${r.resident_id===selectedResidentId?'selected':''}>${esc(r.full_name)}${r.room?' · ห้อง '+esc(r.room):''}</option>`
   ).join('');
+
+  if (isLab) {
+    renderLabReview(data);
+    return;
+  }
 
   // ข้อ E3: กรอกค่าที่ AI อ่านได้ไว้ล่วงหน้าทุกช่อง
   const c = data.current;
@@ -714,6 +751,107 @@ async function loadEditCard(cardId) {
   document.getElementById('ecMedList').innerHTML = '';
   (c.medications || []).forEach(m => addMedRow(m.name, m.dose));
   if (!c.medications || c.medications.length === 0) addMedRow();
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0,16);
+}
+
+function renderLabReview(data) {
+  document.getElementById('ecGenericAppointmentFields').style.display = 'none';
+  document.getElementById('ecGenericMedicationCard').style.display = 'none';
+  document.getElementById('ecGenericDoctorNoteCard').style.display = 'none';
+  document.getElementById('ecGenericSaveButton').style.display = 'none';
+  document.getElementById('ecLabReview').style.display = 'block';
+  const draft = data.labDraft || {};
+  document.getElementById('ecLabStatus').textContent = draft.status === 'confirmed' ? 'ยืนยันแล้ว' : 'รอตรวจสอบ';
+  document.getElementById('ecLabLaboratory').value = draft.laboratoryName || '';
+  document.getElementById('ecLabHospital').value = draft.hospitalName || '';
+  document.getElementById('ecLabCollectedAt').value = toDateTimeLocal(draft.specimenCollectedAt);
+  document.getElementById('ecLabReportedAt').value = toDateTimeLocal(draft.reportedAt);
+  document.getElementById('ecLabObservationList').replaceChildren();
+  (draft.observations || []).forEach(addLabObservationRow);
+  if (!draft.observations?.length) addLabObservationRow();
+  const mayConfirm = ['owner','manager'].includes(CURRENT_ROLE) && draft.status === 'draft';
+  document.getElementById('ecLabConfirmButton').style.display = mayConfirm ? '' : 'none';
+  document.getElementById('ecLabConfirmNote').textContent = draft.status === 'confirmed'
+    ? 'ผล Lab ชุดนี้ได้รับการยืนยันแล้วและแก้ไขผ่านหน้าร่างไม่ได้'
+    : mayConfirm ? 'ตรวจภาพต้นฉบับและบันทึกฉบับร่างก่อนกดยืนยัน'
+      : 'คุณบันทึกฉบับร่างได้ แต่ต้องให้เจ้าของหรือผู้จัดการศูนย์เป็นผู้ยืนยัน';
+  if (draft.status !== 'draft') document.getElementById('ecLabSaveButton').disabled = true;
+}
+
+function addLabObservationRow(value = {}) {
+  labObservationSeq += 1;
+  const row = document.createElement('div');
+  row.className = 'lab-observation';
+  row.dataset.labObservation = String(labObservationSeq);
+  const fields = [
+    ['analyteNameSource','รายการตรวจ'], ['sourceValueText','ผลตามเอกสาร'], ['sourceUnit','หน่วย'],
+    ['referenceRangeText','ช่วงอ้างอิง'], ['abnormalFlagSource','ธงผิดปกติ'],
+    ['specimenSource','สิ่งส่งตรวจ'], ['methodSource','วิธีตรวจ'],
+  ];
+  const title = document.createElement('div');
+  title.className = 'lab-observation__header';
+  const strong = document.createElement('strong'); strong.textContent = `รายการที่ ${labObservationSeq}`;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn-danger btn-sm'; remove.textContent = 'ลบ';
+  remove.addEventListener('click', () => { row.remove(); markEdited('labReport'); });
+  title.append(strong, remove); row.appendChild(title);
+  for (const [field, labelText] of fields) {
+    const label = document.createElement('label'); label.textContent = labelText;
+    const input = document.createElement('input'); input.type = 'text'; input.dataset.field = field; input.value = value[field] ?? '';
+    input.addEventListener('input', () => markEdited('labReport'));
+    row.append(label, input);
+  }
+  document.getElementById('ecLabObservationList').appendChild(row);
+}
+
+function labReviewPayload() {
+  const observations = Array.from(document.querySelectorAll('[data-lab-observation]')).map((row, index) => {
+    const value = (field) => row.querySelector(`[data-field="${field}"]`).value.trim();
+    const sourceValueText = value('sourceValueText');
+    const numeric = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(sourceValueText) ? Number(sourceValueText) : null;
+    return {
+      sourceOrdinal: index + 1,
+      analyteNameSource: value('analyteNameSource'), sourceValueText,
+      valueType: numeric === null ? 'text' : 'numeric', numericValue: numeric,
+      textValue: numeric === null ? sourceValueText : null,
+      sourceUnit: value('sourceUnit') || null,
+      referenceRangeText: value('referenceRangeText') || null,
+      referenceLow: null, referenceHigh: null,
+      abnormalFlagSource: value('abnormalFlagSource') || null,
+      specimenSource: value('specimenSource') || null, methodSource: value('methodSource') || null,
+      sourcePage: null, sourceRegion: null, extractionConfidence: null,
+    };
+  }).filter((item) => item.analyteNameSource && item.sourceValueText);
+  return {
+    laboratoryName: document.getElementById('ecLabLaboratory').value.trim() || null,
+    hospitalName: document.getElementById('ecLabHospital').value.trim() || null,
+    specimenCollectedAt: document.getElementById('ecLabCollectedAt').value || null,
+    reportedAt: document.getElementById('ecLabReportedAt').value || null,
+    observations,
+  };
+}
+
+async function saveLabReview() {
+  const cardId = currentCard.card.cardId || currentCard.card.card_id;
+  const report = await api(`/api/cards/${cardId}`, {
+    method:'PATCH', body:JSON.stringify({ labReport:labReviewPayload(), editedFields:['labReport'] }),
+  });
+  currentCard.labDraft = report;
+  renderLabReview(currentCard);
+  toast('บันทึกฉบับรอตรวจสอบแล้ว');
+}
+
+async function confirmLabReview() {
+  await saveLabReview();
+  const cardId = currentCard.card.cardId || currentCard.card.card_id;
+  const result = await api(`/api/cards/${cardId}/confirm`, { method:'POST', body:JSON.stringify({}) });
+  currentCard.labDraft = result.labReport;
+  renderLabReview(currentCard);
+  toast('ยืนยันผล Lab เรียบร้อยแล้ว');
 }
 
 function addMedRow(name = '', dose = '') {
