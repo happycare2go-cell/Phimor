@@ -113,6 +113,21 @@ test('draft and voided Lab rows are excluded and only deterministic comparable t
   assert.equal(result.context.safeLabTrends[0].source, 'deterministic_lab_trend');
 });
 
+test('confirmed persisted Lab observations consumed by Family detail remain the same source for doctor questions', async () => {
+  const persistedRows = [
+    labRow({ reportId: 'R-CONFIRMED-NEW', at: '2026-08-20T00:00:00Z', value: 7.4,
+      overrides: { source_value_text: '7.4', reference_range_text: '4.0-6.0' } }),
+    labRow({ reportId: 'R-CONFIRMED-OLD', at: '2026-05-20T00:00:00Z', value: 6.9,
+      overrides: { source_value_text: '6.9', reference_range_text: '4.0-6.0' } }),
+  ];
+  const result = await build({ dependencies: {
+    labRepository: { listRecentConfirmedObservations: async () => persistedRows },
+  } });
+  assert.deepEqual(result.context.confirmedLabs.map((item) => item.sourceValueText), ['7.4', '6.9']);
+  assert.equal(result.context.safeLabTrends[0].direction, 'increased');
+  assert.equal(result.context.safeLabTrends[0].source, 'deterministic_lab_trend');
+});
+
 test('non-comparable Lab history is never exposed as a trend', async () => {
   const rows = [
     labRow({ reportId: 'R1', at: '2026-08-01T00:00:00Z', value: 5, overrides: { method_source: 'A' } }),

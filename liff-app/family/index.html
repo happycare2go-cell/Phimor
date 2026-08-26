@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="./plus-ui.css">
 <link rel="stylesheet" href="./doctor-visit-ui.css">
 <link rel="stylesheet" href="./consultation-ui.css">
+<link rel="stylesheet" href="./lab-results-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -117,6 +118,30 @@
     </div>
 
     <div id="profileSummary"></div>
+
+    <section class="card lab-results-panel" id="labResultsPanel" aria-labelledby="labResultsTitle" hidden>
+      <div class="lab-results-heading">
+        <img class="lab-results-heading__mascot" src="../assets/mascot/phimor-review.png" alt="">
+        <div>
+          <h3 id="labResultsTitle">ผลตรวจ</h3>
+          <p>ดูผลตรวจที่มีผู้ตรวจทานและยืนยันแล้ว พร้อมแนวโน้มที่ระบบเปรียบเทียบได้อย่างปลอดภัย</p>
+        </div>
+      </div>
+      <div class="lab-results-patient" id="labResultsPatient"></div>
+      <button type="button" class="btn btn-primary lab-results-entry" id="labResultsEntry">ดูผลตรวจ</button>
+      <section class="lab-results-workspace" id="labResultsWorkspace" hidden aria-labelledby="labHistoryTitle">
+        <div class="lab-history-header">
+          <h4 id="labHistoryTitle">ประวัติผลตรวจที่ยืนยันแล้ว</h4>
+          <button type="button" class="lab-history-close" id="labResultsClose" aria-label="ปิดรายการผลตรวจ">ปิด</button>
+        </div>
+        <div id="labResultsLive" class="lab-results-live" role="status" aria-live="polite"></div>
+        <div id="labHistoryList" class="lab-history-list"></div>
+        <div id="labHistoryActions" class="lab-history-actions"></div>
+        <article id="labReportDetail" class="lab-report-detail" hidden></article>
+        <section id="labTrendResult" class="lab-trend-result" hidden aria-label="แนวโน้มผลตรวจ"></section>
+        <section id="labExplanationResult" class="lab-explanation-result" hidden aria-label="คำอธิบายผลตรวจจากพี่หมอ Plus"></section>
+      </section>
+    </section>
 
     <section class="card consultation-panel" id="consultationPanel" aria-labelledby="consultationTitle" hidden>
       <div class="consultation-heading">
@@ -375,6 +400,7 @@
 <script src="./plus-ui.js"></script>
 <script src="./consultation-ui.js"></script>
 <script src="./doctor-visit-ui.js"></script>
+<script src="./lab-results-ui.js"></script>
 <script>
 let BACKEND_URL = null;
 let LINE_USER_ID = null;
@@ -387,6 +413,7 @@ let medicationDraftImage = null;
 let PLUS_UI = null;
 let CONSULTATION_UI = null;
 let DOCTOR_VISIT_UI = null;
+let LAB_RESULTS_UI = null;
 const PHARMACIST_LINE_OA_URL = '';
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 let confirmResolver=null;
@@ -512,6 +539,29 @@ async function ensureDoctorVisitUI(){
   }
   await DOCTOR_VISIT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
 }
+async function labResultsApi(path,opts={}){
+  const res=await fetch(BACKEND_URL+path,{...opts,headers:{'Content-Type':'application/json','Authorization':`Bearer ${LINE_ID_TOKEN}`,'X-Line-User-Id':LINE_USER_ID,...(opts.headers||{})}});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){const error=new Error('LAB_REQUEST_FAILED');error.errorCode=data.errorCode||'LAB_REQUEST_FAILED';error.status=res.status;error.retryAfterSeconds=Number(res.headers.get('Retry-After'))||0;throw error;}
+  return data;
+}
+async function openDoctorQuestionsFromLab(){
+  await ensurePlusUI();
+  const panel=document.getElementById('plusPanel');
+  if(!PLUS_UI||panel.hidden)return toast('การช่วยเตรียมคำถามใช้สิทธิ์พี่หมอ Plus');
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+  await PLUS_UI.runQuickAction('doctor-questions');
+}
+async function ensureLabResultsUI(){
+  if(!window.PhimorFamilyLabResultsUI)return;
+  if(!LAB_RESULTS_UI){
+    let controller=null;
+    const session=window.PhimorFamilyLabResultsUI.createSession({request:labResultsApi,onChange:(state)=>controller?.render(state)});
+    controller=window.PhimorFamilyLabResultsUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onPrepareQuestions:openDoctorQuestionsFromLab});
+    LAB_RESULTS_UI={session,controller};
+  }
+  LAB_RESULTS_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
+}
 
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -530,6 +580,7 @@ async function acceptConsent() {
   await ensurePlusUI();
   await ensureConsultationUI();
   await ensureDoctorVisitUI();
+  await ensureLabResultsUI();
 }
 function declineConsent() { toast('จำเป็นต้องยอมรับก่อนใช้งานพี่หมอ'); }
 
@@ -586,6 +637,7 @@ async function loadDashboard() {
   PLUS_UI?.setProfile(currentProfile);
   if(CONSULTATION_UI)await CONSULTATION_UI.session.setProfile(currentProfile);
   if(DOCTOR_VISIT_UI)await DOCTOR_VISIT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
+  LAB_RESULTS_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
 }
 function selectProfile(id){
   currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null;
@@ -593,6 +645,7 @@ function selectProfile(id){
   PLUS_UI?.setProfile(currentProfile);
   CONSULTATION_UI?.session.setProfile(currentProfile);
   DOCTOR_VISIT_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
+  LAB_RESULTS_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   loadDashboard();
 }
 async function loadAccessRequests(){
@@ -815,6 +868,7 @@ async function main() {
     await ensurePlusUI();
     await ensureConsultationUI();
     await ensureDoctorVisitUI();
+    await ensureLabResultsUI();
     // อ่าน URL Parameter จากปุ่ม Rich Menu เพื่อสลับแท็บอัตโนมัติ
     const view = new URLSearchParams(location.search).get('view');
     if (view === 'record' || view === 'history') {

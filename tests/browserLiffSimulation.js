@@ -29,13 +29,15 @@ const LIFF_MOCK = `<script>window.liff={init:async()=>{},isLoggedIn:()=>true,log
 const SIMULATED_BACKEND_URL = 'https://phimor-backend.onrender.com';
 const RUNTIME_CONFIG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'runtime-config.js'), 'utf8');
 const CENTER_LAB_REVIEW_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'lab-review-runtime.js'), 'utf8');
+const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.js'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
     .replace(/<script[^>]+static\.line-scdn\.net\/liff\/edge\/2\/sdk\.js[^>]*><\/script>/, LIFF_MOCK)
     .replace('<script src="../environment.js"></script>', `<script>window.PHIMOR_PUBLIC_BACKEND_URL=${JSON.stringify(SIMULATED_BACKEND_URL)};</script>`)
     .replace('<script src="../runtime-config.js"></script>', `<script>${RUNTIME_CONFIG_SOURCE}</script>`)
-    .replace('<script src="./lab-review-runtime.js"></script>', `<script>${CENTER_LAB_REVIEW_SOURCE}</script>`);
+    .replace('<script src="./lab-review-runtime.js"></script>', `<script>${CENTER_LAB_REVIEW_SOURCE}</script>`)
+    .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`);
 }
 
 async function mockBackend(page, handler) {
@@ -149,6 +151,40 @@ async function familyConsultationJourney(browser) {
   await page.close();
 }
 
+async function familyLabResultsJourney(browser) {
+  const page=await browser.newPage({viewport:{width:390,height:844}});
+  const profile={profile:{care_profile_id:'CP-LAB',patient_name:'คุณแม่ผลตรวจ'},familyRole:'owner',canUseAi:false,upcomingAppointments:[]};
+  await mockBackend(page,async(url,request)=>{
+    if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if(url.pathname==='/api/consent/check')return {hasConsent:true};
+    if(url.pathname==='/api/init-dashboard')return {profiles:[profile]};
+    if(url.pathname==='/api/access-requests')return {requests:[]};
+    if(url.pathname==='/api/transport/family/pending')return {pending:[]};
+    if(url.pathname==='/api/care-profile/CP-LAB/caregivers')return {members:[]};
+    if(url.pathname==='/api/plus/entitlement')return {status:'basic',plus:false};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports'&&request.method()==='GET')return {items:[{reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z'}],nextCursor:null};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM')return {reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',observations:[{observationId:'LABO-SIM',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC',comparisonKey:'hba1c'}]};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-trends')return {status:'available',sourceDisplayName:'HbA1c',direction:'increased',rangesDiffer:false,observations:[{specimenCollectedAt:'2026-01-20T08:00:00Z',sourceValueText:'6.1',sourceUnit:'%',referenceRangeText:'4.0-6.0'},{specimenCollectedAt:'2026-08-20T08:00:00Z',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0'}]};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-explanations'&&request.method()==='POST')return {status:'answer',summary:'สรุปค่าที่ได้รับการยืนยัน',testExplanation:'การตรวจนี้ใช้ติดตามค่าตามรายงาน',confirmedFacts:[{observedAt:'2026-08-20T08:00:00Z',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%'}],trendExplanation:'ค่าตัวเลขเพิ่มขึ้นตามลำดับเวลา',rangeCaveat:null,questionsForClinician:['ควรติดตามเมื่อใด'],safetyNotice:'ควรพิจารณาร่วมกับข้อมูลอื่น',disclaimer:'ไม่ใช่การวินิจฉัย'};
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!document.querySelector('#labResultsPanel').hidden);
+  assert.match(await page.locator('#labResultsPatient').textContent(),/คุณแม่ผลตรวจ/);
+  await page.locator('#labResultsEntry').click();
+  await page.waitForFunction(()=>document.querySelector('#labHistoryList').textContent.includes('โรงพยาบาลจำลอง'));
+  await page.getByRole('button',{name:'ดูรายละเอียดผลตรวจ'}).click();
+  await page.waitForFunction(()=>document.querySelector('#labReportDetail').textContent.includes('HbA1c'));
+  assert.match(await page.locator('#labReportDetail').textContent(),/ตามรายงานต้นฉบับ: H/);
+  await page.getByRole('button',{name:'ดูแนวโน้มอย่างปลอดภัย'}).click();
+  await page.waitForFunction(()=>document.querySelector('#labTrendResult').textContent.includes('เพิ่มขึ้น'));
+  assert.doesNotMatch(await page.locator('#labTrendResult').textContent(),/ดีขึ้น|แย่ลง/);
+  await page.getByRole('button',{name:'ให้พี่หมอช่วยอธิบาย'}).click();
+  await page.waitForFunction(()=>document.querySelector('#labExplanationResult').textContent.includes('สรุปค่าที่ได้รับการยืนยัน'));
+  assert.match(await page.locator('#labExplanationResult').textContent(),/ไม่ใช่การวินิจฉัย/);
+  await page.close();
+}
+
 async function centerPendingJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
@@ -255,7 +291,7 @@ async function pharmacistConsoleJourney(browser) {
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
+  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }
