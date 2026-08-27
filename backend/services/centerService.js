@@ -15,29 +15,38 @@ function linkMenuBestEffort(lineUserId) {
 
 // ── FR-A1: ทีมงานสร้างบัญชีศูนย์ ──
 async function createCenter({ name, ownerLineId, address = '', contactPhone = '', subscriptionRequired = process.env.NODE_ENV !== 'test' }) {
-  const center = await Centers.insert({
-    center_id: id('CTR'),
-    name,
-    address: address || '', contact_phone: contactPhone || '',
-    owner_line_id: ownerLineId,
-    group_id: null,
-    external_api_key: id('EXT'), // ข้อ J4: กุญแจสำหรับระบบภายนอกส่งสัญญาณชีพเข้ามา — แยกต่อศูนย์ เพิกถอนได้เป็นรายศูนย์
-    status: 'active',
-    subscription_required: !!subscriptionRequired,
-    subscription_start_at: null,
-    subscription_end_at: null,
-    created_at: now(),
+  return withTransaction(`center-create:${ownerLineId}:${name}`, async () => {
+    const center = await Centers.insert({
+      center_id: id('CTR'),
+      name,
+      address: address || '', contact_phone: contactPhone || '',
+      owner_line_id: ownerLineId,
+      group_id: null,
+      external_api_key: id('EXT'), // deprecated compatibility credential; never project to Center users
+      status: 'active',
+      subscription_required: !!subscriptionRequired,
+      subscription_start_at: null,
+      subscription_end_at: null,
+      created_at: now(),
+    });
+    await CenterStaff.insert({
+      staff_id: id('STF'),
+      center_id: center.center_id,
+      line_user_id: ownerLineId,
+      role: 'owner',
+      status: 'active',
+      assigned_at: now(),
+    });
+    // Migration 0008 must be applied before this code is deployed. Existing
+    // unit tests use the in-memory legacy database and exercise P0 separately.
+    if (process.env.NODE_ENV !== 'test') {
+      await require('./platformService').platformService.ensureOrganizationForCenter({
+        centerId: center.center_id, displayName: center.name, actorReference: 'system:center-create',
+      });
+    }
+    linkMenuBestEffort(ownerLineId);
+    return center;
   });
-  await CenterStaff.insert({
-    staff_id: id('STF'),
-    center_id: center.center_id,
-    line_user_id: ownerLineId,
-    role: 'owner',
-    status: 'active',
-    assigned_at: now(),
-  });
-  linkMenuBestEffort(ownerLineId);
-  return center;
 }
 
 async function updateCenterSettings({ centerId, requesterLineId, address, contactPhone }) {

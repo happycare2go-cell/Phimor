@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('node:http');
 const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
@@ -20,6 +21,10 @@ const pharmacistConsultationsRouter = require('./routes/pharmacistConsultations'
 const labsRouter = require('./routes/labs');
 const doctorQuestionsRouter = require('./routes/doctorQuestions');
 const doctorVisitsRouter = require('./routes/doctorVisits');
+const { createVitalSignsRouter } = require('./routes/vitalSigns');
+const { createDailyCareRouter } = require('./routes/dailyCare');
+const { createIntegrationEventsRouter } = require('./routes/integrationEvents');
+const { integrationEventService } = require('./services/integrationEventService');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
@@ -28,6 +33,7 @@ const notificationService = require('./services/notificationService');
 const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
 const { missingRuntimeEnvironment, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
+const { createConsultationRealtimeGateway } = require('./realtime/consultationRealtimeGateway');
 
 const app = express();
 
@@ -62,6 +68,10 @@ app.use('/api', (req, res, next) => {
   const result = require('./utils/rateLimiter').checkAndRecord(key, limit, 5 * 60000);
   if (!result.allowed) {
     res.setHeader('Retry-After', Math.ceil(result.retryAfterMs / 1000));
+    if (req.path.startsWith('/integrations/v1/')) {
+      const { publicIntegrationError } = require('./domain/integrationErrorContract');
+      return res.status(429).json({ status:'retrying', error:publicIntegrationError('RATE_LIMITED', { status:429 }) });
+    }
     return res.status(429).json({ error:'rate_limited', message:'เรียกใช้งานถี่เกินไป กรุณารอสักครู่' });
   }
   next();
@@ -76,6 +86,9 @@ app.use('/api/export/pdf/download', pdfDownloadRouter);
 app.use('/api/care-profile', labsRouter);
 app.use('/api/care-profile', doctorQuestionsRouter);
 app.use('/api/care-profile', doctorVisitsRouter);
+app.use('/api', createVitalSignsRouter());
+app.use('/api', createDailyCareRouter());
+app.use('/api/integrations/v1', createIntegrationEventsRouter());
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);
 app.use('/api', familyRouter);
@@ -90,12 +103,21 @@ app.get('/ready', async (req, res) => {
   let database = true; let databaseError = null;
   try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
   const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
+  const consultationRealtime = app.locals.consultationRealtimeHealth?.() || { configured:false, started:false };
   const ready = database && missing.length === 0;
-  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications });
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications, consultationRealtime });
 });
 app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 
 app.use((err, req, res, next) => {
+  if (String(req.originalUrl || '').startsWith('/api/integrations/v1/')) {
+    const { publicIntegrationError } = require('./domain/integrationErrorContract');
+    const status = Number(err?.status) >= 400 && Number(err?.status) < 500 ? Number(err.status) : 500;
+    const safe = publicIntegrationError(err, { status });
+    console.error('[Integration Request]', JSON.stringify({ event:'integration_request_failed', requestId:safe.request_id, code:safe.code, retryable:safe.retryable, httpStatus:status }));
+    if (res.headersSent) return next(err);
+    return res.status(status).json({ status:status >= 500 ? 'retrying' : 'rejected', error:safe });
+  }
   console.error(err);
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: 'เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง' });
@@ -118,6 +140,9 @@ function startScheduler() {
   scheduledTasks.push(cron.schedule('0 9 * * *', () => { heartbeat(); subscriptionService.sendExpiryReminders().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/2 * * * *', () => { heartbeat(); notificationService.processPending().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => { heartbeat(); webhookRouter.processPendingWebhookEvents?.().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => {
+    heartbeat(); integrationEventService.processDue().catch(() => console.error('integration inbox processing unavailable'));
+  }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('15 2 * * *', () => { heartbeat(); require('./services/centerService').reconcileAllCenterStaff().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('45 2 * * *', () => { heartbeat(); require('./services/retentionService').purgeExpiredSourceImages().catch(console.error); }, { timezone: TZ }));
   // Staging only: run time-sensitive jobs every minute with an optional clock
@@ -139,9 +164,18 @@ function startScheduler() {
 function stopScheduler() { scheduledTasks.forEach((t) => t.stop()); scheduledTasks = []; }
 
 const PORT = process.env.PORT || 3000;
+function createBackendHttpServer({ realtimeGateway = createConsultationRealtimeGateway() } = {}) {
+  const server = http.createServer(app);
+  realtimeGateway.attach(server);
+  app.locals.consultationRealtimeHealth = () => realtimeGateway.health();
+  server.consultationRealtimeGateway = realtimeGateway;
+  return server;
+}
 if (require.main === module) {
-  db.initializeDatabase().then(() => {
-    app.listen(PORT, () => {
+  db.initializeDatabase().then(async () => {
+    const server = createBackendHttpServer();
+    await server.consultationRealtimeGateway.start();
+    server.listen(PORT, () => {
       console.log(`พี่หมอ Backend กำลังทำงานที่พอร์ต ${PORT}`);
       startScheduler();
     });
@@ -154,3 +188,4 @@ module.exports = app;
 module.exports.startScheduler = startScheduler;
 module.exports.stopScheduler = stopScheduler;
 module.exports.schedulerReferenceDate = schedulerReferenceDate;
+module.exports.createBackendHttpServer = createBackendHttpServer;

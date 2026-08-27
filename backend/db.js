@@ -219,6 +219,14 @@ async function pingDatabase() {
   return true;
 }
 
+// LISTEN/NOTIFY consumers need a dedicated checked-out connection. Keeping
+// acquisition here preserves the repository's single PostgreSQL configuration
+// and lets the caller release the client during shutdown.
+async function acquireDatabaseClient() {
+  if (isTest) throw new Error('DEDICATED_DATABASE_CLIENT_UNAVAILABLE_IN_TEST');
+  return pool.connect();
+}
+
 async function audit(action, actorLineId, meta = {}) {
   return AuditLog.insert({
     log_id: id('LOG'),
@@ -245,5 +253,6 @@ module.exports = {
   PendingFamilyDeliveries,
   AdminUsers,
   audit, resetAll, initializeDatabase, withTransaction, pingDatabase,
+  acquireDatabaseClient,
   databaseQuery: query,
 };

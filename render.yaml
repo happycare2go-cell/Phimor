@@ -39,6 +39,10 @@ services:
         sync: false
       - key: LIFF_ID_PHARMACIST
         sync: false
+      - key: CONSULTATION_REALTIME_TICKET_SECRET
+        sync: false   # Secret แบบสุ่มอย่างน้อย 32 ตัวอักษร ตั้งด้วยมือ ห้ามใส่ค่าใน Git
+      - key: CONSULTATION_REALTIME_ALLOWED_ORIGINS
+        value: "https://phimor-liff.onrender.com"
       - key: ALLOWED_ORIGINS
         value: "https://phimor-liff.onrender.com"
       - key: PUBLIC_BACKEND_URL

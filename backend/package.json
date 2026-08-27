@@ -10,6 +10,7 @@
     "test:ui": "node scripts/run-tests.js ui",
     "test:browser": "node ../tests/browserLiffSimulation.js",
     "test:ai-golden": "node scripts/run-ai-golden.js",
+    "simulate:hhs-pilot": "node scripts/simulate-hhs-pilot.js",
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate-status.js"
   },
@@ -22,6 +23,7 @@
     "cors": "^2.8.5",
     "pg": "^8.11.3",
     "uuid": "^9.0.1",
-    "@google/generative-ai": "^0.17.0"
+    "@google/generative-ai": "^0.17.0",
+    "ws": "^8.18.3"
   }
 }

@@ -6,7 +6,10 @@ const FULL_RUNTIME_REQUIRED_ENV = Object.freeze([
   'LIFF_ID_CENTER_ADMIN',
   'LIFF_ID_FAMILY',
   'LIFF_ID_REGISTER',
+  'LIFF_ID_SYSTEM_ADMIN',
   'ADMIN_API_KEY',
+  'ALLOWED_ORIGINS',
+  'CONSULTATION_REALTIME_TICKET_SECRET',
 ]);
 
 const MINIMAL_FAMILY_PLUS_REQUIRED_ENV = Object.freeze([
@@ -31,9 +34,15 @@ function messagingConfigured(env = process.env) {
 
 function requiredRuntimeEnvironment(env = process.env) {
   if (env.NODE_ENV === 'test') return [];
-  return isMinimalFamilyPlusStaging(env)
+  const required = isMinimalFamilyPlusStaging(env)
     ? [...MINIMAL_FAMILY_PLUS_REQUIRED_ENV]
     : [...FULL_RUNTIME_REQUIRED_ENV];
+  // Pharmacist LIFF is required only when the paid consultation product is
+  // enabled. System Admin is part of the full production operations surface.
+  if (!isMinimalFamilyPlusStaging(env) && String(env.CONSULTATION_ENABLED || '').trim().toLowerCase() === 'true') {
+    required.push('LIFF_ID_PHARMACIST');
+  }
+  return required;
 }
 
 function missingRuntimeEnvironment(env = process.env) {

@@ -259,6 +259,29 @@ test('unexpected database errors become a generic safe unavailable envelope', as
   assert.doesNotMatch(JSON.stringify(operationalEvents),/consultation_messages|PRIVATE_SQL_STACK|ขอข้อมูลเพิ่ม|U-PHARM|CASE-1/);
 });
 
+test('Family realtime ticket and read receipt routes derive customer identity server-side',async()=>{
+  const seen=[];
+  await withApi({family:{readService:reads(),realtimeAccessService:{async issueFamilyTicket(input){seen.push(['ticket',input]);return {ticket:'SHORT',expiresAt:'2026-08-27T10:01:00Z',websocketPath:'/api/consultations/realtime'};}},readReceiptService:{async markRead(input){seen.push(['read',input]);return {reader:'customer',sequence:4,changed:true};}}}},async(api)=>{
+    const ticket=await api('/api/consultations/CASE-1/realtime-ticket',{method:'POST',body:'{}'},'U-FAMILY');
+    assert.equal(ticket.status,200);assert.equal((await ticket.json()).ticket,'SHORT');
+    assert.equal((await api('/api/consultations/CASE-1/read',{method:'POST',body:JSON.stringify({sequence:4,reader:'pharmacist'})},'U-FAMILY')).status,400);
+    const read=await api('/api/consultations/CASE-1/read',{method:'POST',body:JSON.stringify({sequence:4})},'U-FAMILY');
+    assert.equal(read.status,200);assert.equal((await read.json()).reader,'customer');
+  });
+  assert.deepEqual(seen,[['ticket',{caseId:'CASE-1',lineUserId:'U-FAMILY'}],['read',{caseId:'CASE-1',actor:{type:'customer',lineUserId:'U-FAMILY'},sequence:4}]]);
+});
+
+test('Pharmacist realtime ticket and read route derive assigned pharmacist identity server-side',async()=>{
+  const seen=[];
+  await withApi({pharmacist:{readService:reads(),realtimeAccessService:{async issuePharmacistTicket(input){seen.push(['ticket',input]);return {ticket:'SHORT-P',expiresAt:'2026-08-27T10:01:00Z',websocketPath:'/api/consultations/realtime'};}},readReceiptService:{async markRead(input){seen.push(['read',input]);return {reader:'pharmacist',sequence:3,changed:true};}}}},async(api)=>{
+    assert.equal((await api('/api/pharmacist/consultations/CASE-1/realtime-ticket',{method:'POST',body:'{}'},'U-PHARM')).status,200);
+    assert.equal((await api('/api/pharmacist/consultations/CASE-1/read',{method:'POST',body:JSON.stringify({sequence:3,reader:'customer'})},'U-PHARM')).status,400);
+    const read=await api('/api/pharmacist/consultations/CASE-1/read',{method:'POST',body:JSON.stringify({sequence:3})},'U-PHARM');
+    assert.equal((await read.json()).reader,'pharmacist');
+  });
+  assert.deepEqual(seen,[['ticket',{caseId:'CASE-1',pharmacistLineUserId:'U-PHARM'}],['read',{caseId:'CASE-1',actor:{type:'pharmacist',lineUserId:'U-PHARM'},sequence:3}]]);
+});
+
 test('assigned pharmacist context route returns separated contact/profile data without LINE IDs',async()=>{
   const seen=[];
   await withApi({pharmacist:{

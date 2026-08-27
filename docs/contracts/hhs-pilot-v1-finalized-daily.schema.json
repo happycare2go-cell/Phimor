@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phimor.example/contracts/hhs-pilot-v1-finalized-daily.schema.json",
+  "title": "PHIMOR HHS Pilot V1 finalized Daily Care event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "event_type", "occurred_at", "subject", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event_id": { "$ref": "#/$defs/identifier" },
+    "event_type": { "const": "care.daily_report.finalized" },
+    "occurred_at": { "$ref": "#/$defs/timestamp" },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["center_external_id", "resident_external_id"],
+      "properties": {
+        "center_external_id": { "$ref": "#/$defs/identifier" },
+        "resident_external_id": { "$ref": "#/$defs/identifier" },
+        "expected_line_group_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "first_name": { "$ref": "#/$defs/name" },
+            "last_name": { "$ref": "#/$defs/name" },
+            "room": { "type": "string", "minLength": 1, "maxLength": 80 }
+          }
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_record_id", "care_date", "care_items", "finalized_by", "recorded_at", "finalized_at"],
+      "properties": {
+        "external_record_id": { "$ref": "#/$defs/identifier" },
+        "care_date": { "type": "string", "format": "date" },
+        "shift": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,39}$" },
+            "source_label": { "type": "string", "minLength": 1, "maxLength": 120 }
+          }
+        },
+        "observations": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/observation" }
+        },
+        "care_items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": { "$ref": "#/$defs/careItem" }
+        },
+        "recorded_by": { "$ref": "#/$defs/staff" },
+        "finalized_by": { "$ref": "#/$defs/staff" },
+        "recorded_at": { "$ref": "#/$defs/timestamp" },
+        "finalized_at": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "staff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "external_staff_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 160 }
+      },
+      "anyOf": [
+        { "required": ["external_staff_id"] },
+        { "required": ["display_name"] }
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value", "unit"],
+      "properties": {
+        "type": {
+          "enum": ["temperature", "blood_pressure_systolic", "blood_pressure_diastolic", "pulse", "spo2", "respiratory_rate", "blood_glucose", "weight"]
+        },
+        "value": { "type": "number", "minimum": -1000000, "maximum": 1000000 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "source_value_text": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "context": { "enum": ["fasting", "before_meal", "after_meal", "random", "unspecified"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "temperature" } } }, "then": { "properties": { "unit": { "enum": ["Cel", "°C", "C"] } } } },
+        { "if": { "properties": { "type": { "enum": ["blood_pressure_systolic", "blood_pressure_diastolic"] } } }, "then": { "properties": { "unit": { "enum": ["mm[Hg]", "mmHg"] } } } },
+        { "if": { "properties": { "type": { "const": "pulse" } } }, "then": { "properties": { "unit": { "enum": ["/min", "bpm"] } } } },
+        { "if": { "properties": { "type": { "const": "spo2" } } }, "then": { "properties": { "unit": { "const": "%" } } } },
+        { "if": { "properties": { "type": { "const": "respiratory_rate" } } }, "then": { "properties": { "unit": { "enum": ["/min", "breaths/min"] } } } },
+        { "if": { "properties": { "type": { "const": "blood_glucose" } } }, "then": { "properties": { "unit": { "enum": ["mg/dL", "mmol/L"] } } }, "else": { "not": { "required": ["context"] } } },
+        { "if": { "properties": { "type": { "const": "weight" } } }, "then": { "properties": { "unit": { "const": "kg" } } } }
+      ]
+    },
+    "careItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_type", "value_type", "value"],
+      "properties": {
+        "item_type": { "enum": ["shift", "nutrition", "fluid_intake", "sleep_rest", "bowel_movement", "urination", "activity", "mood_behavior", "general_condition", "symptom_note"] },
+        "value_type": { "enum": ["text", "numeric", "boolean"] },
+        "value": {},
+        "unit": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "source_value_text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      },
+      "allOf": [
+        { "if": { "properties": { "value_type": { "const": "text" } } }, "then": { "properties": { "value": { "type": "string", "minLength": 1, "maxLength": 1000 } }, "not": { "required": ["unit"] } } },
+        { "if": { "properties": { "value_type": { "const": "numeric" } } }, "then": { "properties": { "value": { "type": "number", "minimum": -1000000, "maximum": 1000000 } } } },
+        { "if": { "properties": { "value_type": { "const": "boolean" } } }, "then": { "properties": { "value": { "type": "boolean" } }, "not": { "required": ["unit"] } } }
+      ]
+    }
+  }
+}

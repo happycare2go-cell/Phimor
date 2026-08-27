@@ -67,10 +67,10 @@ API หลัก:
 
 1. สำรองฐานข้อมูล production และสร้าง staging จากสำเนา
 2. ตั้ง Environment ตาม `backend/.env.example` โดยเฉพาะ `DATABASE_URL`, LINE/LIFF IDs และ `ADMIN_API_KEY`
-3. Deploy backend แล้วตรวจ `GET /health` และ `GET /ready`
-4. Deploy `liff-app` และตั้ง LIFF Endpoint ให้ตรง `/register`, `/center-admin/index.html`, `/family/index.html`
-5. เปิด `/system-admin/index.html` ใส่ Admin API Key และกำหนดแพ็กเกจให้ทุกสาขาก่อนบังคับใช้
-6. ทดสอบ LINE จริงตามเกณฑ์ของแต่ละระยะ แล้วจึงเปิด production
+3. Hold Render Auto-Deploy, รัน `npm run migrate:status`, ตรวจ checksum/ลำดับ แล้วรัน `npm run migrate` ก่อน deploy code
+4. ตรวจ migration status ซ้ำให้ถึง version ที่อนุมัติ จากนั้น Deploy backend แล้วตรวจ `GET /health`, `GET /ready`, scheduler และ queues
+5. ตรวจ `GET /config/liff`, Deploy `liff-app` และตั้ง LIFF Endpoint ให้ตรงกับ Register, Center, Family, System Admin และ Pharmacist ที่เปิดใช้ โดยไม่ฝัง LIFF ID ใน source
+6. เปิด System Admin กำหนดแพ็กเกจ/capability เฉพาะที่อนุมัติ และทดสอบ LINE จริงแบบ controlled E2E ก่อนเปิด production
 
 ## ข้อควรระวัง
 

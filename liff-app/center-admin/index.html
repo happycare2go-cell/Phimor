@@ -5,8 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>พี่หมอ — จัดการศูนย์</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="../environment.js"></script>
+<script src="../runtime-config.js"></script>
 <script src="./lab-review-runtime.js"></script>
+<script src="./care-recording-ui.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
+<link rel="stylesheet" href="./care-recording-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --red:#D64545; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -99,6 +103,7 @@
 
 <div class="tabs">
   <div class="tab active" data-view="residents">ผู้พัก</div>
+  <div class="tab" data-view="care" id="careRecordTab" hidden>บันทึกการดูแล</div>
   <div class="tab" data-view="transport">รอดำเนินการ</div>
   <div class="tab" data-view="ratecard">ราคาบริการ</div>
   <div class="tab" data-view="staff" id="staffTab">ทีมงาน</div>
@@ -129,6 +134,10 @@
 
   <div class="search"><input type="text" id="searchInput" placeholder="ค้นหาชื่อผู้พัก..." oninput="renderResidents()"></div>
   <div id="residentList"></div>
+</div>
+
+<div class="view" id="view-care">
+  <div id="centerCareRoot"></div>
 </div>
 
 <div class="modal-bg" id="appointmentModal">
@@ -349,7 +358,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-const BACKEND_URL = 'https://phimor-backend.onrender.com';
+let BACKEND_URL = null;
 let LINE_USER_ID = null;
 let LINE_ID_TOKEN = null;
 let CENTER_ID = null;
@@ -678,6 +687,7 @@ async function copyForwardText(text){
 }
 
 async function selectCenter(centerId) {
+  centerCareUi.clear();
   CENTER_ID = centerId;
   const center = CENTERS.find(c => c.center_id === centerId);
   CURRENT_ROLE = center.myRole;
@@ -685,6 +695,7 @@ async function selectCenter(centerId) {
   document.getElementById('staffTab').style.display = center.myRole === 'owner' ? '' : 'none';
   if (!applySubscription(center)) return;
   await loadResidents();
+  await syncCenterCareContext();
   const activeView = document.querySelector('.tab.active')?.dataset.view;
   if (activeView === 'staff') await loadStaff();
   if (activeView === 'transport') await loadTransport();
@@ -716,6 +727,35 @@ function applySubscription(center) {
 const labReviewRuntime = window.PhimorCenterLabReview;
 if (!labReviewRuntime) throw new Error('ระบบตรวจสอบผล Lab ยังไม่พร้อม กรุณาลองใหม่ภายหลัง');
 const editCardRequestGuard = labReviewRuntime.createRequestRevisionGuard();
+const centerCareRuntime = window.PhimorCenterCareUI;
+if (!centerCareRuntime) throw new Error('ระบบบันทึกการดูแลยังไม่พร้อม กรุณาลองใหม่ภายหลัง');
+const centerCareUi = centerCareRuntime.mount({
+  root: document.getElementById('centerCareRoot'),
+  api,
+  notify: toast,
+  onVisibility(visible) {
+    const tab = document.getElementById('careRecordTab');
+    tab.hidden = !visible;
+    if (!visible && tab.classList.contains('active')) document.querySelector('.tab[data-view="residents"]').click();
+  },
+});
+
+async function syncCenterCareContext() {
+  const requestedCenterId = CENTER_ID;
+  centerCareUi.clear();
+  try {
+    const data = await api(`/api/center/${encodeURIComponent(requestedCenterId)}/capabilities`);
+    if (requestedCenterId !== CENTER_ID) return;
+    centerCareUi.setContext({
+      centerId: requestedCenterId,
+      role: CURRENT_ROLE,
+      residents: residentsCache,
+      capabilities: data.capabilities || {},
+    });
+  } catch (_) {
+    if (requestedCenterId === CENTER_ID) centerCareUi.clear();
+  }
+}
 let currentCard = null, currentCardOriginal = null, medRowSeq = 0, labObservationSeq = 0;
 const editedFieldSet = new Set();
 
@@ -1006,7 +1046,14 @@ async function saveCardEdit() {
 
 
 async function main() {
-  await liff.init({ liffId: '2011043561-Dyp03JGR' }); 
+  if (!window.PhimorRuntimeConfig) throw new Error('LIFF_RUNTIME_CONFIG_MISSING');
+  BACKEND_URL = window.PhimorRuntimeConfig.requireBackendUrl(window.PHIMOR_PUBLIC_BACKEND_URL);
+  const configResponse = await fetch(BACKEND_URL + '/config/liff', { cache:'no-store' });
+  if (!configResponse.ok) throw new Error('LIFF_RUNTIME_CONFIG_UNAVAILABLE');
+  const config = await configResponse.json();
+  window.PhimorRuntimeConfig.assertBackendConfig(BACKEND_URL, config);
+  if (!config.centerAdminLiffId) throw new Error('ยังไม่ได้ตั้งค่า LIFF_ID_CENTER_ADMIN');
+  await liff.init({ liffId: config.centerAdminLiffId });
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
@@ -1043,6 +1090,7 @@ async function main() {
   }
 
   await loadResidents();
+  await syncCenterCareContext();
   if (view === 'transport') {
     document.querySelector('.tab[data-view="transport"]').click();
   }

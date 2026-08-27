@@ -3,6 +3,7 @@ const { withTransaction } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { createConsultationRepository } = require('./consultationRepository');
 const { createPharmacistAccountService } = require('./pharmacistAccountService');
+const { consultationRealtimeBus } = require('./consultationRealtimeBus');
 const { materializeExpiredCaseInTransaction } = require('./consultationExpirationService');
 const {
   ConsultationDomainError,
@@ -30,6 +31,7 @@ function createConsultationMessageService({
   pharmacistAccounts = null,
   messageId = () => `CMSG-${randomUUID()}`,
   eventId = () => `CEVT-${randomUUID()}`,
+  realtime = consultationRealtimeBus,
 } = {}) {
   const accounts = pharmacistAccounts || createPharmacistAccountService({ repository });
 
@@ -110,6 +112,14 @@ function createConsultationMessageService({
       return inserted;
     });
     if (outcome && outcome.domainError) throw outcome.domainError;
+    if (outcome?.message && !outcome.duplicate) {
+      try {
+        await realtime.publish({
+          eventType:'message.created', caseId:caseId.trim(),
+          sequence:Number(outcome.message.message_sequence),
+        });
+      } catch (_) { /* persisted REST message remains authoritative */ }
+    }
     return outcome;
   }
 

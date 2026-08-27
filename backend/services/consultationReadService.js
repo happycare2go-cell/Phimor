@@ -20,6 +20,13 @@ function parseSequence(value) {
   return parsed;
 }
 
+function parseBeforeSequence(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new ConsultationDomainError('INVALID_BEFORE_SEQUENCE');
+  return parsed;
+}
+
 function parseLimit(value) {
   if (value === undefined || value === null || value === '') return DEFAULT_MESSAGE_LIMIT;
   const parsed = Number(value);
@@ -73,6 +80,7 @@ function projectCase(row, {
   includeQuestion = false,
   includeClassification = false,
   includePaymentReference = false,
+  viewerRole = null,
 } = {}) {
   const now=new Date(row.database_now || Date.now());
   const state = effectiveConsultationState(row, now);
@@ -93,6 +101,19 @@ function projectCase(row, {
     remainingSeconds,
     messageCursor:{lastSequence:Number(row.last_message_sequence || 0)},
   };
+  if (row.assigned_pharmacist_id && row.pharmacist_display_name) {
+    result.pharmacist = { displayName:row.pharmacist_display_name };
+  }
+  if (viewerRole === 'customer' || viewerRole === 'pharmacist') {
+    const selfKey = viewerRole === 'customer' ? 'customer_last_read_sequence' : 'pharmacist_last_read_sequence';
+    const otherKey = viewerRole === 'customer' ? 'pharmacist_last_read_sequence' : 'customer_last_read_sequence';
+    const unreadKey = viewerRole === 'customer' ? 'customer_unread_count' : 'pharmacist_unread_count';
+    result.readState = {
+      selfLastReadSequence:Number(row[selfKey] || 0),
+      otherLastReadSequence:Number(row[otherKey] || 0),
+    };
+    result.unreadCount = Number(row[unreadKey] || 0);
+  }
   if (includePaymentReference) result.paymentReference = row.order_id;
   if (includeQuestion) result.initialQuestion = row.initial_question;
   if (includeClassification) {
@@ -150,7 +171,7 @@ function createConsultationReadService({
       if (careProfileId && row.care_profile_id !== careProfileId) continue;
       try {
         await authorizeFamilyCase(row, lineUserId);
-        allowed.push(projectCase(row, { includePaymentReference:true }));
+        allowed.push(projectCase(row, { includePaymentReference:true,viewerRole:'customer' }));
       } catch (_) {
         // A revoked relationship must not leak a case through a collection response.
       }
@@ -161,7 +182,7 @@ function createConsultationReadService({
   async function getFamilyCase({ caseId, lineUserId } = {}) {
     const row = await repository.findCaseForRead(caseId);
     await authorizeFamilyCase(row, lineUserId);
-    return projectCase(row, { includeQuestion:true, includePaymentReference:true });
+    return projectCase(row, { includeQuestion:true, includePaymentReference:true,viewerRole:'customer' });
   }
 
   async function listQueue({
@@ -208,33 +229,47 @@ function createConsultationReadService({
     const rows = repository.listCasesForPharmacist
       ? await repository.listCasesForPharmacist(pharmacist.pharmacistId,{collection})
       : await repository.listActiveCasesForPharmacist(pharmacist.pharmacistId);
-    return {items:rows.map((row)=>projectCase(row,{includeClassification:true})).filter((item)=>item.state===collection)};
+    return {items:rows.map((row)=>projectCase(row,{includeClassification:true,viewerRole:'pharmacist'})).filter((item)=>item.state===collection)};
   }
 
   async function getPharmacistCase({ caseId, pharmacistLineUserId } = {}) {
     const row = await repository.findCaseForRead(caseId);
     await authorizePharmacistCase(row, pharmacistLineUserId);
-    return projectCase(row, { includeQuestion:true, includeClassification:true });
+    return projectCase(row, { includeQuestion:true, includeClassification:true,viewerRole:'pharmacist' });
   }
 
   async function listCaseMessages({
     caseId, lineUserId = null, pharmacistLineUserId = null,
-    afterSequence = 0, limit = DEFAULT_MESSAGE_LIMIT,
+    afterSequence = 0, beforeSequence = null, limit = DEFAULT_MESSAGE_LIMIT,
   } = {}) {
     const row = await repository.findCaseForRead(caseId);
     if (pharmacistLineUserId) await authorizePharmacistCase(row, pharmacistLineUserId);
     else await authorizeFamilyCase(row, lineUserId);
-    const after = parseSequence(afterSequence);
+    const before = parseBeforeSequence(beforeSequence);
+    if (before !== null && afterSequence !== undefined && afterSequence !== null
+        && afterSequence !== '' && Number(afterSequence) !== 0) {
+      throw new ConsultationDomainError('AMBIGUOUS_MESSAGE_CURSOR');
+    }
+    const after = before === null ? parseSequence(afterSequence) : 0;
     const boundedLimit = parseLimit(limit);
-    const rows = await repository.listMessages(caseId, { afterSequence:after, limit:boundedLimit + 1 });
+    const rows = before === null
+      ? await repository.listMessages(caseId, { afterSequence:after, limit:boundedLimit + 1 })
+      : await repository.listMessagesBefore(caseId, { beforeSequence:before, limit:boundedLimit + 1 });
     const hasMore = rows.length > boundedLimit;
-    const visible = hasMore ? rows.slice(0, boundedLimit) : rows;
+    const visible = hasMore
+      ? (before === null ? rows.slice(0, boundedLimit) : rows.slice(rows.length - boundedLimit))
+      : rows;
     const items = visible.map(projectMessage);
     return {
       items,
       afterSequence:after,
       nextSequence:items.length ? items.at(-1).sequence : after,
       hasMore,
+      ...(before === null ? {} : {
+        beforeSequence:before,
+        nextBeforeSequence:items.length ? items[0].sequence : before,
+        hasMoreOlder:hasMore,
+      }),
     };
   }
 
@@ -246,7 +281,7 @@ function createConsultationReadService({
 
 const defaultService = createConsultationReadService();
 module.exports = {
-  DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT, parseSequence, parseLimit,
+  DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT, parseSequence, parseBeforeSequence, parseLimit,
   DEFAULT_QUEUE_LIMIT, MAX_QUEUE_LIMIT, parseQueueLimit, parseQueueAge,
   parseQueueCursor, encodeQueueCursor,
   projectCase, projectMessage, createConsultationReadService,

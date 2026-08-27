@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="./doctor-visit-ui.css">
 <link rel="stylesheet" href="./consultation-ui.css">
 <link rel="stylesheet" href="./lab-results-ui.css">
+<link rel="stylesheet" href="./care-history-ui.css">
 <link rel="stylesheet" href="./family-home-v2.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
@@ -142,7 +143,7 @@
     <section class="family-section" aria-labelledby="careProfileGridTitle">
       <div class="family-section__heading"><div><h2 id="careProfileGridTitle">ข้อมูล Care Profile</h2><p>ข้อมูลประจำของคนที่คุณกำลังดูแล</p></div></div>
       <div class="family-grid" id="careProfileGrid">
-        <button type="button" class="family-grid-card" data-family-destination="health"><span class="family-grid-card__icon">♥</span><span class="family-grid-card__label">สุขภาพ<span class="family-grid-card__hint">ข้อมูลสุขภาพปัจจุบัน</span></span></button>
+        <button type="button" class="family-grid-card" data-family-destination="health"><span class="family-grid-card__icon">♥</span><span class="family-grid-card__label">สุขภาพ<span class="family-grid-card__hint">สัญญาณชีพและบันทึกการดูแล</span></span></button>
         <button type="button" class="family-grid-card" data-family-destination="medications"><span class="family-grid-card__icon">💊</span><span class="family-grid-card__label">ยา<span class="family-grid-card__hint">บันทึกและประวัติยา</span></span></button>
         <button type="button" class="family-grid-card" data-family-destination="appointments"><span class="family-grid-card__icon">📅</span><span class="family-grid-card__label">นัดหมาย<span class="family-grid-card__hint">นัดและการเดินทาง</span></span></button>
         <button type="button" class="family-grid-card" data-family-destination="lab"><span class="family-grid-card__icon">🧪</span><span class="family-grid-card__label">ผลตรวจล่าสุด<span class="family-grid-card__hint">ข้อมูลผลตรวจที่ยืนยันแล้ว</span></span></button>
@@ -264,13 +265,22 @@
         <button type="button" class="consultation-refresh" id="consultationRefreshButton">รีเฟรชรายการคำปรึกษา</button>
       </div>
       <div id="consultationGroups" class="consultation-groups" aria-label="รายการคำปรึกษา"></div>
-      <section id="consultationChat" class="consultation-chat" hidden>
-        <div id="consultationCaseHeader" class="consultation-case-header"></div>
-        <div id="consultationMessages" class="consultation-messages" role="log" aria-live="polite"></div>
+      <section id="consultationCaseSummary" class="consultation-case-summary" hidden></section>
+      <section id="consultationChat" class="consultation-chat-room" hidden aria-label="ห้องแชทปรึกษาเภสัชกร">
+        <header class="consultation-room-header">
+          <button type="button" class="consultation-room-back" id="consultationChatBack" aria-label="กลับไปรายการคำปรึกษา">‹</button>
+          <div class="consultation-room-heading"><h3 id="consultationRoomParticipant">เภสัชกร</h3><p id="consultationRoomStatus">กำลังปรึกษา</p></div>
+          <span id="consultationConnectionState" class="consultation-connection" role="status">กำลังเชื่อมต่อ…</span>
+        </header>
+        <div id="consultationInitialQuestion" class="consultation-room-intro" hidden></div>
+        <button type="button" id="consultationLoadOlder" class="consultation-load-older" hidden>โหลดข้อความก่อนหน้า</button>
+        <div id="consultationMessages" class="consultation-messages" role="log" aria-live="polite" aria-label="ข้อความในห้องปรึกษา"></div>
+        <button type="button" id="consultationNewMessages" class="consultation-new-messages" hidden>ข้อความใหม่</button>
+        <div id="consultationRoomClosed" class="consultation-room-closed" hidden>การปรึกษาสิ้นสุดแล้ว ห้องนี้เปิดอ่านย้อนหลังได้</div>
         <div class="consultation-composer">
-          <label for="consultationMessageComposer">ส่งข้อความถึงเภสัชกร</label>
-          <textarea id="consultationMessageComposer" maxlength="4000"></textarea>
-          <button type="button" class="btn btn-primary" id="consultationSendButton">ส่งข้อความ</button>
+          <label class="sr-only" for="consultationMessageComposer">ส่งข้อความถึงเภสัชกร</label>
+          <textarea id="consultationMessageComposer" maxlength="4000" rows="1" placeholder="พิมพ์ข้อความ..."></textarea>
+          <button type="button" class="consultation-send" id="consultationSendButton" aria-label="ส่งข้อความ">➤</button>
         </div>
       </section>
     </section>
@@ -408,7 +418,7 @@
   <div class="view" id="view-health">
     <div class="family-module-header family-module-header--actions">
       <button type="button" class="family-module-back" onclick="activateView('home')" aria-label="กลับหน้าหลัก">‹ กลับ</button>
-      <div class="family-module-header__copy"><h1>ข้อมูลสุขภาพ</h1><p>ข้อมูลปัจจุบันและการจัดการสิทธิ์ของ Care Profile</p></div>
+      <div class="family-module-header__copy"><h1>สุขภาพ</h1><p>สัญญาณชีพ บันทึกการดูแล และข้อมูลปัจจุบันของ Care Profile</p></div>
       <button type="button" class="family-module-link" onclick="openFamilyDestination('history')">ประวัติและ PDF</button>
     </div>
     <div class="mascot-callout mascot-callout--success mascot-callout--compact">
@@ -421,6 +431,20 @@
       <button type="button" class="btn btn-primary" onclick="openHomeForCareProfile()">กลับหน้าหลักเพื่อสร้าง Care Profile</button>
     </div>
     <div id="healthProfileContent" hidden>
+    <section class="card family-care" id="familyCareHistoryPanel" hidden aria-labelledby="familyCareHistoryTitle">
+      <div class="family-care__header"><div><h2 id="familyCareHistoryTitle">ข้อมูลจากการดูแล</h2><p>แสดงข้อมูลที่บันทึกจริง โดยไม่มีการตีความว่าปกติหรือผิดปกติ</p></div><span id="familyCareLive" class="family-care__status" role="status" aria-live="polite"></span></div>
+      <div class="family-care__grid">
+        <article class="family-care__module" aria-labelledby="familyLatestVitalTitle"><h3 id="familyLatestVitalTitle">สัญญาณชีพล่าสุด</h3><div id="familyLatestVital" class="family-care__latest"></div><button type="button" class="btn btn-outline" id="familyVitalHistoryButton">ดูประวัติสัญญาณชีพ</button></article>
+        <article class="family-care__module" aria-labelledby="familyLatestDailyTitle"><h3 id="familyLatestDailyTitle">บันทึกการดูแล</h3><div id="familyLatestDaily" class="family-care__latest"></div><button type="button" class="btn btn-outline" id="familyDailyHistoryButton">ดูบันทึกการดูแลทั้งหมด</button></article>
+      </div>
+      <section class="family-care__workspace" id="familyCareWorkspace" hidden aria-labelledby="familyCareWorkspaceTitle">
+        <div class="family-care__header"><h3 id="familyCareWorkspaceTitle">ประวัติ</h3><button type="button" class="btn btn-outline" id="familyCareOverviewButton">กลับภาพรวม</button></div>
+        <div class="family-care__toolbar" id="familyVitalFilters" hidden>
+          <label>ตั้งแต่<input id="familyVitalFrom" type="date" autocomplete="off"></label><label>ถึง<input id="familyVitalTo" type="date" autocomplete="off"></label><button type="button" class="btn btn-outline" id="familyVitalFilterButton">กรองวันที่</button>
+        </div>
+        <div id="familyCareHistoryList" class="family-care__list"></div><div id="familyCareHistoryActions" class="family-care__actions"></div>
+      </section>
+    </section>
     <div class="card" id="healthProfileFormCard">
       <h3 id="healthProfileHeading">ข้อมูลสุขภาพปัจจุบันของ Care Profile</h3>
       <p id="healthProfileOwnershipHelp" style="font-size:12px;line-height:1.6;color:var(--gray)">ข้อมูลด้านล่างเป็นข้อมูลของ Care Profile ที่กำลังเลือกอยู่</p>
@@ -477,9 +501,11 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="./plus-ui.js"></script>
+<script src="../consultation-realtime-client.js"></script>
 <script src="./consultation-ui.js"></script>
 <script src="./doctor-visit-ui.js"></script>
 <script src="./lab-results-ui.js"></script>
+<script src="./care-history-ui.js"></script>
 <script src="./family-home-v2.js"></script>
 <script>
 let BACKEND_URL = null;
@@ -495,6 +521,7 @@ let PLUS_UI = null;
 let CONSULTATION_UI = null;
 let DOCTOR_VISIT_UI = null;
 let LAB_RESULTS_UI = null;
+let CARE_HISTORY_UI = null;
 let HOME_UI = null;
 let DASHBOARD_GENERATION = 0;
 let CURRENT_ACCESS_REQUESTS = [];
@@ -640,7 +667,8 @@ async function ensureConsultationUI(){
   if(!CONSULTATION_UI){
     let controller=null;
     const checkoutAdapter=({careProfileId,question,termsVersion})=>consultationApi('/api/consultations/checkout',{method:'POST',body:JSON.stringify({careProfileId,question,termsAccepted:true,termsVersion})});
-    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,checkoutAdapter,onChange:(state)=>{controller?.render(state);refreshHome();}});
+    const realtimeFactory=window.PhimorConsultationRealtime?({onEvent,onRecover,onStatus})=>window.PhimorConsultationRealtime.createRealtimeClient({request:consultationApi,backendUrl:BACKEND_URL,ticketPath:(caseId)=>`/api/consultations/${encodeURIComponent(caseId)}/realtime-ticket`,onEvent,onRecover,onStatus}):null;
+    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,checkoutAdapter,realtimeFactory,onChange:(state)=>{controller?.render(state);refreshHome();}});
     controller=window.PhimorFamilyConsultationUI.createController({doc:document,session});
     CONSULTATION_UI={session,controller};
   }
@@ -681,6 +709,16 @@ async function ensureLabResultsUI(){
   }
   LAB_RESULTS_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
 }
+async function familyCareApi(path,opts={}){
+  const res=await fetch(BACKEND_URL+path,{...opts,headers:{'Content-Type':'application/json','Authorization':`Bearer ${LINE_ID_TOKEN}`,'X-Line-User-Id':LINE_USER_ID,...(opts.headers||{})}});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){const error=new Error('CARE_HISTORY_REQUEST_FAILED');error.errorCode=data.errorCode||'CARE_HISTORY_REQUEST_FAILED';error.status=res.status;throw error;}return data;
+}
+function ensureCareHistoryUI(){
+  if(!window.PhimorFamilyCareHistoryUI)return null;
+  if(!CARE_HISTORY_UI){let controller=null;const session=window.PhimorFamilyCareHistoryUI.createSession({request:familyCareApi,onChange:(state)=>controller?.render(state)});controller=window.PhimorFamilyCareHistoryUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile});CARE_HISTORY_UI={session,controller};}
+  CARE_HISTORY_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);return CARE_HISTORY_UI;
+}
 
 function activateView(view){
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
@@ -699,7 +737,7 @@ function activateServiceModule(module,title){
 function scrollToFamilyAnchor(id){requestAnimationFrame(()=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'}));}
 async function openFamilyDestination(destination){
   if(destination==='actions'){activateView('home');scrollToFamilyAnchor('familyActionsSection');return;}
-  if(destination==='health'){activateView('health');scrollToFamilyAnchor('healthProfileFormCard');return;}
+  if(destination==='health'){activateView('health');const care=ensureCareHistoryUI();if(currentProfile)await care?.controller.open();scrollToFamilyAnchor(currentProfile?'familyCareHistoryPanel':'healthNoProfileState');return;}
   if(!currentProfile){activateView('home');toast('กรุณาสร้างหรือเลือก Care Profile ก่อน');return;}
   if(destination==='medications'){activateView('record');scrollToFamilyAnchor('medicationEntryCard');return;}
   if(destination==='appointments'||destination==='transport'){activateView(destination==='transport'?'home':'record');scrollToFamilyAnchor(destination==='transport'?'transportDecisionCard':'appointmentListCard');return;}
@@ -744,12 +782,14 @@ async function acceptConsent() {
   await ensureConsultationUI();
   await ensureDoctorVisitUI();
   await ensureLabResultsUI();
+  ensureCareHistoryUI();
   refreshHome();
 }
 function declineConsent() { toast('จำเป็นต้องยอมรับก่อนใช้งานพี่หมอ'); }
 
 // ── F2: หน้าหลัก ──
 function clearProfileScopedUi({returnHome=true}={}){
+  CARE_HISTORY_UI?.session.setProfile(null);
   CURRENT_ACCESS_REQUESTS=[];CURRENT_PENDING_TRANSPORT=[];HOME_UI?.clear();
   document.getElementById('profileSummary').replaceChildren();
   document.getElementById('familyProfileAvatar').textContent='พ';
@@ -822,6 +862,7 @@ async function loadDashboard() {
   if(CONSULTATION_UI)await CONSULTATION_UI.session.setProfile(currentProfile);
   if(DOCTOR_VISIT_UI)await DOCTOR_VISIT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   LAB_RESULTS_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
+  CARE_HISTORY_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   await Promise.all([loadAccessRequests(token,currentProfile?.profile?.care_profile_id||null),loadPendingTransport(token,currentProfile?.profile?.care_profile_id||null)]);
   if(token!==DASHBOARD_GENERATION)return {ignored:true,stale:true};
   refreshHome();
@@ -836,6 +877,7 @@ function selectProfile(id){
   CONSULTATION_UI?.session.setProfile(currentProfile);
   DOCTOR_VISIT_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   LAB_RESULTS_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
+  CARE_HISTORY_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   loadDashboard();
 }
 async function loadAccessRequests(token=DASHBOARD_GENERATION,profileId=currentProfile?.profile?.care_profile_id||null){

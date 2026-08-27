@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ผู้ดูแลระบบพี่หมอ</title>
   <link rel="stylesheet" href="../assets/mascot-ui.css">
+  <link rel="stylesheet" href="./care-operations-ui.css">
   <style>
     :root{font-family:system-ui,"Sarabun",sans-serif;color:#16204a;background:#f5f6fa}body{margin:0}.top{background:#1c2b64;color:#fff;padding:18px 5vw}.wrap{max-width:1200px;margin:auto;padding:24px}.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 2px 12px #14204a18}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}input,select,button{font:inherit;padding:10px;border:1px solid #ccd1df;border-radius:8px;box-sizing:border-box}button{background:#1c2b64;color:#fff;border:0;cursor:pointer}.secondary{background:#eef1fa;color:#1c2b64}.danger{background:#9b2c2c}.muted{color:#667085}.ok{color:#087a55}.bad{color:#b42318}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.center{border-top:1px solid #e7e9f0;padding:14px 0}.center:first-child{border-top:0}.pill{border-radius:99px;padding:3px 9px;background:#eef1fa;font-size:12px}dialog{border:0;border-radius:14px;width:min(900px,92vw);max-height:85vh;overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid #eee;padding:8px;vertical-align:top}@media(max-width:600px){.wrap{padding:12px}table{font-size:12px}}
     dialog::backdrop{background:#10182899}label{display:block;font-weight:600;margin:10px 0 5px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.form-grid input,.form-grid select{width:100%}button:disabled{opacity:.55;cursor:wait}@media(max-width:600px){.form-grid{grid-template-columns:1fr}}
@@ -35,6 +36,20 @@
       </div>
       <div class="card"><div id="summary" class="grid"></div></div>
       <div class="card"><input id="search" placeholder="ค้นหาชื่อศูนย์/เจ้าของ" oninput="render()" style="width:100%"><div id="centers"></div></div>
+      <section class="card care-ops" id="careOperationsPanel" aria-labelledby="careOperationsTitle">
+        <div class="care-ops__header">
+          <div><h2 id="careOperationsTitle">ศูนย์และระบบเชื่อมต่อ</h2><p class="muted">ตั้งค่าความสามารถ เชื่อมผู้พัก และตรวจสอบเส้นทางแจ้งครอบครัว โดยไม่เปิดดูข้อมูลสุขภาพ</p></div>
+          <button type="button" class="secondary" id="careOperationsRefresh">รีเฟรชงานระบบ</button>
+        </div>
+        <nav class="care-ops__tabs" aria-label="ส่วนงาน Care Infrastructure">
+          <button type="button" class="care-ops__tab" data-care-ops-tab="overview">องค์กรและศูนย์</button>
+          <button type="button" class="care-ops__tab" data-care-ops-tab="capabilities" aria-selected="true">ความสามารถ</button>
+          <button type="button" class="care-ops__tab" data-care-ops-tab="integrations">ระบบเชื่อมต่อ</button>
+          <button type="button" class="care-ops__tab" data-care-ops-tab="pending">ผู้พักรอเชื่อม</button>
+          <button type="button" class="care-ops__tab" data-care-ops-tab="groups">กลุ่ม LINE</button>
+        </nav>
+        <div class="care-ops__content" id="careOperationsContent" aria-live="polite"><div class="care-ops__empty">เข้าสู่ระบบเพื่อโหลดข้อมูลงานระบบ</div></div>
+      </section>
     </section>
   </main>
   <dialog id="detail"><div class="row"><h2 id="detailTitle" style="flex:1"></h2><button class="secondary" onclick="detail.close()">ปิด</button></div><div id="detailBody"></div></dialog>
@@ -49,13 +64,15 @@
     </form>
   </dialog>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="./care-operations-ui.js"></script>
   <script>
-    const BACKEND_URL=window.PHIMOR_BACKEND_URL||'https://phimor-backend.onrender.com';let centers=[];
+    const BACKEND_URL=window.PHIMOR_BACKEND_URL||'https://phimor-backend.onrender.com';let centers=[];let CARE_OPERATIONS_UI=null;
     const esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let idToken='';
     async function api(path,opt={}){const r=await fetch(BACKEND_URL+path,{...opt,headers:{'Content-Type':'application/json',...(idToken?{'Authorization':`Bearer ${idToken}`} : {}),...(opt.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(d.message||d.error||`HTTP ${r.status}`);e.status=r.status;throw e}return d}
     async function bootstrapAdmin(){loginError.textContent='';const adminKey=document.querySelector('#apiKey').value.trim();if(!adminKey){loginError.textContent='กรุณาใส่ ADMIN API Key';return}try{await api('/api/admin/bootstrap',{method:'POST',headers:{'X-Admin-Key':adminKey},body:'{}'});document.querySelector('#apiKey').value='';await enterAdmin()}catch(e){loginError.textContent=e.message}}
-    async function enterAdmin(){await loadCenters();login.hidden=true;app.hidden=false}
+    function ensureCareOperationsUI(){if(CARE_OPERATIONS_UI||!window.PhimorCareOperationsUI)return CARE_OPERATIONS_UI;CARE_OPERATIONS_UI=window.PhimorCareOperationsUI.createController({doc:document,request:api,confirmAction:async(title,message)=>window.confirm(`${title}\n\n${message}`)});careOperationsRefresh.addEventListener('click',()=>CARE_OPERATIONS_UI.load());return CARE_OPERATIONS_UI}
+    async function enterAdmin(){await loadCenters();login.hidden=true;app.hidden=false;await ensureCareOperationsUI()?.load()}
     function logout(){if(window.liff?.isLoggedIn())liff.logout();location.reload()}
     async function loadCenters(){const d=await api('/api/admin/centers');centers=d.centers;render()}
     function paymentDate(value){return value?new Date(value).toLocaleString('th-TH'):'-'}

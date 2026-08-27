@@ -11,9 +11,11 @@ const { createConsultationCheckoutService } = require('../services/consultationC
 const { createConsultationPaymentStatusService } = require('../services/consultationPaymentStatusService');
 const { createConsultationPaymentProvider } = require('../providers/consultationPaymentProviderFactory');
 const { recordConsultationWriteFailure } = require('../services/consultationOperationalDiagnostics');
+const { createConsultationRealtimeAccessService } = require('../services/consultationRealtimeAccessService');
+const { createConsultationReadReceiptService } = require('../services/consultationReadReceiptService');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const SAFE_CONSULTATION_ERROR_CODE = /^(?:CONSULTATION|CASE|MESSAGE|QUESTION|PHARMACIST|CARE_PROFILE|PAYMENT|ORDER|TERMS|INTERNAL|UNAUTHENTICATED|INVALID|IDEMPOTENCY|RATE_LIMIT|EMERGENCY|RECONCILIATION|TRUSTED|UNSUPPORTED|ACCESS|MEMBERSHIP|CENTER)_[A-Z0-9_]+$/;
+const SAFE_CONSULTATION_ERROR_CODE = /^(?:CONSULTATION|CASE|MESSAGE|QUESTION|PHARMACIST|CARE_PROFILE|PAYMENT|ORDER|TERMS|INTERNAL|UNAUTHENTICATED|INVALID|IDEMPOTENCY|RATE_LIMIT|EMERGENCY|RECONCILIATION|REALTIME|READ|TRUSTED|UNSUPPORTED|ACCESS|MEMBERSHIP|CENTER)_[A-Z0-9_]+$/;
 
 function consultationError(res, error, diagnostics = {}) {
   const rawCode = error?.code || 'CONSULTATION_UNAVAILABLE';
@@ -47,6 +49,10 @@ function createConsultationsRouter(overrides = {}) {
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
   const checkout = overrides.checkoutService || createConsultationCheckoutService(overrides.checkoutDependencies);
   const paymentStatus = overrides.paymentStatusService || createConsultationPaymentStatusService(overrides.paymentStatusDependencies);
+  const realtimeAccess = overrides.realtimeAccessService
+    || createConsultationRealtimeAccessService(overrides.realtimeAccessDependencies);
+  const readReceipts = overrides.readReceiptService
+    || createConsultationReadReceiptService(overrides.readReceiptDependencies);
   const writeDiagnostics = (action) => ({
     action, logger:overrides.operationalLogger,
     correlationIdFactory:overrides.correlationIdFactory,
@@ -149,7 +155,8 @@ function createConsultationsRouter(overrides = {}) {
     try {
       return res.json(await reads.listCaseMessages({
         caseId:req.params.caseId, lineUserId:req.user.lineUserId,
-        afterSequence:req.query.afterSequence, limit:req.query.limit,
+        afterSequence:req.query.afterSequence, beforeSequence:req.query.beforeSequence,
+        limit:req.query.limit,
       }));
     } catch (error) { return consultationError(res, error); }
   }));
@@ -178,6 +185,34 @@ function createConsultationsRouter(overrides = {}) {
         },
       });
     } catch (error) { return consultationError(res, error, writeDiagnostics('family_message_send')); }
+  }));
+
+  router.post('/:caseId/realtime-ticket', asyncHandler(async (req, res) => {
+    if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CASE_ID' });
+    if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) {
+      return res.status(400).json({ status:'invalid_request', errorCode:'UNSUPPORTED_FIELD' });
+    }
+    try {
+      return res.json(await realtimeAccess.issueFamilyTicket({
+        caseId:req.params.caseId,
+        lineUserId:req.user.lineUserId,
+      }));
+    } catch (error) { return consultationError(res, error); }
+  }));
+
+  router.post('/:caseId/read', asyncHandler(async (req, res) => {
+    if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CASE_ID' });
+    const keys = req.body && typeof req.body === 'object' ? Object.keys(req.body) : [];
+    if (keys.some((key) => key !== 'sequence')) {
+      return res.status(400).json({ status:'invalid_request', errorCode:'UNSUPPORTED_FIELD' });
+    }
+    try {
+      return res.json(await readReceipts.markRead({
+        caseId:req.params.caseId,
+        actor:{type:'customer',lineUserId:req.user.lineUserId},
+        sequence:req.body?.sequence,
+      }));
+    } catch (error) { return consultationError(res, error); }
   }));
 
   return router;

@@ -29,7 +29,18 @@ function createPharmacistAccountService({ repository = createConsultationReposit
     return account;
   }
 
-  return { getByLineIdentity, requireActive };
+  async function requireActiveById(pharmacistId) {
+    if (typeof pharmacistId !== 'string' || !pharmacistId.trim()) {
+      throw new ConsultationDomainError('PHARMACIST_NOT_FOUND', 403);
+    }
+    const account = projectPharmacist(await repository.findPharmacistById(pharmacistId.trim()));
+    if (!account) throw new ConsultationDomainError('PHARMACIST_NOT_FOUND', 403);
+    if (account.status !== 'active') throw new ConsultationDomainError('PHARMACIST_INACTIVE', 403);
+    if (!account.licenseVerifiedAt) throw new ConsultationDomainError('PHARMACIST_LICENSE_NOT_VERIFIED', 403);
+    return account;
+  }
+
+  return { getByLineIdentity, requireActive, requireActiveById };
 }
 
 const defaultService = createPharmacistAccountService();

@@ -1,5 +1,6 @@
 const { Centers, CenterStaff, Residents, CareProfiles, audit, now } = require('../db');
 const notificationService = require('./notificationService');
+const { projectCenter } = require('./centerProjection');
 const { formatThaiDateTime } = require('../utils/thaiDate');
 
 const DAY_MS = 86400000;
@@ -81,7 +82,7 @@ async function getAdminCenterDetails(centerId) {
   const residents = await Residents.findWhere((r) => r.center_id === centerId);
   const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
   const profiles = await CareProfiles.findWhere((p) => profileIds.has(p.care_profile_id));
-  return { center, entitlement: entitlement(center), staff, residents, profiles };
+  return { center: projectCenter(center), entitlement: entitlement(center), staff, residents, profiles };
 }
 
 module.exports = { entitlement, setSubscription, sendExpiryReminders, getAdminCenterDetails };

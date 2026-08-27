@@ -17,6 +17,7 @@ const subscriptionService = require('../services/subscriptionService');
 const { createConsultationPaymentSupportService } = require('../services/consultationPaymentSupportService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
+const { createPlatformAdminRouter } = require('./platformAdmin');
 
 // Bootstrap ครั้งแรกต้องมีทั้ง LINE identity และ ADMIN_API_KEY ปัจจุบัน
 // หลังสำเร็จ LINE account นี้เข้าใช้งานได้ด้วย ID token โดยไม่ต้องกรอก shared key อีก
@@ -35,6 +36,7 @@ router.post('/bootstrap', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 router.use(requireAdminKey);
+router.use('/platform', createPlatformAdminRouter());
 
 // Exact-reference lookup for payment incidents. The projection intentionally
 // excludes LINE identities, the consultation question and Care Profile data.

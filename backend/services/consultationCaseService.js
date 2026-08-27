@@ -3,6 +3,7 @@ const { withTransaction } = require('../db');
 const { createConsultationRepository } = require('./consultationRepository');
 const { createPharmacistAccountService } = require('./pharmacistAccountService');
 const { materializeExpiredCaseInTransaction } = require('./consultationExpirationService');
+const { consultationRealtimeBus } = require('./consultationRealtimeBus');
 const {
   CONSULTATION_DURATION_MINUTES,
   ConsultationDomainError,
@@ -16,6 +17,7 @@ function createConsultationCaseService({
   transaction = withTransaction,
   pharmacistAccounts = null,
   eventId = () => `CEVT-${randomUUID()}`,
+  realtime = consultationRealtimeBus,
 } = {}) {
   const accounts = pharmacistAccounts || createPharmacistAccountService({ repository });
 
@@ -23,7 +25,7 @@ function createConsultationCaseService({
     if (typeof caseId !== 'string' || !caseId.trim()) {
       throw new ConsultationDomainError('CASE_REQUIRED');
     }
-    return transaction(`consultation-accept:${caseId.trim()}`, async () => {
+    const accepted = await transaction(`consultation-accept:${caseId.trim()}`, async () => {
       const pharmacist = await accounts.requireActive(pharmacistLineUserId);
       const current = await repository.findCaseForUpdate(caseId.trim());
       if (!current) throw new ConsultationDomainError('CASE_NOT_FOUND', 404);
@@ -47,6 +49,9 @@ function createConsultationCaseService({
       });
       return accepted;
     });
+    try { await realtime.publish({eventType:'case.updated',caseId:accepted.case_id,state:'active'}); }
+    catch (_) { /* accepted case remains authoritative */ }
+    return accepted;
   }
 
   async function resolveCase({caseId,pharmacistLineUserId}={}) {
@@ -76,6 +81,10 @@ function createConsultationCaseService({
       return {case:resolved,duplicate:false};
     });
     if (outcome?.domainError) throw outcome.domainError;
+    if (outcome?.case) {
+      try { await realtime.publish({eventType:'case.updated',caseId:outcome.case.case_id,state:outcome.case.state}); }
+      catch (_) { /* case state remains authoritative */ }
+    }
     return outcome;
   }
 
