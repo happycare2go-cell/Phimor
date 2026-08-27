@@ -12,6 +12,28 @@
     group_binding_mismatch: ['MISMATCH', 'กลุ่ม LINE ไม่ตรงกัน', 'bad'],
     no_expected_group: ['NOT_PROVIDED', 'ระบบต้นทางไม่ได้ส่ง Group ID สำหรับตรวจสอบ', ''],
   });
+  const EVENT_STATUS_LABELS = Object.freeze({
+    pending_subject_mapping:['รอเชื่อมผู้พัก', 'ข้อมูลถูกเก็บไว้อย่างปลอดภัยและยังไม่สร้างข้อมูลผู้พัก', 'warn'],
+    rejected:['ปฏิเสธ', 'event ไม่ผ่านข้อกำหนดและจะไม่ถูกประมวลผลอัตโนมัติ', 'bad'],
+    retrying:['ประมวลผลไม่สำเร็จ', 'ระบบจะลองประมวลผลใหม่ตามนโยบาย', 'warn'],
+    dead:['ประมวลผลไม่สำเร็จ', 'ครบจำนวนครั้งที่ระบบกำหนดแล้ว ต้องตรวจสอบ', 'bad'],
+  });
+  const REJECTION_REASON_LABELS = Object.freeze({
+    CENTER_MAPPING_NOT_FOUND:'ไม่พบการเชื่อมสาขา',
+    RESIDENT_MAPPING_INVALID:'การเชื่อมผู้พักไม่ถูกต้อง',
+    CARE_PROFILE_RELATIONSHIP_INVALID:'ความสัมพันธ์ผู้พักกับ Care Profile ไม่ถูกต้อง',
+    INVALID_FINALIZED_RECORD:'ข้อมูลไม่ตรง schema หรือข้อกำหนดของ finalized record',
+    INVALID_EXTERNAL_RECORD_ID:'รหัสรายการต้นทางไม่ถูกต้อง',
+    SUBJECT_MAPPING_NOT_FOUND:'ยังไม่พบการเชื่อมผู้พัก',
+    GROUP_RECONCILIATION_BLOCKED:'การตรวจสอบกลุ่ม LINE ยังไม่ผ่าน',
+    CAPABILITY_NOT_ENABLED:'capability ยังไม่เปิด',
+    EVENT_ID_REUSED:'event_id ถูกใช้กับข้อมูลที่ต่างกัน',
+    INTEGRATION_SCOPE_FORBIDDEN:'Integration ไม่มีสิทธิ์สำหรับข้อมูลนี้',
+    INVALID_CREDENTIAL:'Credential ไม่ถูกต้องหรือถูกเพิกถอน',
+    RATE_LIMITED:'เรียกใช้งานถี่เกินไป',
+    TEMPORARY_PROCESSING_UNAVAILABLE:'ระบบประมวลผลชั่วคราวไม่สำเร็จ',
+    PROCESSING_RETRY_EXHAUSTED:'ประมวลผลไม่สำเร็จภายในจำนวนครั้งที่กำหนด',
+  });
   const safeArray = (value, limit = 250) => (Array.isArray(value) ? value.slice(0, limit) : []);
   const safeText = (value, fallback = '') => (typeof value === 'string' && value.trim() ? value.trim() : fallback);
   const formatDate = (value) => {
@@ -190,12 +212,20 @@
       state.operational.forEach((item) => {
         const client = state.integrations.find((entry) => entry.integrationClientId === item.integrationClientId);
         const center = state.centers.find((entry) => entry.centerId === item.centerId);
-        const descriptor = GROUP_LABELS[item.groupReconciliationStatus] || ['รอตรวจสอบ', 'ยังไม่มีผลการตรวจสอบ', 'warn'];
         const card = itemCard(`${client?.displayName || item.integrationClientId} · ${center?.name || item.centerId}`, `ผู้พักภายนอก ${item.externalResidentId}`);
-        const status = element('span', `care-ops__status${descriptor[2] ? ` care-ops__status--${descriptor[2]}` : ''}`, `${descriptor[0]} · ${descriptor[1]}`); card.append(status);
-        const groups = element('dl', 'care-ops__group-ids');
-        groups.append(element('dt', '', 'Group ID ที่ระบบต้นทางแจ้ง'), element('dd', '', truncateGroupId(item.expectedLineGroupId) || 'ไม่ได้ระบุ'), element('dt', '', 'Group ID ที่พี่หมอยืนยัน'), element('dd', '', truncateGroupId(item.verifiedLineGroupId) || 'ยังไม่มี'));
-        card.append(groups);
+        const eventDescriptor = EVENT_STATUS_LABELS[item.eventStatus] || null;
+        if (eventDescriptor) {
+          card.append(element('span', `care-ops__status care-ops__status--${eventDescriptor[2]}`, `${eventDescriptor[0]} · ${eventDescriptor[1]}`));
+          const reasonCode = safeText(item.lastErrorCode || item.error?.code);
+          if (reasonCode) card.append(element('p', 'care-ops__meta', `เหตุผล: ${REJECTION_REASON_LABELS[reasonCode] || 'ไม่สามารถประมวลผล event นี้ได้'} (${reasonCode})`));
+        }
+        const descriptor = GROUP_LABELS[item.groupReconciliationStatus] || null;
+        if (descriptor) {
+          const status = element('span', `care-ops__status${descriptor[2] ? ` care-ops__status--${descriptor[2]}` : ''}`, `${descriptor[0]} · ${descriptor[1]}`); card.append(status);
+          const groups = element('dl', 'care-ops__group-ids');
+          groups.append(element('dt', '', 'Group ID ที่ระบบต้นทางแจ้ง'), element('dd', '', truncateGroupId(item.expectedLineGroupId) || 'ไม่ได้ระบุ'), element('dt', '', 'Group ID ที่พี่หมอยืนยัน'), element('dd', '', truncateGroupId(item.verifiedLineGroupId) || 'ยังไม่มี'));
+          card.append(groups);
+        }
         if (item.groupReconciliationStatus === 'group_binding_missing') {
           card.append(element('p', 'care-ops__meta', 'ให้ครอบครัวเชิญ PHIMOR OA เข้ากลุ่มและทำขั้นตอนผูกกลุ่มใน PHIMOR ก่อนตรวจสอบอีกครั้ง ระบบจะไม่สร้าง GroupBinding จากค่าที่ vendor ส่งมา'));
         }
@@ -268,5 +298,5 @@
     tabs.forEach((tab) => tab.addEventListener('click', () => setTab(tab.dataset.careOpsTab)));
     return { load, render, setTab, snapshot:() => ({ ...state, capabilities:new Map(state.capabilities) }) };
   }
-  return { CAPABILITY_LABELS, GROUP_LABELS, buildResidentOptionsRequest, buildMappingRequest, buildCapabilityRequest, buildReconcileRequest, truncateGroupId, mappingConfirmationMessage, createController };
+  return { CAPABILITY_LABELS, GROUP_LABELS, EVENT_STATUS_LABELS, REJECTION_REASON_LABELS, buildResidentOptionsRequest, buildMappingRequest, buildCapabilityRequest, buildReconcileRequest, truncateGroupId, mappingConfirmationMessage, createController };
 }));

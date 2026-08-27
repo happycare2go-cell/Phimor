@@ -3,14 +3,15 @@ const {tenantResolver}=require('./tenantResolver');const {platformService}=requi
 const {vitalSignService}=require('./vitalSignService');const {dailyCareService}=require('./dailyCareService');
 const {createIntegrationEventRepository}=require('./integrationEventRepository');
 const {IntegrationEventError,normalizeEnvelope}=require('../domain/integrationEvents');
+const {publicCodeFor,publicIntegrationError}=require('../domain/integrationErrorContract');
 const MAX_ATTEMPTS=5;
-function projection(row,{duplicate=false}={}){const status=row.status==='pending'&&row.pending_reason==='subject_mapping'?'pending_subject_mapping':row.status;return{eventId:row.external_event_id,eventType:row.event_type,status,
+function projection(row,{duplicate=false}={}){const status=row.status==='pending'&&row.pending_reason==='subject_mapping'?'pending_subject_mapping':row.status;const hasError=['rejected','retrying','dead'].includes(row.status)&&row.last_error_code;return{eventId:row.external_event_id,eventType:row.event_type,status,
   duplicate,canonicalResource:row.status==='processed'?{type:row.canonical_resource_type,id:row.canonical_resource_id}:null,
   pendingReason:row.status==='pending'?row.pending_reason:null,
   groupReconciliationStatus:row.group_reconciliation_status||null,
-  notificationIntentStatus:row.notification_intent_status||null};}
+  notificationIntentStatus:row.notification_intent_status||null,
+  error:hasError?publicIntegrationError(row.last_error_code,{status:row.status==='rejected'?422:503,state:row.status,requestId:row.integration_event_id}):null};}
 function deterministic(error){return error instanceof IntegrationEventError||(Number(error?.status)>=400&&Number(error?.status)<500);}
-function errorCode(error){const clean=String(error?.code||'INTEGRATION_PROCESSING_FAILED').replace(/[^A-Z0-9_:-]/gi,'_').slice(0,100);return clean||'INTEGRATION_PROCESSING_FAILED';}
 function maskedRoutingId(value){const clean=String(value||'').trim();if(!clean)return null;if(clean.length<=8)return `${clean.slice(0,2)}…${clean.slice(-2)}`;return `${clean.slice(0,4)}…${clean.slice(-4)}`;}
 function createIntegrationEventService(overrides={}){const repository=overrides.repository||createIntegrationEventRepository();const resolver=overrides.tenantResolver||tenantResolver;const platform=overrides.platformService||platformService;const vitals=overrides.vitalSignService||vitalSignService;const daily=overrides.dailyCareService||dailyCareService;const idFactory=overrides.idFactory||id;const transact=overrides.withTransaction||withTransaction;const now=overrides.now||(()=>new Date());
   async function ingest({identity,input}){const {envelope,payloadSha256}=normalizeEnvelope(input);
@@ -73,9 +74,10 @@ function createIntegrationEventService(overrides={}){const repository=overrides.
           verifiedLineGroupId:notification?.verifiedLineGroupId||null,
           groupReconciliationStatus:notification?.groupReconciliationStatus||null,
           notificationIntentStatus:resourceType==='daily_care_report'?(notification?.notificationStatus||'enqueue_failed'):'not_applicable'});return projection(processed);
-      });}catch(error){const code=errorCode(error);return transact(`integration-event-failure:${integrationEventId}`,async()=>{
-        if(deterministic(error)){const rejected=await repository.markRejected(integrationEventId,code);return projection(rejected);}
+      });}catch(error){return transact(`integration-event-failure:${integrationEventId}`,async()=>{
+        if(deterministic(error)){const code=publicCodeFor(error,{status:Number(error?.status)||422});const rejected=await repository.markRejected(integrationEventId,code);return projection(rejected);}
         const attempts=Number(claimed.attempt_count)||1;const dead=attempts>=MAX_ATTEMPTS;const delayMs=Math.min(60*60*1000,2**Math.max(0,attempts-1)*60*1000);
+        const code=publicCodeFor(error,{status:503,state:dead?'dead':'retrying'});
         const retry=await repository.markRetry(integrationEventId,{errorCode:code,dead,nextAttemptAt:new Date(now().getTime()+delayMs).toISOString()});return projection(retry);
       });}
   }
@@ -86,14 +88,15 @@ function createIntegrationEventService(overrides={}){const repository=overrides.
   async function listOperationalStatus({integrationClientId=null,organizationId=null,centerId=null,groupStatus=null,limit=100}={}){
     const bounded=Math.min(200,Math.max(1,Number(limit)||100));
     const rows=await repository.listOperational({integrationClientId,organizationId,centerId,groupStatus,limit:bounded});
-    return{items:rows.map((row)=>({integrationEventId:row.integration_event_id,integrationClientId:row.integration_client_id,
+    return{items:rows.map((row)=>{const eventStatus=row.status==='pending'&&row.pending_reason==='subject_mapping'?'pending_subject_mapping':row.status;const hasError=['rejected','retrying','dead'].includes(row.status)&&row.last_error_code;const error=hasError?publicIntegrationError(row.last_error_code,{status:row.status==='rejected'?422:503,state:row.status,requestId:row.integration_event_id}):null;return({integrationEventId:row.integration_event_id,integrationClientId:row.integration_client_id,
       organizationId:row.organization_id,centerId:row.center_id,externalCenterId:row.external_center_id,
-      externalResidentId:row.external_resident_id,eventType:row.event_type,eventStatus:row.status,
+      externalResidentId:row.external_resident_id,eventType:row.event_type,eventStatus,
       mappingStatus:row.status==='pending'&&row.pending_reason==='subject_mapping'?'pending_subject_mapping':row.resident_id?'mapped':null,
       expectedLineGroupId:maskedRoutingId(row.expected_line_group_id),verifiedLineGroupId:maskedRoutingId(row.verified_line_group_id),
       groupReconciliationStatus:row.group_reconciliation_status||null,
       notificationIntentStatus:row.notification_intent_status||null,pendingReason:row.pending_reason||null,
-      updatedAt:row.updated_at,processedAt:row.processed_at||null})),
+      lastErrorCode:error?.code||null,error,
+      updatedAt:row.updated_at,processedAt:row.processed_at||null});}),
     summary:rows.reduce((summary,row)=>{const key=row.group_reconciliation_status||'not_applicable';summary[key]=(summary[key]||0)+1;return summary;},{})};
   }
   async function reconcileGroupRouting({integrationEventId}){

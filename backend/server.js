@@ -68,6 +68,10 @@ app.use('/api', (req, res, next) => {
   const result = require('./utils/rateLimiter').checkAndRecord(key, limit, 5 * 60000);
   if (!result.allowed) {
     res.setHeader('Retry-After', Math.ceil(result.retryAfterMs / 1000));
+    if (req.path.startsWith('/integrations/v1/')) {
+      const { publicIntegrationError } = require('./domain/integrationErrorContract');
+      return res.status(429).json({ status:'retrying', error:publicIntegrationError('RATE_LIMITED', { status:429 }) });
+    }
     return res.status(429).json({ error:'rate_limited', message:'เรียกใช้งานถี่เกินไป กรุณารอสักครู่' });
   }
   next();
@@ -106,6 +110,14 @@ app.get('/ready', async (req, res) => {
 app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 
 app.use((err, req, res, next) => {
+  if (String(req.originalUrl || '').startsWith('/api/integrations/v1/')) {
+    const { publicIntegrationError } = require('./domain/integrationErrorContract');
+    const status = Number(err?.status) >= 400 && Number(err?.status) < 500 ? Number(err.status) : 500;
+    const safe = publicIntegrationError(err, { status });
+    console.error('[Integration Request]', JSON.stringify({ event:'integration_request_failed', requestId:safe.request_id, code:safe.code, retryable:safe.retryable, httpStatus:status }));
+    if (res.headersSent) return next(err);
+    return res.status(status).json({ status:status >= 500 ? 'retrying' : 'rejected', error:safe });
+  }
   console.error(err);
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: 'เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง' });

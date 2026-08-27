@@ -85,10 +85,10 @@ function normalizeCareItem(input) {
   return normalized;
 }
 
-function requiredId(value, label = 'identifier') {
+function requiredId(value, label = 'identifier', code = 'INVALID_EVENT_IDENTIFIER') {
   const clean = String(value || '').trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(clean)) {
-    throw new IntegrationEventError('INVALID_EVENT_IDENTIFIER', `${label} ไม่ถูกต้อง`, 400);
+    throw new IntegrationEventError(code, `${label} ไม่ถูกต้อง`, 400);
   }
   return clean;
 }
@@ -158,7 +158,7 @@ function normalizeFinalizedDailyData(input) {
     'finalizedBy', 'finalized_by', 'recordedAt', 'recorded_at',
     'finalizedAt', 'finalized_at',
   ], 'INVALID_EVENT_DATA');
-  const externalRecordId = requiredId(aliased(input, 'externalRecordId', 'external_record_id'), 'External record ID');
+  const externalRecordId = requiredId(aliased(input, 'externalRecordId', 'external_record_id'), 'External record ID', 'INVALID_EXTERNAL_RECORD_ID');
   const careDate = String(aliased(input, 'careDate', 'care_date') || '').trim();
   const careDateValue = new Date(`${careDate}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(careDate)
@@ -218,7 +218,7 @@ function normalizeEnvelope(input) {
     }
     data = {
       externalRecordId:aliased(input.data, 'externalRecordId', 'external_record_id')
-        ? requiredId(aliased(input.data, 'externalRecordId', 'external_record_id'), 'External record ID') : eventId,
+        ? requiredId(aliased(input.data, 'externalRecordId', 'external_record_id'), 'External record ID', 'INVALID_EXTERNAL_RECORD_ID') : eventId,
       observations:input.data.observations.map(normalizeObservation),
     };
   } else {

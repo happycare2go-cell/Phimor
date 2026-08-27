@@ -59,6 +59,16 @@ test('group status labels expose verified/missing/mismatch/not-provided without 
   assert.doesNotMatch(`${html}\n${source}`, /send anyway|ส่งต่อไปเลย|ข้ามการตรวจ/i);
 });
 
+test('operations UI shows safe pending/rejected/retry states without rendering raw event payloads', () => {
+  assert.equal(ui.EVENT_STATUS_LABELS.pending_subject_mapping[0], 'รอเชื่อมผู้พัก');
+  assert.equal(ui.EVENT_STATUS_LABELS.rejected[0], 'ปฏิเสธ');
+  assert.equal(ui.EVENT_STATUS_LABELS.dead[0], 'ประมวลผลไม่สำเร็จ');
+  assert.equal(ui.REJECTION_REASON_LABELS.CENTER_MAPPING_NOT_FOUND, 'ไม่พบการเชื่อมสาขา');
+  assert.equal(ui.REJECTION_REASON_LABELS.CAPABILITY_NOT_ENABLED, 'capability ยังไม่เปิด');
+  assert.match(source, /lastErrorCode/);
+  assert.doesNotMatch(source, /canonicalPayload|canonical_payload|requestBody|rawPayload/);
+});
+
 test('reconciliation calls the existing idempotent backend operation and never accepts a target group', () => {
   const descriptor = ui.buildReconcileRequest('IEVT-1');
   assert.equal(descriptor.path, '/api/admin/platform/integration-events/IEVT-1/reconcile-group');

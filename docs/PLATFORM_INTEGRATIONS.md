@@ -64,6 +64,11 @@ Authorization: Bearer <one-time-issued-integration-credential>
 Content-Type: application/json
 ```
 
+The controlled HHS sender profile, exact snake-case schema, field-mapping
+worksheet, credential plan, and production checklist are documented in
+[`HHS_PILOT_V1_CONTRACT.md`](HHS_PILOT_V1_CONTRACT.md) and
+[`HHS_PILOT_V1_RUNBOOK.md`](HHS_PILOT_V1_RUNBOOK.md).
+
 The request is limited to 256 KiB and unknown fields are rejected. Both camel
 case and the documented snake case aliases are normalized deterministically.
 
@@ -256,6 +261,13 @@ expected group are never fuzzy identity keys.
 - Deterministic validation errors are rejected. Transient processing failures
   retry with bounded backoff and become dead after five attempts.
 - The server invokes due-event processing once per minute.
+
+Rejected events and pre-inbox request failures use one minimized response
+contract with `status`, a safe `error.code`, Thai `message`, explicit
+`retryable`, and an opaque `request_id`. Accepted unknown subjects remain HTTP
+202 `pending_subject_mapping`, not an error. Inbox `last_error_code` stores the
+same safe public code shown to System Admin; raw SQL/provider errors and
+clinical payloads are not exposed through operational projections.
 
 Family notification intent identity remains canonical report + projection
 version + recipient. The outbox claim/lease is retained. Each LINE target has

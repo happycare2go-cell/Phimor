@@ -24,7 +24,9 @@ test('integration middleware fails closed when credential is absent', async () =
   let nextCalled = false;
   await middleware({ header: () => '' }, response, () => { nextCalled = true; });
   assert.equal(response.statusCode, 401);
-  assert.equal(response.body.error, 'unauthorized');
+  assert.equal(response.body.status, 'rejected');
+  assert.equal(response.body.error.code, 'INVALID_CREDENTIAL');
+  assert.equal(response.body.error.retryable, false);
   assert.equal(nextCalled, false);
 });
 
@@ -44,6 +46,19 @@ test('integration middleware returns a sanitized response for revoked or invalid
   const response = responseRecorder();
   await middleware({ header: () => 'Bearer revoked-token' }, response, () => assert.fail('next must not run'));
   assert.equal(response.statusCode, 401);
-  assert.equal(response.body.errorCode, 'INTEGRATION_CREDENTIAL_REVOKED');
+  assert.equal(response.body.error.code, 'INVALID_CREDENTIAL');
+  assert.equal(response.body.error.retryable, false);
   assert.doesNotMatch(JSON.stringify(response.body), /raw credential details|revoked-token/);
+});
+
+test('integration authentication infrastructure failure is retryable and never logs credential/error detail', async () => {
+  const original = console.error; const logs = []; console.error = (...args) => logs.push(args);
+  try {
+    const middleware = createRequireIntegration({ tenantResolver: { resolveIntegrationCredential: async () => { throw new Error('database password and bearer private-token'); } } });
+    const response = responseRecorder();
+    await middleware({ header: () => 'Bearer private-token' }, response, () => assert.fail('next must not run'));
+    assert.equal(response.statusCode, 500); assert.equal(response.body.status, 'retrying');
+    assert.equal(response.body.error.code, 'TEMPORARY_PROCESSING_UNAVAILABLE'); assert.equal(response.body.error.retryable, true);
+    assert.doesNotMatch(JSON.stringify({ response:response.body, logs }), /database password|private-token/);
+  } finally { console.error = original; }
 });
