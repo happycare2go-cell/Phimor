@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>พี่หมอ — จัดการศูนย์</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="../environment.js"></script>
+<script src="../runtime-config.js"></script>
 <script src="./lab-review-runtime.js"></script>
 <script src="./care-recording-ui.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
@@ -356,7 +358,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-const BACKEND_URL = 'https://phimor-backend.onrender.com';
+let BACKEND_URL = null;
 let LINE_USER_ID = null;
 let LINE_ID_TOKEN = null;
 let CENTER_ID = null;
@@ -1044,7 +1046,14 @@ async function saveCardEdit() {
 
 
 async function main() {
-  await liff.init({ liffId: '2011043561-Dyp03JGR' }); 
+  if (!window.PhimorRuntimeConfig) throw new Error('LIFF_RUNTIME_CONFIG_MISSING');
+  BACKEND_URL = window.PhimorRuntimeConfig.requireBackendUrl(window.PHIMOR_PUBLIC_BACKEND_URL);
+  const configResponse = await fetch(BACKEND_URL + '/config/liff', { cache:'no-store' });
+  if (!configResponse.ok) throw new Error('LIFF_RUNTIME_CONFIG_UNAVAILABLE');
+  const config = await configResponse.json();
+  window.PhimorRuntimeConfig.assertBackendConfig(BACKEND_URL, config);
+  if (!config.centerAdminLiffId) throw new Error('ยังไม่ได้ตั้งค่า LIFF_ID_CENTER_ADMIN');
+  await liff.init({ liffId: config.centerAdminLiffId });
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;

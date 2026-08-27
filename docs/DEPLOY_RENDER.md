@@ -1,173 +1,102 @@
-# คู่มือ Deploy พี่หมอ Backend ขึ้น Render.com
+# PHIMOR production release on Render
 
-## ก่อนเริ่ม — Checklist สิ่งที่ต้องมีในมือ
+This checklist is the current release-safety procedure for `phimor-backend`
+and `phimor-liff`. It does not authorize access to the production database or
+changes to live Render/LINE configuration.
 
-```
-☐ LINE Channel Access Token + Channel Secret (จาก LINE Developers Console)
-☐ LIFF ID 2 ตัว (ฝั่งศูนย์ + ฝั่งครอบครัว)
-☐ AI API Key (Anthropic หรือ Gemini อย่างน้อยหนึ่งตัว)
-☐ บัญชี Google Cloud + Service Account (ถ้าจะใช้ Google Sheets เป็นฐานข้อมูล)
-☐ บัญชี GitHub ที่ Push โค้ดนี้ขึ้นไปแล้ว
-☐ บัญชี Render.com (สมัครฟรีได้ที่ render.com)
-```
+## Runtime facts
 
-**⚠️ ก่อน Deploy ต้องทำตาม README.md หัวข้อ "สิ่งที่ต้องทำก่อน Deploy จริง" ให้ครบทั้ง 6 ข้อก่อน**
-โดยเฉพาะการเชื่อม AI Provider จริงและเชื่อม LINE Messaging API จริง — ไฟล์นี้สอนแค่ขั้นตอน Deploy
-ไม่ได้สอนการแก้โค้ดให้เชื่อมบริการจริง
+- PostgreSQL is the authoritative persistence layer. It is not an in-memory or
+  Google Sheets deployment.
+- LINE webhook signatures and LINE Login ID tokens are verified in production.
+  `ALLOW_UNSIGNED_LINE_WEBHOOK` and `ALLOW_INSECURE_LINE_HEADER` are local/test
+  escape hatches and must remain `false` in production.
+- LIFF applications obtain their public backend URL from deploy-generated
+  `liff-app/environment.js` and their LIFF IDs from `GET /config/liff`. Never
+  edit a production LIFF ID into HTML/JavaScript source.
+- The migration chain currently ends at
+  `0012_align_care_finalization_and_routing.js`. `npm start` does not execute
+  the numbered migration runner.
 
----
+## Required configuration
 
-## วิธีที่ 1 — Deploy ด้วย Blueprint (แนะนำ เร็วที่สุด)
+Set every required value from `backend/.env.example` through Render secrets or
+explicit non-secret values. In particular:
 
-```
-① Push โค้ดทั้งหมด (รวมไฟล์ render.yaml ที่ root) ขึ้น GitHub
-② เข้า https://dashboard.render.com/blueprints
-③ กด "New Blueprint Instance"
-④ เชื่อม Repository ที่เพิ่ง Push ไป
-⑤ Render จะอ่าน render.yaml แล้วสร้าง Web Service ให้อัตโนมัติ
-⑥ กรอกค่า Environment Variables ที่ทำเครื่องหมาย sync: false ไว้
-   (Token, Secret, API Key ทั้งหมด — ห้ามใส่ในไฟล์ render.yaml เด็ดขาด)
-⑦ กด "Apply" รอ Build เสร็จประมาณ 2-3 นาที
-```
+- `DATABASE_URL`, LINE Messaging/Login secrets and all enabled LIFF IDs;
+- `ADMIN_API_KEY`, `GEMINI_API_KEY`, Omise settings when payment is enabled;
+- `CONSULTATION_REALTIME_TICKET_SECRET` as a distinct random secret of at
+  least 32 characters;
+- `CONSULTATION_REALTIME_ALLOWED_ORIGINS` as an exact comma-separated origin
+  allowlist (or the documented `ALLOWED_ORIGINS` fallback);
+- `LIFF_ID_SYSTEM_ADMIN` for the full production operations surface; and
+- `LIFF_ID_PHARMACIST` when `CONSULTATION_ENABLED=true`.
 
----
+No secret value belongs in Git, LIFF/browser code, screenshots, normal LINE
+chat, or application logs.
 
-## วิธีที่ 2 — Deploy ด้วยมือ (ถ้าไม่อยากใช้ Blueprint)
+## Mandatory release order
 
-```
-① เข้า https://dashboard.render.com → "New +" → "Web Service"
-② เชื่อม GitHub Repository
-③ ตั้งค่าตามนี้:
+Before a production merge or deployment:
 
-   Name              phimor-backend
-   Region            Singapore
-   Root Directory    backend
-   Runtime           Node
-   Build Command     npm install
-   Start Command     node server.js
-   Instance Type     Starter (หรือ Free สำหรับทดสอบเบื้องต้น)
+1. Inspect both Render services and hold/disable Auto-Deploy if it can deploy
+   after a commit or CI result. Confirm no deployment is already running.
+2. Create a production PostgreSQL backup/snapshot and verify its completion
+   time and documented restore path.
+3. From `backend`, run `npm run migrate:status` against the intended database.
+4. Stop on a checksum mismatch. Record the actual current version and every
+   pending migration; never assume production starts at a particular version.
+5. Run `npm run migrate`. The supported runner applies all pending migrations
+   in canonical filename order under a PostgreSQL advisory lock.
+6. Run `npm run migrate:status` again. Require no checksum mismatch, no pending
+   migration, and the expected final version before deploying code.
+7. Manually deploy the approved `phimor-backend` commit.
+8. Verify `GET /health` and `GET /ready`, including database, environment,
+   scheduler heartbeat, notification queue, integration inbox processing, and
+   consultation realtime health where enabled.
+9. Verify `GET /config/liff` contains only the intended public runtime values.
+10. Deploy `phimor-liff`, then smoke-test Register, Center, Family, System
+    Admin, and Pharmacist (when enabled) entry points.
+11. Run the controlled production E2E for the release, then restore Auto-Deploy
+    only if the release owner chooses to do so.
 
-④ เลื่อนลงมาที่ "Environment Variables" → เพิ่มทีละตัวตามรายการใน backend/.env.example
-⑤ กด "Create Web Service"
-```
+The backend must not be deployed before the compatible migration sequence is
+complete. `render.yaml` has no migration pre-deploy command and does not
+guarantee `autoDeploy:false`; an authorized human must enforce this hold in the
+Render dashboard.
 
----
+## Legacy startup DDL inventory and risk
 
-## หลัง Deploy เสร็จ — ตั้งค่า Webhook ที่ LINE
+Loading `backend/db.js` currently schedules `CREATE TABLE IF NOT EXISTS` for
+the following legacy JSONB tables; `initializeDatabase()` waits for those
+operations and then creates the legacy expression indexes. This remains part
+of application startup because no numbered migration currently owns them:
 
-```
-① คัดลอก URL ที่ Render ให้มา เช่น https://phimor-backend.onrender.com
-② เข้า https://developers.line.biz/console/ → เลือก Channel ของพี่หมอ
-③ แท็บ "Messaging API" → ช่อง "Webhook URL" → ใส่ https://phimor-backend.onrender.com/webhook
-④ กด "Verify" — ต้องขึ้นเครื่องหมายถูกสีเขียว
-⑤ เปิดสวิตช์ "Use webhook" ให้เป็นสีเขียว
-```
+`centers`, `centerStaff`, `staffContexts`, `residents`, `careProfiles`,
+`pendingCards`, `invites`, `appointments`, `medications`, `groupBindings`,
+`groupBindingTokens`, `medicationSnapshots`, `transportPlans`,
+`centerRateCards`, `bills`, `accessRequests`, `auditLog`, `consents`,
+`richMenus`, `vitals`, `careProfileMembers`, `careProfileShareInvites`,
+`notificationOutbox`, `webhookInbox`, `dataSubjectRequests`,
+`pendingFamilyDeliveries`, and `adminUsers`.
 
-**ทดสอบว่า Deploy สำเร็จ:**
-```bash
-curl https://phimor-backend.onrender.com/health
-# ต้องได้ {"status":"ok","service":"phimor-backend"}
+It also ensures expression indexes for common legacy lookups on Center,
+staff, Resident, Care Profile, Appointment, Transport, notification, and
+access-request fields. These names do not overlap the relational tables owned
+by migrations 0001–0012 (`vitals` is the legacy store; canonical Vital data is
+in `vital_sign_sets`/`vital_sign_observations`). Removing this startup DDL now
+would break installations whose legacy tables were bootstrapped by it.
 
-## Environment Variables ที่เพิ่มสำหรับการยืนยันตัวตนและผูกกลุ่ม
+Remaining risk: the backend database role still needs schema DDL privileges
+and startup can mutate those legacy objects. This is temporary compatibility
+debt. A future reviewed migration must take ownership of every legacy table and
+index before startup DDL can be removed. Numbered migrations remain the only
+supported mechanism for migrations 0001–0012.
 
-ตั้งค่าใน Render ก่อน deploy เวอร์ชันนี้:
+## Stop conditions
 
-```text
-LINE_CHANNEL_SECRET=<Channel secret จาก Messaging API>
-LINE_LOGIN_CHANNEL_ID=<Channel ID ของ LINE Login ที่ใช้กับ LIFF>
-LIFF_ID_REGISTER=<LIFF ID หน้าลงทะเบียนศูนย์>
-```
-
-ค่าที่ต้องมีอยู่แล้ว:
-
-```text
-LINE_CHANNEL_ACCESS_TOKEN
-LIFF_ID_CENTER_ADMIN
-LIFF_ID_FAMILY
-CARE2GO_GROUP_BIND_CODE=<ตั้งรหัสลับยาว แล้วส่งข้อความนี้ในกลุ่ม Care2Go หลังเชิญพี่หมอ>
-DATABASE_URL
-```
-
-ห้ามตั้ง `ALLOW_INSECURE_LINE_HEADER=true` หรือ `ALLOW_UNSIGNED_LINE_WEBHOOK=true` ใน Production เพราะสองค่านี้มีไว้สำหรับ local development/test เท่านั้น
-```
-
----
-
-## ตั้งค่า LIFF ให้ชี้มาที่ Backend จริง
-
-หลัง Deploy เสร็จ ต้องแก้ 2 จุดในไฟล์ LIFF (ค้นหาคำว่า `★ Dev`):
-
-```
-liff-app/center-admin/index.html
-liff-app/family/index.html
-```
-
-```js
-const BACKEND_URL = 'https://phimor-backend.onrender.com'; // ← ใส่ URL จริงจาก Render
-await liff.init({ liffId: 'xxxxxxxxxx-xxxxxxxx' });          // ← ใส่ LIFF ID จริงจาก LINE Developers Console
-```
-
-จากนั้นอัปโหลดไฟล์ HTML ทั้งสองขึ้น Hosting ที่รองรับ HTTPS (Render Static Site, Vercel, หรือ GitHub Pages
-ก็ได้ทั้งนั้น) แล้วนำ URL ไปตั้งเป็น "Endpoint URL" ของแต่ละ LIFF App ในหน้า LINE Developers Console
-
----
-
-## ข้อจำกัดของ Render Starter Plan ที่ต้องรู้
-
-```
-・Free Plan จะ Sleep หลังไม่มีคนเรียกใช้ 15 นาที ทำให้ Webhook แรกหลังตื่นช้าประมาณ 30-60 วินาที
-  → ไม่เหมาะกับ Production เพราะ LINE จะ Timeout webhook ที่ตอบช้าเกินไป
-  → ใช้ Starter Plan ขึ้นไปสำหรับใช้งานจริง (Starter ไม่ Sleep)
-
-・Scheduler (node-cron) ทำงานได้ตราบที่ Service ไม่ Sleep และมีแค่ 1 Instance เท่านั้น
-  → ถ้าอนาคตขยายเป็นหลาย Instance (Horizontal Scaling) ต้องย้าย Cron ไปเป็น Render Cron Job แยกต่างหาก
-    ไม่ใช่ setInterval/node-cron ฝังในตัว Web Service เอง (ไม่งั้นงานเดียวกันจะรันซ้ำหลายรอบ)
-```
-
----
-
-## การตรวจสอบหลัง Deploy (Smoke Test)
-
-```bash
-# 1. Backend ตอบสนอง
-curl https://phimor-backend.onrender.com/health
-
-# 2. Webhook รับ Event ได้ (ต้องเห็น 200 กลับมา แม้ event จะว่างเปล่า)
-curl -X POST https://phimor-backend.onrender.com/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"events":[]}'
-
-# 3. ทดสอบเพิ่มเพื่อน LINE OA จริง แล้วส่งข้อความทดสอบดูว่า Backend ตอบกลับไหม
-```
-
-## ⚠️ ก่อนเปิดให้ 8 สาขาใช้งานจริง
-
-```
-☐ ทำตาม README.md ครบทั้ง 6 ข้อ (โดยเฉพาะ Verify LINE Signature ที่ตอนนี้ยังไม่ได้ทำ)
-☐ ย้ายจาก In-memory Database ไป Google Sheets หรือฐานข้อมูลจริง (ข้อมูลจะหายทุกครั้งที่ Deploy ใหม่ถ้าไม่ทำ)
-☐ ทดลองหาค่า AI_NAME_MATCH_THRESHOLD ที่แม่นยำจากเอกสารจริง
-☐ ตั้งค่า Rich Menu ตาม docs/RICHMENU_SETUP.md
-☐ สร้างบัญชีศูนย์แรกและทดสอบ Flow เต็มด้วยข้อมูลจริง 1 รอบก่อนเปิดใช้งานทุกสาขา
-```
-
-## สร้างศูนย์แรก (หลัง Deploy เสร็จ)
-
-การสร้างศูนย์เป็นสิทธิ์ของทีมงานเท่านั้น (ไม่ใช่ Self-service — ตาม FR-A1) มี 2 วิธี:
-
-**วิธีที่ 1 — CLI Script (แนะนำ สำหรับใช้ระหว่างคุยกับเจ้าของศูนย์)**
-```bash
-# SSH หรือรันผ่าน Render Shell
-cd backend
-node scripts/create-center.js --name "ศูนย์สุขสบาย" --owner "Uxxxxxxxxxxxxxxxx"
-```
-
-**วิธีที่ 2 — Admin API (สำหรับต่อยอดเป็นเครื่องมือ Internal)**
-```bash
-curl -X POST https://phimor-backend.onrender.com/api/admin/centers \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Key: {ค่า ADMIN_API_KEY ที่ตั้งไว้บน Render}" \
-  -d '{"name":"ศูนย์สุขสบาย","ownerLineId":"Uxxxxxxxxxxxxxxxx"}'
-```
-
-ทั้งสองวิธีต้องการ **LINE User ID ของเจ้าของศูนย์** ให้เจ้าของศูนย์เพิ่มเพื่อน LINE OA
-แล้วส่งคำสั่ง `user_id` ระบบจะตอบ LINE User ID ของบัญชีผู้ส่งข้อความนั้นกลับมาโดยตรง
+Stop the release on backup/restore uncertainty, migration checksum mismatch,
+unexpected pending files, `/ready` failure, unhealthy queues/workers, wrong
+public LIFF projection, tenant/Care Profile leakage, or duplicate notification
+behavior. Preserve logs/audit evidence; do not use destructive rollback or
+delete clinical records to hide a failed deployment.

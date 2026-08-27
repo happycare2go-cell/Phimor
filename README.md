@@ -1,10 +1,10 @@
 # พี่หมอ (Phimor) — Backend + LINE LIFF
 
-> อัปเดตสถานะปัจจุบัน 22 สิงหาคม 2026: ระบบใช้ PostgreSQL, LINE Messaging API/LIFF และ Gemini จริงแล้ว เนื้อหาที่กล่าวว่าเป็น Mock หรือ In-memory ในประวัติด้านล่างไม่ใช่สถานะปัจจุบัน
+> อัปเดตสถานะปัจจุบัน 27 สิงหาคม 2026: ระบบใช้ PostgreSQL, LINE Messaging API/LIFF และ Gemini จริงแล้ว เนื้อหาที่กล่าวว่าเป็น Mock หรือ In-memory ในประวัติด้านล่างไม่ใช่สถานะปัจจุบัน
 
 ## ภาพรวมระบบปัจจุบัน
 
-- มี LIFF 4 ฝั่ง: ลงทะเบียนศูนย์, ศูนย์/บุคลากร, ครอบครัว และผู้ดูแลระบบ
+- มี LIFF สำหรับลงทะเบียนศูนย์, ศูนย์/บุคลากร, ครอบครัว, ผู้ดูแลระบบ และเภสัชกร (เมื่อเปิด Consultation)
 - เจ้าของดูแลหลายสาขาได้ และบุคคลหนึ่งทำงานหลายสาขาได้ โดยสิทธิ์แยกต่อสาขา
 - ไม่มี flow ให้เจ้าของลดสิทธิ์ตัวเองเป็นพนักงาน เพราะไม่ใช่งานปกติและเสี่ยงทำให้สาขาขาดเจ้าของ
 - ผู้ถูกถอนสิทธิ์จะเข้าข้อมูลสาขาไม่ได้ทันที แต่ไปทำสาขาอื่นได้ หากกลับกลุ่มเดิมจะเป็น `pending` และต้องอนุมัติใหม่
@@ -12,7 +12,7 @@
 - ครอบครัวสร้าง Care Profile เอง เชิญผู้ดูแลร่วม บันทึกนัด/ยา และส่งออก PDF ได้
 - เอกสารจาก LINE ผ่าน AI แต่เจ้าของ/ผู้จัดการต้องตรวจ แก้ และยืนยันก่อนบันทึก
 - เมื่อเลือก Care2Go ระบบส่งรายละเอียดเข้ากลุ่ม Care2Go เท่านั้น เจ้าหน้าที่โทรประสานเอง ไม่มี flow รับงาน/จัดรถในระบบ
-- System Admin ดูทุกสาขา รายชื่อ Care Profile และกำหนดอายุแพ็กเกจได้
+- System Admin จัดการสาขา/แพ็กเกจ, capability, integration, pending mapping และ LINE group reconciliation ผ่านหน้าปฏิบัติการที่จำกัดข้อมูล
 
 ## เริ่มต้นและทดสอบ
 
@@ -23,17 +23,20 @@ npm test
 npm start
 ```
 
-ตรวจ `http://localhost:3000/health` และ `http://localhost:3000/ready` ก่อน deploy ทุกครั้ง ค่าที่ต้องตั้งดูใน `backend/.env.example` โดยเฉพาะฐานข้อมูล, LINE, LIFF ทั้ง 4 ค่า, Gemini, `ADMIN_API_KEY` และ `PUBLIC_BASE_URL`
+ตรวจ `http://localhost:3000/health` และ `http://localhost:3000/ready` ก่อน deploy ทุกครั้ง ค่าที่ต้องตั้งดูใน `backend/.env.example` โดยเฉพาะฐานข้อมูล, LINE, LIFF ที่เปิดใช้, Gemini, `ADMIN_API_KEY`, `PUBLIC_BACKEND_URL` และ Consultation realtime secret
 
 `CARE2GO_GROUP_BIND_CODE` ใช้เฉพาะผูกกลุ่มครั้งแรก หลังผูกแล้วข้อมูลอยู่ในฐานข้อมูล จึงไม่ควรเป็นตัวบังคับให้ `/health` ล้ม
 
 ## Deploy บน Render
 
-1. Push `main` โดยไม่รวม `.env`, `backend/.env`, `node_modules` และ ZIP
-2. ตั้ง Environment ใน Render ตาม `backend/.env.example`
-3. Root Directory: `backend`, Build: `npm install`, Start: `node server.js`
-4. Deploy commit ล่าสุดแล้วตรวจ `/health`, `/ready` และ LIFF ทั้ง 4 บทบาท
-5. ทดสอบ webhook, Flex Message, AI, scheduler และ PDF บน iPhone/Android กับ LINE จริง
+1. Hold/ปิด Render Auto-Deploy และยืนยันว่าไม่มี deploy กำลังทำงาน
+2. สำรอง PostgreSQL แล้วรัน `npm run migrate:status`; หยุดทันทีเมื่อ checksum ไม่ตรง
+3. รัน `npm run migrate` และตรวจ status ซ้ำจนถึง migration ที่อนุมัติ
+4. ตั้ง Environment/Secret ตาม `backend/.env.example` โดยห้ามใส่ secret ใน Git
+5. Deploy backend แล้วตรวจ `/health`, `/ready`, scheduler และ queues
+6. ตรวจ `/config/liff`, deploy LIFF แล้ว smoke-test ทุกบทบาทที่เปิดใช้
+
+ขั้นตอนเต็มและความเสี่ยงของ legacy startup DDL อยู่ใน `docs/DEPLOY_RENDER.md` ห้าม deploy backend ที่ต้องใช้ schema ใหม่ก่อน migration เสร็จ
 
 ## ข้อจำกัดที่ต้องตรวจหลัง Deploy
 
@@ -47,9 +50,8 @@ npm start
 ## เอกสารสถาปัตยกรรมเดิม (เก็บเป็นประวัติ)
 
 โค้ดชุดนี้สร้างตาม `Phimor_System_Requirements.docx` และ `Phimor_Technical_Design.docx`
-ครอบคลุมข้อกำหนด **FR-A ถึง FR-O** (78 ข้อ) — เป็น**ต้นแบบที่ทำงานได้จริง**ทุก Business Logic
-โดยจุดที่ต้องเชื่อมต่อบริการภายนอกจริง (Google Sheets, LINE, AI) ยังเป็น **Mock** ที่ออกแบบ
-Interface ไว้ให้สลับเป็นของจริงได้โดยไม่ต้องแก้ Business Logic
+ครอบคลุมข้อกำหนดเดิม **FR-A ถึง FR-O** แต่ส่วนถัดจากหัวข้อนี้เป็นบันทึกโครงสร้างรุ่นแรก ไม่ใช่สถานะ deploy ปัจจุบัน
+สถานะปัจจุบันใช้ PostgreSQL, LINE Messaging/LIFF และ provider AI ผ่าน configuration จริง โปรดใช้ `backend/.env.example`, `docs/DEPLOY_RENDER.md` และเอกสาร integration ปัจจุบันเป็นแหล่งอ้างอิง
 
 ---
 
@@ -75,13 +77,13 @@ curl http://localhost:3000/health
 ```
 backend/
   server.js                    จุดเริ่มต้น รวม Route + Scheduler
-  db.js                        Data Layer (ตอนนี้ In-memory)
+  db.js                        PostgreSQL + legacy JSONB compatibility layer
   flexMessages.js              การ์ด LINE (S5)
   providers/
-    aiProvider.js              ★ ต้องเชื่อม Anthropic/Gemini จริง
-    lineClient.js               ★ ต้องเชื่อม LINE Messaging API จริง
+    aiProvider.js              Provider abstraction สำหรับ AI ที่กำหนดผ่าน Environment
+    lineClient.js              LINE Messaging API client พร้อม test double
   middleware/
-    auth.js                     ★ ต้อง Verify LINE ID Token จริง (ตอนนี้อ่านจาก Header ตรงๆ)
+    auth.js                     Verify LINE ID Token; header ตรงเปิดได้เฉพาะ local/test
   utils/
     nameMatch.js                จับคู่ชื่อผู้พัก (FR-D) — พร้อมใช้งานจริง
   services/                     Business Logic ทั้งหมด — พร้อมใช้งานจริง
@@ -98,47 +100,33 @@ liff-app/
   center-admin/index.html       หน้าจัดการศูนย์ (S1-S4)
   family/index.html             หน้าฝั่งครอบครัว (F1-F5)
 
-tests/                          61 Test Cases ครอบคลุมเกณฑ์ยอมรับทั้ง 18 ข้อ
+tests/                          ชุดทดสอบ domain, route, security และ LIFF contracts
 ```
 
 ---
 
-## ⚠️ สิ่งที่ต้องทำก่อน Deploy จริง (เรียงตามความสำคัญ)
+## ⚠️ ข้อเท็จจริงด้านความปลอดภัยก่อน Deploy จริง
 
-### 1. เชื่อม AI Provider จริง — `backend/providers/aiProvider.js`
-แทนที่ `interpretDocument()` และ `interpretLabResult()` ด้วยการเรียก Anthropic/Gemini จริง
-**ต้องคงรูปแบบผลลัพธ์เดิมไว้** (`documentType`, `nameGuess`, `nameConfidence`, `appointment`, `medications`, `doctorNote`)
-เพราะ Service ทั้งหมดผูกกับรูปแบบนี้อยู่
+### 1. AI Provider
+ระบบเรียก provider ผ่าน abstraction และ structured validation แล้ว ต้องตั้ง Gemini/AI Environment ตาม `backend/.env.example`, ทดสอบ safe-unavailable และคง human review สำหรับข้อมูลทางคลินิก
 
 **ค่าที่ต้องทดลองหา:** `HIGH_CONFIDENCE` ใน `utils/nameMatch.js` (ตอนนี้ตั้งไว้ที่ 0.82 ชั่วคราว)
 ต้องทดลองกับเอกสารจริงจาก 8 สาขาก่อนปรับเป็นค่าจริง
 
-### 2. เชื่อม LINE Messaging API จริง — `backend/providers/lineClient.js`
-แทนที่ `replyMessage()` / `pushMessage()` ด้วย `@line/bot-sdk` `MessagingApiClient` จริง
-และใน `routes/webhook.js` ต้องเปลี่ยนจากอ่าน `event.message.mockBase64` เป็นเรียก
-`MessagingApiBlobClient.getMessageContent()` จริง พร้อม**ตรวจสอบ Signature จาก LINE**
-(ตอนนี้ยังไม่ได้ตรวจสอบเลย — ห้ามขึ้น Production โดยไม่มีขั้นตอนนี้)
+### 2. LINE Messaging และ Webhook
+Production ใช้ LINE SDK, ดาวน์โหลด message content จาก LINE และตรวจ `x-line-signature` แล้ว ห้ามตั้ง `ALLOW_UNSIGNED_LINE_WEBHOOK=true` ใน Production
 
-### 3. Verify LINE ID Token จริง — `backend/middleware/auth.js`
-ฟังก์ชัน `identify()` ตอนนี้อ่าน LINE User ID จาก Header `X-Line-User-Id` ตรงๆ เพื่อให้ทดสอบง่าย
-**ก่อน Deploy ต้อง Verify JWT จริงจาก LINE** (ตรวจ Signature + วันหมดอายุ) ไม่ใช่เชื่อ Header
+### 3. LINE Login Identity
+Production ส่ง LINE ID Token ให้ backend ตรวจผ่าน LINE Login verify endpoint; `X-Line-User-Id` ใช้ได้เฉพาะ test/local เมื่อเปิด flag ชัดเจน ห้ามตั้ง `ALLOW_INSECURE_LINE_HEADER=true` ใน Production
 
-### 4. ย้ายจาก In-memory ไปฐานข้อมูลจริง — `backend/db.js`
-ทุกตารางเรียกผ่าน `makeTable()` ที่มี Interface เดียวกัน (`insert`, `findWhere`, `findOne`, `update`, `remove`)
-สลับ Implementation ภายในให้ไปคุยกับ Google Sheets หรือฐานข้อมูลจริงได้โดยไม่ต้องแก้ Service ใดๆ เลย
-แนะนำ Google Sheets เฉพาะช่วงทดลองกับ 8 สาขา (< 500 ผู้พัก) ตามที่ระบุใน Technical Design
+### 4. PostgreSQL และ migrations
+ระบบใช้ PostgreSQL จริง ต้องสำรองฐานข้อมูลและใช้ `npm run migrate:status` / `npm run migrate` ตามลำดับใน `docs/DEPLOY_RENDER.md` ห้ามเปลี่ยนไปใช้ Google Sheets หรือพึ่ง memory test store ใน Production
 
-### 5. ใส่ค่าจริงในไฟล์ LIFF
-ทั้ง 2 ไฟล์ HTML มีจุดที่ต้องแก้ (ค้นหาคำว่า `★ Dev`):
-```js
-const BACKEND_URL = 'https://api.phimor.example.com';  // → URL Backend จริง
-await liff.init({ liffId: 'YOUR_LIFF_ID' });             // → LIFF ID จริงจาก LINE Developers Console
-```
+### 5. LIFF runtime configuration
+ห้ามแก้ LIFF ID หรือ production backend URL ใน source HTML/JavaScript ให้ static build สร้าง `environment.js` จาก `PUBLIC_BACKEND_URL` และให้แต่ละ LIFF อ่าน ID จาก `GET /config/liff`
 
-### 6. ตั้งค่าตัวแปรที่ต้องทดลองก่อนใช้จริง
-ดู `Phimor_Technical_Design.docx` หมวด 9 — ค่าที่ต้องปรับได้จากภายนอก เช่น
-`AI_MONTHLY_CAP_PER_CENTER`, `CARD_EXPIRY_HOURS` (ตอนนี้ Hardcode ไว้ในโค้ด ควรย้ายเป็น
-Environment Variable ก่อน Deploy จริง)
+### 6. Release gate
+ตรวจ secret/readiness, hold Auto-Deploy, migration checksum/order, queues/scheduler และ controlled E2E ก่อนเปิด Center capability ตาม pilot runbook
 
 ---
 
@@ -180,12 +168,10 @@ Environment Variable ก่อน Deploy จริง)
 
 ```
 - ยังไม่มีการทดสอบ Load จริงกับ AI/LINE จริง (Performance Test ที่มีตอนนี้วัดแค่ Overhead ของโค้ดเราเอง)
-- Google Sheets ยังไม่ได้เชื่อมจริง (ยังเป็น In-memory — ดูหัวข้อ "สิ่งที่ต้องทำก่อน Deploy จริง" ข้อ 4)
-- richMenuService.js ยังเป็น Mock เหมือนกับ lineClient.js อื่นๆ ทั้งหมด
-  ต้องแทนที่ด้วยการเรียก LINE Rich Menu API จริงตอน Deploy (ดู providers/lineClient.js)
-- Admin API (routes/admin.js) ยังมีแค่สร้าง/แสดงรายชื่อศูนย์ ยังไม่มีแก้ไข/ปิดใช้งานศูนย์
-- ระบบยังไม่มีหน้าจอให้ดูข้อมูล Vitals ที่รับเข้ามา (FR-J4) — เก็บไว้ในฐานข้อมูลแล้ว
-  แต่ยังไม่มี UI แสดงผล เป็นงานสำหรับระยะถัดไปเมื่อศูนย์เริ่มส่งข้อมูลจริง
+- ยังไม่มี load test จริงกับ LINE, Gemini และ PostgreSQL production; automated tests ไม่แทน controlled E2E
+- Legacy JSONB tables บางส่วนยัง bootstrap ด้วย startup DDL จนกว่าจะมี numbered migration รับ ownership ครบ ดู `docs/DEPLOY_RENDER.md`
+- Family มี Vital/Daily Care read-only UI แล้ว และ System Admin มี Care Operations UI; การเปิดใช้จริงยังต้องผ่าน capability, mapping, GroupBinding และ pilot runbook
+- นโยบาย retention/DSR หลาย domain ยังต้องมีการตัดสินใจของบริษัท ดู `docs/PILOT_DATA_GOVERNANCE.md`
 ```
 
 ## 🔄 การเปลี่ยนแปลงสำคัญล่าสุด (หลังทบทวน Flow กับผู้ก่อตั้ง)

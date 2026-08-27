@@ -208,6 +208,7 @@ async function familyLabResultsJourney(browser) {
 async function centerPendingJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return { publicBackendUrl:SIMULATED_BACKEND_URL, centerAdminLiffId:'SIM_CENTER' };
     if (url.pathname === '/api/center/me') return { centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
     if (url.pathname === '/api/residents') return { residents: [] };
     if (url.pathname === '/api/center/appointments') return { appointments: [] };
@@ -225,6 +226,7 @@ async function centerPendingJourney(browser) {
 async function centerPendingFailureIsVisible(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return { publicBackendUrl:SIMULATED_BACKEND_URL, centerAdminLiffId:'SIM_CENTER' };
     if (url.pathname === '/api/center/me') return { centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
     if (url.pathname === '/api/residents') return { residents: [] };
     if (url.pathname === '/api/center/appointments') return { appointments: [] };

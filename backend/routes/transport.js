@@ -5,9 +5,28 @@ const router = express.Router();
 const { requireAuth, requireCenterStaff } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const transportService = require('../services/transportService');
-const { TransportPlans, CareProfiles } = require('../db');
+const { TransportPlans, CareProfiles, Appointments } = require('../db');
 
 router.use(requireAuth);
+
+const loadAuthoritativeTransportPlan = asyncHandler(async (req, res, next) => {
+  const plan = await TransportPlans.findOne((item) => item.plan_id === req.params.planId);
+  if (!plan?.center_id) return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูล' });
+  req.transportPlan = plan;
+  req.authoritativeCenterId = plan.center_id;
+  next();
+});
+
+const loadAuthoritativeBillContext = asyncHandler(async (req, res, next) => {
+  const { centerId, careProfileId, appointmentId } = req.body || {};
+  const context = await transportService.resolveBillContext({ centerId, careProfileId, appointmentId });
+  if (!context) {
+    return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูลสำหรับออกใบแจ้งค่าใช้จ่าย' });
+  }
+  req.authoritativeCenterId = context.centerId;
+  req.billContext = context;
+  next();
+});
 
 router.get('/transport/family/pending', asyncHandler(async (req, res) => {
   const { CareProfileMembers } = require('../db');
@@ -67,25 +86,34 @@ router.post('/transport/:planId/center-choice', requireCenterStaff(), asyncHandl
 }));
 
 // POST /api/transport/:id/care2go-unavailable — Care2Go แจ้งกลับว่าจัดหาไม่ได้ (ข้อ L11 — เรียกจากระบบภายใน)
-router.post('/transport/:planId/care2go-unavailable', requireCenterStaff(), asyncHandler(async (req, res) => {
-  const plan = await TransportPlans.findOne((p) => p.plan_id === req.params.planId);
-  if (!plan) return res.status(404).json({ error: 'not_found' });
-  const { Appointments } = require('../db');
-  const appt = await Appointments.findOne((a) => a.appointment_id === plan.appointment_id);
-  const result = await transportService.markCare2goUnavailable(req.params.planId, appt?.datetime);
-  res.json(result);
-}));
+router.post(
+  '/transport/:planId/care2go-unavailable',
+  loadAuthoritativeTransportPlan,
+  requireCenterStaff(['owner', 'manager'], { maskUnauthorized: true }),
+  asyncHandler(async (req, res) => {
+    const plan = req.transportPlan;
+    const appt = await Appointments.findOne((a) => a.appointment_id === plan.appointment_id);
+    const result = await transportService.markCare2goUnavailable(req.params.planId, appt?.datetime);
+    res.json(result);
+  })
+);
 
 // POST /api/bills — ออกใบแจ้งค่าใช้จ่าย (เจ้าของ/ผู้จัดการ)
-router.post('/bills', requireCenterStaff(), asyncHandler(async (req, res) => {
-  const { careProfileId, appointmentId, items } = req.body;
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุรายการค่าใช้จ่าย' });
-  }
-  const bill = await transportService.createBill({
-    centerId: req.centerId, careProfileId, appointmentId, items, createdBy: req.user.lineUserId,
-  });
-  res.status(201).json(bill);
-}));
+router.post(
+  '/bills',
+  loadAuthoritativeBillContext,
+  requireCenterStaff(['owner', 'manager'], { maskUnauthorized: true }),
+  asyncHandler(async (req, res) => {
+    const { careProfileId, appointmentId, items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุรายการค่าใช้จ่าย' });
+    }
+    const bill = await transportService.createBill({
+      centerId: req.centerId, careProfileId, appointmentId, items, createdBy: req.user.lineUserId,
+    });
+    if (!bill) return res.status(404).json({ error:'not_found', message:'ไม่พบข้อมูลสำหรับออกใบแจ้งค่าใช้จ่าย' });
+    res.status(201).json(bill);
+  })
+);
 
 module.exports = router;

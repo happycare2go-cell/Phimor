@@ -54,10 +54,20 @@ test('minimal Family Plus staging readiness excludes unrelated full-stack creden
 test('production readiness retains the existing full-stack requirements', () => {
   const env = minimalEnvironment({ STAGING_MODE: 'false', STAGING_FAMILY_PLUS_ONLY: 'false' });
   const missing = missingRuntimeEnvironment(env);
-  for (const key of ['LINE_CHANNEL_ACCESS_TOKEN', 'LINE_CHANNEL_SECRET', 'LIFF_ID_CENTER_ADMIN', 'LIFF_ID_REGISTER', 'ADMIN_API_KEY']) {
+  for (const key of ['LINE_CHANNEL_ACCESS_TOKEN', 'LINE_CHANNEL_SECRET', 'LIFF_ID_CENTER_ADMIN', 'LIFF_ID_REGISTER', 'LIFF_ID_SYSTEM_ADMIN', 'ADMIN_API_KEY']) {
     assert.equal(FULL_RUNTIME_REQUIRED_ENV.includes(key), true);
     assert.equal(missing.includes(key), true);
   }
+});
+
+test('production readiness requires Pharmacist LIFF only when consultation is enabled', () => {
+  const base = Object.fromEntries(FULL_RUNTIME_REQUIRED_ENV.map((key) => [key, `${key}-configured`]));
+  base.NODE_ENV = 'production';
+  base.STAGING_MODE = 'false';
+  base.STAGING_FAMILY_PLUS_ONLY = 'false';
+  assert.equal(missingRuntimeEnvironment({ ...base, CONSULTATION_ENABLED:'false' }).includes('LIFF_ID_PHARMACIST'), false);
+  assert.equal(missingRuntimeEnvironment({ ...base, CONSULTATION_ENABLED:'true' }).includes('LIFF_ID_PHARMACIST'), true);
+  assert.deepEqual(missingRuntimeEnvironment({ ...base, CONSULTATION_ENABLED:'true', LIFF_ID_PHARMACIST:'pharmacist-liff' }), []);
 });
 
 test('Family LIFF public config works with only Family fields and never leaks secrets', () => {

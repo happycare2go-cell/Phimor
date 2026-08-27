@@ -11,7 +11,7 @@
 //    "ใช้บริการ Care2Go" — ห้ามมีปุ่มปฏิเสธ เพราะตัวเลือก Care2Go ทำหน้าที่เป็นทางออกอยู่แล้ว
 //    ครอบครัวที่กดขอให้ศูนย์จัดต้องมั่นใจได้ว่าจะมีคนจัดให้เสมอ
 
-const { TransportPlans, CenterRateCards, Bills, GroupBindings, CareProfiles, audit, id, now } = require('../db');
+const { TransportPlans, CenterRateCards, Bills, GroupBindings, CareProfiles, Appointments, Residents, audit, id, now } = require('../db');
 const lineClient = require('../providers/lineClient');
 
 const CARE2GO_UNAVAILABLE_DEADLINE_HOURS = 12; // ข้อ L11
@@ -379,7 +379,29 @@ async function updateRateCard(centerId, patch, requesterLineId) {
 }
 
 // ── FR-M4, M5: ออกใบแจ้งค่าใช้จ่าย (ยังไม่รับชำระเงินจริงในระยะที่ 1) ──
+async function resolveBillContext({ centerId, careProfileId, appointmentId }) {
+  if (!centerId || !careProfileId || !appointmentId) return null;
+  const appointment = await Appointments.findOne((item) => item.appointment_id === appointmentId);
+  const profile = await CareProfiles.findOne((item) => item.care_profile_id === careProfileId);
+  if (
+    !appointment
+    || !profile
+    || profile.status !== 'linked'
+    || profile.center_id !== centerId
+    || appointment.care_profile_id !== careProfileId
+  ) return null;
+  const resident = await Residents.findOne((item) => (
+    item.center_id === centerId
+    && item.care_profile_id === careProfileId
+    && item.status === 'active'
+  ));
+  return resident ? { centerId, appointment, profile, resident } : null;
+}
+
 async function createBill({ centerId, careProfileId, appointmentId, items, createdBy }) {
+  // Re-check immediately before the write. The route uses the same resolver
+  // for authorization, while this second check closes a discharge/relink race.
+  if (!await resolveBillContext({ centerId, careProfileId, appointmentId })) return null;
   const total = items.reduce((sum, it) => sum + (it.amount || 0), 0);
   const bill = await Bills.insert({
     bill_id: id('BILL'), center_id: centerId, care_profile_id: careProfileId, appointment_id: appointmentId,
@@ -397,5 +419,5 @@ async function createBill({ centerId, careProfileId, appointmentId, items, creat
 module.exports = {
   createTransportPlan, launchTransportChoice, familyChooseSelf, familyRequestCenter, familyRequestCare2go, centerChoose, centerChangeChoice, getPendingFamilyPlans,
   bindCare2goOperationsGroup, notifyCare2goOperations, care2goAcknowledge,
-  markCare2goUnavailable, getRateCard, updateRateCard, createBill, remindPendingFamilyChoices, notifyAppointmentChanged,
+  markCare2goUnavailable, getRateCard, updateRateCard, resolveBillContext, createBill, remindPendingFamilyChoices, notifyAppointmentChanged,
 };

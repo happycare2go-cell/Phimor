@@ -2,9 +2,8 @@
 // ตรวจสอบตัวตนและสิทธิ์ — ทุก Endpoint ต้องผ่านมิดเดิลแวร์นี้ก่อนเสมอ
 // (ตาม Phimor_Technical_Design.docx หมวด 5 และหมวด 8 ความปลอดภัย)
 //
-// ⚠️ โหมดนี้อ่าน LINE User ID จาก Header ตรงๆ เพื่อให้ Dev ทดสอบได้ทันที
-//    ก่อน Deploy จริง ต้องเปลี่ยน identify() ให้ Verify LINE ID Token จริง
-//    (ตรวจ Signature และวันหมดอายุ ไม่ใช่เชื่อค่าจาก Header ตรงๆ)
+// Production ตรวจ LINE ID Token กับ LINE Login ก่อนเสมอ ส่วน X-Line-User-Id
+// อนุญาตเฉพาะ test/local ที่เปิด ALLOW_INSECURE_LINE_HEADER ชัดเจนเท่านั้น
 
 const { CenterStaff, Centers, Residents, CareProfiles, CareProfileMembers } = require('../db');
 const { asyncHandler } = require('./asyncHandler');
@@ -47,9 +46,11 @@ const requireAuth = asyncHandler(async (req, res, next) => {
  * ต้องเป็นเจ้าของหรือผู้จัดการของศูนย์ที่ระบุใน req.params.centerId (หรือ req.body.centerId)
  * — ใช้กับ FR-A, FR-B, FR-K, FR-L (ฝั่งศูนย์), FR-M ตามข้อกำหนด "เจ้าของ/ผู้จัดการเท่านั้น"
  */
-function requireCenterStaff(roles = ['owner', 'manager']) {
+function requireCenterStaff(roles = ['owner', 'manager'], options = {}) {
   return asyncHandler(async (req, res, next) => {
-    const centerId = req.params.centerId || req.body.centerId || req.query.centerId;
+    // Record-bound routes may resolve an authoritative Center before this
+    // middleware runs. Prefer it over every client-supplied Center value.
+    const centerId = req.authoritativeCenterId || req.params.centerId || req.body?.centerId || req.query.centerId;
     if (!centerId) {
       return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุศูนย์' });
     }
@@ -57,6 +58,9 @@ function requireCenterStaff(roles = ['owner', 'manager']) {
       (s) => s.center_id === centerId && s.line_user_id === req.user.lineUserId && roles.includes(s.role) && (!s.status || s.status === 'active')
     );
     if (!staff) {
+      if (options.maskUnauthorized) {
+        return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูล' });
+      }
       return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์จัดการศูนย์นี้' });
     }
     const center = await Centers.findOne((c) => c.center_id === centerId);

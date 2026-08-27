@@ -14,6 +14,7 @@ const { buildPublicLiffConfig } = require('../backend/config/runtimeCapabilities
 
 const root = path.resolve(__dirname, '..');
 const familyHtml = fs.readFileSync(path.join(root, 'liff-app', 'family', 'index.html'), 'utf8');
+const centerHtml = fs.readFileSync(path.join(root, 'liff-app', 'center-admin', 'index.html'), 'utf8');
 const stagingBlueprint = fs.readFileSync(path.join(root, 'render.staging.yaml'), 'utf8');
 const productionBlueprint = fs.readFileSync(path.join(root, 'render.yaml'), 'utf8');
 
@@ -133,6 +134,19 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.match(productionBlueprint, /buildCommand:\s*node scripts\/write-runtime-config\.js/);
   assert.doesNotMatch(productionBlueprint, /key:\s*PLUS_ENABLED/);
   assert.match(productionBlueprint, /key:\s*LIFF_ID_PHARMACIST\s*\n\s*sync:\s*false/);
+  assert.match(productionBlueprint, /key:\s*CONSULTATION_REALTIME_TICKET_SECRET\s*\n\s*sync:\s*false/);
+  assert.match(productionBlueprint, /key:\s*CONSULTATION_REALTIME_ALLOWED_ORIGINS\s*\n\s*value:\s*"https:\/\/phimor-liff\.onrender\.com"/);
+  assert.doesNotMatch(productionBlueprint, /CONSULTATION_REALTIME_TICKET_SECRET\s*\n\s*value:/);
+});
+
+test('Center LIFF obtains backend and LIFF ID from the authoritative runtime projection', () => {
+  assert.match(centerHtml, /<script src="\.\.\/environment\.js"><\/script>/);
+  assert.match(centerHtml, /<script src="\.\.\/runtime-config\.js"><\/script>/);
+  assert.match(centerHtml, /requireBackendUrl\(window\.PHIMOR_PUBLIC_BACKEND_URL\)/);
+  assert.match(centerHtml, /fetch\(BACKEND_URL \+ '\/config\/liff'/);
+  assert.match(centerHtml, /assertBackendConfig\(BACKEND_URL, config\)/);
+  assert.match(centerHtml, /liff\.init\(\{ liffId: config\.centerAdminLiffId \}\)/);
+  assert.doesNotMatch(centerHtml, /2011043561-Dyp03JGR|const BACKEND_URL\s*=\s*['"]https:\/\//);
 });
 
 test('staging blueprint declares the pharmacist LIFF ID without a repository value', () => {
