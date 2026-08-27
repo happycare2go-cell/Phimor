@@ -62,8 +62,10 @@ test('ส่งสัญญาณชีพด้วย API Key ที่ถู�
   const records = await db.Vitals.findAll();
   assert.strictEqual(records.length, 1);
   assert.strictEqual(records[0].source_center_id, center.center_id, 'ต้องรู้ว่ามาจากศูนย์ไหน (ข้อ J5)');
-  assert.strictEqual(records[0].source_system, 'HappyHomeSenior-Internal', 'ต้องรู้ว่ามาจากระบบใด (ข้อ J5)');
+  assert.strictEqual(records[0].source_system, 'legacy_center_api_key', 'trusted source ต้องมาจากวิธียืนยันตัวตน ไม่ใช่ payload');
+  assert.strictEqual(records[0].legacy_reported_source, 'HappyHomeSenior-Internal', 'เก็บ source เดิมเป็น compatibility metadata ที่ไม่ใช่ตัวตนผู้ส่ง');
   assert.ok(records[0].ingested_at, 'ต้องรู้ว่าเข้าระบบเมื่อใด (ข้อ J5)');
+  assert.strictEqual(res.headers.get('deprecation'), 'true');
 });
 
 test('ศูนย์ A ส่ง API Key ของตัวเอง แต่ระบุ residentId ของศูนย์ B ต้องถูกปฏิเสธ (กันข้ามศูนย์)', async () => {

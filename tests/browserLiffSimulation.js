@@ -29,6 +29,7 @@ const LIFF_MOCK = `<script>window.liff={init:async()=>{},isLoggedIn:()=>true,log
 const SIMULATED_BACKEND_URL = 'https://phimor-backend.onrender.com';
 const RUNTIME_CONFIG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'runtime-config.js'), 'utf8');
 const CENTER_LAB_REVIEW_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'lab-review-runtime.js'), 'utf8');
+const CENTER_CARE_RECORDING_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'care-recording-ui.js'), 'utf8');
 const FAMILY_PLUS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'plus-ui.js'), 'utf8');
 const FAMILY_CONSULTATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'consultation-ui.js'), 'utf8');
 const FAMILY_DOCTOR_VISIT_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'doctor-visit-ui.js'), 'utf8');
@@ -41,6 +42,7 @@ function localHtml(name) {
     .replace('<script src="../environment.js"></script>', `<script>window.PHIMOR_PUBLIC_BACKEND_URL=${JSON.stringify(SIMULATED_BACKEND_URL)};</script>`)
     .replace('<script src="../runtime-config.js"></script>', `<script>${RUNTIME_CONFIG_SOURCE}</script>`)
     .replace('<script src="./lab-review-runtime.js"></script>', `<script>${CENTER_LAB_REVIEW_SOURCE}</script>`)
+    .replace('<script src="./care-recording-ui.js"></script>', `<script>${CENTER_CARE_RECORDING_SOURCE}</script>`)
     .replace('<script src="./plus-ui.js"></script>', `<script>${FAMILY_PLUS_SOURCE}</script>`)
     .replace('<script src="./consultation-ui.js"></script>', `<script>${FAMILY_CONSULTATION_SOURCE}</script>`)
     .replace('<script src="./doctor-visit-ui.js"></script>', `<script>${FAMILY_DOCTOR_VISIT_SOURCE}</script>`)

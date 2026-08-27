@@ -26,22 +26,56 @@ async function replyMessage(replyToken, messages) {
   }
 }
 
-// ฟังก์ชันส่งข้อความแบบ Push (ใช้ตอนแจ้งเตือน หรือส่งหาคนอื่น)
-async function pushMessage(to, messages) {
-  if (process.env.NODE_ENV === 'test') { sentLog.push({ type: 'push', to, messages: Array.isArray(messages) ? messages : [messages] }); return { ok: true }; }
-  try {
-    await client.pushMessage({
-      to: to,
-      messages: Array.isArray(messages) ? messages : [messages]
-    });
-    return { ok: true };
-  } catch (err) {
-    console.error('LINE Push Error:', err.response?.data || err.message);
-    const error = new Error('ส่ง LINE push ไม่สำเร็จ');
-    error.cause = err;
-    throw error;
-  }
+function providerStatus(error) {
+  const status = Number(error?.status || error?.statusCode || error?.response?.status);
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
 }
+
+function responseHeader(error, name) {
+  const headers = error?.headers || error?.response?.headers;
+  if (!headers) return null;
+  if (typeof headers.get === 'function') return headers.get(name) || headers.get(name.toLowerCase()) || null;
+  const match = Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase());
+  const value = match ? headers[match] : null;
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function safeRequestId(value) {
+  const clean = String(value || '').trim();
+  return /^[A-Za-z0-9._:-]{1,160}$/.test(clean) ? clean : null;
+}
+
+function createPushMessage({ messagingClient = client, environment = () => process.env.NODE_ENV, log = sentLog } = {}) {
+  return async function pushMessage(to, messages, options = {}) {
+    const normalizedMessages = Array.isArray(messages) ? messages : [messages];
+    const retryKey = typeof options?.retryKey === 'string' && options.retryKey.trim()
+      ? options.retryKey.trim() : undefined;
+    if (environment() === 'test') {
+      const entry = { type:'push', to, messages:normalizedMessages };
+      if (retryKey) entry.retryKey = retryKey;
+      log.push(entry);
+      return { ok:true };
+    }
+    try {
+      await messagingClient.pushMessage({ to, messages:normalizedMessages }, retryKey);
+      return { ok:true };
+    } catch (error) {
+      if (retryKey && providerStatus(error) === 409) {
+        return {
+          ok:true, retryKeyConflict:true,
+          providerRequestId:safeRequestId(responseHeader(error, 'x-line-accepted-request-id')),
+        };
+      }
+      const safeError = new Error('ส่ง LINE push ไม่สำเร็จ');
+      safeError.code = 'LINE_PUSH_FAILED';
+      safeError.providerStatus = providerStatus(error);
+      throw safeError;
+    }
+  };
+}
+
+// ฟังก์ชันส่งข้อความแบบ Push (ใช้ตอนแจ้งเตือน หรือส่งหาคนอื่น)
+const pushMessage = createPushMessage();
 
 // ฟังก์ชันดึงชื่อโปรไฟล์
 async function getProfile(userId) {
@@ -100,5 +134,6 @@ async function unlinkRichMenuFromUser(uid) { if (process.env.NODE_ENV === 'test'
 module.exports = {
   replyMessage, pushMessage, getProfile, getGroupMemberProfile, listGroupMemberUserIds,
   clearSentLog, getSentLog,
-  createRichMenu, uploadRichMenuImage, setDefaultRichMenu, linkRichMenuToUser, unlinkRichMenuFromUser
+  createRichMenu, uploadRichMenuImage, setDefaultRichMenu, linkRichMenuToUser, unlinkRichMenuFromUser,
+  createPushMessage,
 };

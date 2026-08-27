@@ -9,6 +9,12 @@ const familyService = require('../services/familyService');
 const healthHistoryService = require('../services/careProfileHealthHistoryService');
 const transportService = require('../services/transportService');
 const { CenterStaff, Centers } = require('../db');
+const { projectCenter } = require('../services/centerProjection');
+const { platformService: defaultPlatformService } = require('../services/platformService');
+
+function platformServiceFor(req) {
+  return req.app.locals.platformService || defaultPlatformService;
+}
 
 router.use(requireAuth);
 
@@ -18,16 +24,29 @@ router.get('/center/me', asyncHandler(async (req, res) => {
   if (staffRows.length === 0) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์ที่ท่านมีสิทธิ์' });
   const centers = await Promise.all(staffRows.map(async (s) => {
     const c = await Centers.findOne((x) => x.center_id === s.center_id);
-    return { ...c, myRole: s.role, subscription: require('../services/subscriptionService').entitlement(c) };
+    return projectCenter(c, { myRole: s.role, subscription: require('../services/subscriptionService').entitlement(c) });
   }));
   res.json({ centers });
+}));
+
+// Center LIFF capability projection. The backend remains authoritative and
+// exposes only the two public feature switches, never platform credentials.
+router.get('/center/:centerId/capabilities', requireCenterStaff(['owner', 'manager', 'staff']), asyncHandler(async (req, res) => {
+  const rows = await platformServiceFor(req).listCenterCapabilities(req.centerId);
+  const byKey = new Map(rows.map((row) => [row.capabilityKey, Boolean(row.enabled)]));
+  res.json({
+    capabilities: {
+      vital_signs_v1: byKey.get('vital_signs_v1') === true,
+      daily_care_v1: byKey.get('daily_care_v1') === true,
+    },
+  });
 }));
 
 router.patch('/center/settings', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
   const result = await centerService.updateCenterSettings({ centerId:req.centerId, requesterLineId:req.user.lineUserId,
     address:req.body.address, contactPhone:req.body.contactPhone });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
-  res.json(result.center);
+  res.json(projectCenter(result.center));
 }));
 
 // GET /api/center/staff — รายชื่อผู้มีสิทธิ์จัดการ (เจ้าของเท่านั้น)

@@ -20,6 +20,10 @@ const pharmacistConsultationsRouter = require('./routes/pharmacistConsultations'
 const labsRouter = require('./routes/labs');
 const doctorQuestionsRouter = require('./routes/doctorQuestions');
 const doctorVisitsRouter = require('./routes/doctorVisits');
+const { createVitalSignsRouter } = require('./routes/vitalSigns');
+const { createDailyCareRouter } = require('./routes/dailyCare');
+const { createIntegrationEventsRouter } = require('./routes/integrationEvents');
+const { integrationEventService } = require('./services/integrationEventService');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
@@ -76,6 +80,9 @@ app.use('/api/export/pdf/download', pdfDownloadRouter);
 app.use('/api/care-profile', labsRouter);
 app.use('/api/care-profile', doctorQuestionsRouter);
 app.use('/api/care-profile', doctorVisitsRouter);
+app.use('/api', createVitalSignsRouter());
+app.use('/api', createDailyCareRouter());
+app.use('/api/integrations/v1', createIntegrationEventsRouter());
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);
 app.use('/api', familyRouter);
@@ -118,6 +125,9 @@ function startScheduler() {
   scheduledTasks.push(cron.schedule('0 9 * * *', () => { heartbeat(); subscriptionService.sendExpiryReminders().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/2 * * * *', () => { heartbeat(); notificationService.processPending().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => { heartbeat(); webhookRouter.processPendingWebhookEvents?.().catch(console.error); }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => {
+    heartbeat(); integrationEventService.processDue().catch(() => console.error('integration inbox processing unavailable'));
+  }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('15 2 * * *', () => { heartbeat(); require('./services/centerService').reconcileAllCenterStaff().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('45 2 * * *', () => { heartbeat(); require('./services/retentionService').purgeExpiredSourceImages().catch(console.error); }, { timezone: TZ }));
   // Staging only: run time-sensitive jobs every minute with an optional clock
