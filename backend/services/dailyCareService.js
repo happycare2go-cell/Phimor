@@ -36,6 +36,7 @@ function projectReport(row, items=row.items||[], vitals=row.vital_signs||[], sub
     submittedAt:row.submitted_at||null, returnedAt:row.returned_at||null,
     returnReason:row.return_reason||null, finalizedAt:row.finalized_at||null,
     sourceType:row.source_type,
+    centerName:row.center_name||null,
     recorderDisplayName:row.recorder_display_name||row.external_staff_display_name||null,
     finalizerDisplayName:row.finalizer_display_name||null,
     residentId:subject.residentId||null, careRecipientName:subject.careRecipientName||null, room:subject.room||null,
@@ -271,7 +272,12 @@ function createDailyCareService(overrides={}) {
     if(fromAt&&toAt&&new Date(toAt)-new Date(fromAt)>366*86400000)throw new DailyCareError('DATE_RANGE_TOO_LARGE','ช่วงวันที่ต้องไม่เกิน 366 วัน',400);
     const rows=await repository.listHistory({careProfileId:profileId,centerId:centerId||null,from:fromAt,to:toAt,cursor:decodeCursor(cursor),limit:bounded});
     const hasMore=rows.length>bounded;const page=rows.slice(0,bounded);
-    return {items:page.map((row)=>projectReport(row)),nextCursor:hasMore?encodeCursor(page.at(-1)):null};
+    const centerNames=new Map();
+    for(const centerId of [...new Set(page.map((row)=>row.center_id).filter(Boolean))]) {
+      const center=await centers.findOne((item)=>item.center_id===centerId);
+      centerNames.set(centerId,center?.name||null);
+    }
+    return {items:page.map((row)=>projectReport({...row,center_name:centerNames.get(row.center_id)||null})),nextCursor:hasMore?encodeCursor(page.at(-1)):null};
   }
 
   async function listCenterWorkflow({lineUserId,centerId,status='submitted',limit=50}) {

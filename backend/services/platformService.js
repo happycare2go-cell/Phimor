@@ -213,6 +213,26 @@ function createPlatformService(overrides = {}) {
     }));
   }
 
+  async function listCenterResidentOptions(centerId, { search = null, limit = 100 } = {}) {
+    await requireCenter(centerId);
+    const organization = await repository.findOrganizationForCenter(centerId);
+    if (!organization) throw new PlatformError('CENTER_ORGANIZATION_NOT_FOUND', 'ศูนย์ยังไม่มีองค์กร', 409);
+    const needle = optionalText(search, 120)?.toLocaleLowerCase('th-TH') || '';
+    const bounded = Math.min(100, Math.max(1, Number(limit) || 100));
+    const rows = await residents.findWhere((row) => row.center_id === centerId && row.status === 'active');
+    return rows
+      .filter((row) => !needle || [row.full_name, row.room, row.resident_id]
+        .some((value) => String(value || '').toLocaleLowerCase('th-TH').includes(needle)))
+      .sort((left, right) => String(left.full_name || '').localeCompare(String(right.full_name || ''), 'th'))
+      .slice(0, bounded)
+      .map((row) => ({
+        residentId: row.resident_id,
+        displayName: optionalText(row.full_name, 240) || 'ไม่ระบุชื่อ',
+        room: optionalText(row.room, 80),
+        careProfileLinked: Boolean(row.care_profile_id),
+      }));
+  }
+
   async function isCenterCapabilityEnabled(centerId, capabilityKey) {
     assertCapabilityKey(capabilityKey);
     const row = await repository.findCapability(centerId, capabilityKey);
@@ -545,7 +565,7 @@ function createPlatformService(overrides = {}) {
   return {
     createOrganization, listOrganizations, getOrganizationForCenter,
     ensureOrganizationForCenter, listOrganizationCenters, relinkCenter,
-    listCenterCapabilities, isCenterCapabilityEnabled, setCenterCapability,
+    listCenterCapabilities, listCenterResidentOptions, isCenterCapabilityEnabled, setCenterCapability,
     createIntegrationClient, inspectIntegrationClient, listIntegrationClients,
     revokeIntegrationClient, addClientCenterScope, removeClientCenterScope,
     addClientEventScope, removeClientEventScope,

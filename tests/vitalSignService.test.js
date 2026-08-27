@@ -125,6 +125,7 @@ test('history is authorized, bounded, ordered, paginated and excludes voided row
   for (let day = 1; day <= 3; day += 1) await service.recordNative({ lineUserId:'U-STAFF', centerId:'CTR-A', residentId:'RES-A', occurredAt:`2026-08-0${day}T01:00:00Z`, observations });
   const first = await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A', limit:2 });
   assert.equal(first.items.length, 2); assert.ok(first.nextCursor);
+  assert.equal(first.items[0].centerName, 'ศูนย์ A');
   const second = await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A', limit:2, cursor:first.nextCursor });
   assert.equal(second.items.length, 1); assert.notEqual(first.items[0].vitalSetId, second.items[0].vitalSetId);
   await assert.rejects(service.listHistory({ lineUserId:'U-OTHER', careProfileId:'CP-A' }), { code:'FORBIDDEN' });

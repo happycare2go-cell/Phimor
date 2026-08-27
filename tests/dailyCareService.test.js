@@ -160,7 +160,7 @@ test('Family history is authorized, paginated and exposes finalized records only
   for(let day=1;day<=3;day++)reports.push(await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:`2026-08-0${day}T01:00:00Z`,items}));
   assert.equal((await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'})).items.length,0);
   for(const report of reports)await service.finalizeReport({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:report.item.dailyReportId});
-  const first=await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A',limit:2});assert.equal(first.items.length,2);assert.ok(first.nextCursor);
+  const first=await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A',limit:2});assert.equal(first.items.length,2);assert.ok(first.nextCursor);assert.equal(first.items[0].centerName,'ศูนย์ A');
   assert.equal((await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A',limit:2,cursor:first.nextCursor})).items.length,1);
   await assert.rejects(service.listHistory({lineUserId:'U-X',careProfileId:'CP-A'}),{code:'FORBIDDEN'});
 });

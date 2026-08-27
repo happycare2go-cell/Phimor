@@ -35,7 +35,9 @@ const FAMILY_CONSULTATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..',
 const CONSULTATION_REALTIME_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'consultation-realtime-client.js'), 'utf8');
 const FAMILY_DOCTOR_VISIT_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'doctor-visit-ui.js'), 'utf8');
 const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.js'), 'utf8');
+const FAMILY_CARE_HISTORY_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'care-history-ui.js'), 'utf8');
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
+const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
@@ -49,6 +51,8 @@ function localHtml(name) {
     .replace('<script src="../consultation-realtime-client.js"></script>', `<script>${CONSULTATION_REALTIME_SOURCE}</script>`)
     .replace('<script src="./doctor-visit-ui.js"></script>', `<script>${FAMILY_DOCTOR_VISIT_SOURCE}</script>`)
     .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
+    .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
+    .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`);
 }
 
@@ -277,6 +281,64 @@ async function adminSubscriptionJourney(browser) {
   await page.close();
 }
 
+async function familyCareHistoryJourney(browser) {
+  const page = await browser.newPage({ viewport:{width:390,height:844} });
+  const profile = { profile:{care_profile_id:'CP-CARE',patient_name:'คุณแม่ตัวอย่าง'},familyRole:'owner',canUseAi:false,upcomingAppointments:[] };
+  await mockBackend(page, async (url) => {
+    if (url.pathname === '/config/liff') return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if (url.pathname === '/api/consent/check') return {hasConsent:true};
+    if (url.pathname === '/api/init-dashboard') return {profiles:[profile]};
+    if (url.pathname === '/api/access-requests') return {requests:[]};
+    if (url.pathname === '/api/transport/family/pending') return {pending:[]};
+    if (url.pathname === '/api/care-profile/CP-CARE/caregivers') return {members:[]};
+    if (url.pathname === '/api/plus/entitlement') return {status:'basic',plus:false};
+    if (url.pathname === '/api/care-profile/CP-CARE/vital-signs') return {items:[{vitalSetId:'VS-1',status:'recorded',occurredAt:'2026-08-27T07:30:00+07:00',recordedAt:'2026-08-27T07:31:00+07:00',centerName:'ศูนย์ตัวอย่าง',sourceType:'external_integration',observations:[{measurementType:'blood_glucose',numericValue:108,sourceValueText:'108',sourceUnit:'mg/dL',context:'before_meal'},{measurementType:'weight',numericValue:55.2,sourceValueText:'55.2',sourceUnit:'kg'}]}],nextCursor:null};
+    if (url.pathname === '/api/care-profile/CP-CARE/daily-care') return {items:[{dailyReportId:'DC-1',status:'finalized',occurredAt:'2026-08-27T19:00:00+07:00',careDate:'2026-08-27',shift:{code:'day',sourceLabel:'Day'},finalizedAt:'2026-08-27T20:00:00+07:00',centerName:'ศูนย์ตัวอย่าง',sourceType:'external_integration',recorderDisplayName:'ผู้ดูแลตัวอย่าง',items:[{itemType:'nutrition',valueType:'text',textValue:'รับประทานอาหารได้ครึ่งจาน'}],vitalSigns:[]}],nextCursor:null};
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'), {waitUntil:'domcontentloaded'});
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.locator('[data-family-destination="health"]').first().click();
+  await page.waitForFunction(() => document.querySelector('#familyLatestVital').textContent.includes('108'));
+  assert.match(await page.locator('#familyLatestVital').textContent(), /น้ำตาลในเลือด/);
+  assert.match(await page.locator('#familyLatestVital').textContent(), /ก่อนอาหาร/);
+  assert.match(await page.locator('#familyLatestVital').textContent(), /55.2 kg/);
+  await page.locator('#familyDailyHistoryButton').click();
+  assert.match(await page.locator('#familyCareHistoryList').textContent(), /รับประทานอาหารได้ครึ่งจาน/);
+  await page.getByRole('button',{name:'ดูรายละเอียด'}).first().click();
+  assert.match(await page.locator('#familyCareHistoryList').textContent(), /ผู้บันทึก: ผู้ดูแลตัวอย่าง/);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+  await page.close();
+}
+
+async function adminCareOperationsJourney(browser) {
+  const page = await browser.newPage({ viewport:{width:390,height:844} }); let mapped = 0; let reconciled = 0;
+  await page.on('dialog', (dialog) => dialog.accept());
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return {systemAdminLiffId:'SIM_ADMIN'};
+    if (url.pathname === '/api/admin/centers') return {centers:[]};
+    if (url.pathname === '/api/admin/platform/organizations') return {organizations:[{organizationId:'ORG-A',displayName:'องค์กรตัวอย่าง',organizationType:'external_care_center',status:'active'}]};
+    if (url.pathname === '/api/admin/platform/organizations/ORG-A/centers') return {centers:[{centerId:'CTR-A',name:'ศูนย์ตัวอย่าง',status:'active'}]};
+    if (url.pathname === '/api/admin/platform/centers/CTR-A/capabilities') return {capabilities:[{centerId:'CTR-A',capabilityKey:'vital_signs_v1',enabled:true},{centerId:'CTR-A',capabilityKey:'daily_care_v1',enabled:false}]};
+    if (url.pathname === '/api/admin/platform/organizations/ORG-A/integration-clients') return {integrationClients:[{integrationClientId:'INT-A',displayName:'Vendor ตัวอย่าง',status:'active'}]};
+    if (url.pathname === '/api/admin/platform/integration-clients/INT-A') return {integrationClient:{integrationClientId:'INT-A',displayName:'Vendor ตัวอย่าง',status:'active',sourceSystem:'vendor_demo',centers:[{center_id:'CTR-A'}],eventScopes:['care.daily_report.finalized'],credentials:[{status:'active',lastUsedAt:'2026-08-27T08:00:00Z'}]}};
+    if (url.pathname === '/api/admin/platform/pending-subjects') return mapped ? {items:[]} : {items:[{integrationClientId:'INT-A',organizationId:'ORG-A',centerId:'CTR-A',externalCenterId:'EXT-C',externalResidentId:'EXT-R',displayName:'คุณยายตัวอย่าง',room:'A201',eventCount:2,firstReceivedAt:'2026-08-27T07:00:00Z'}]};
+    if (url.pathname === '/api/admin/platform/integration-events/status') return {items:[{integrationEventId:'IEVT-1',integrationClientId:'INT-A',organizationId:'ORG-A',centerId:'CTR-A',externalResidentId:'EXT-R',expectedLineGroupId:'C123…7890',verifiedLineGroupId:'C999…0000',groupReconciliationStatus:reconciled?'verified_match':'group_binding_mismatch'}]};
+    if (url.pathname === '/api/admin/platform/centers/CTR-A/resident-options') return {residents:[{residentId:'RES-A',displayName:'คุณยายตัวอย่าง',room:'A201',careProfileLinked:true}]};
+    if (url.pathname === '/api/admin/platform/pending-subjects/map' && request.method() === 'POST') { mapped += 1; return {mapping:{status:'mapped'},reprocessed:{processed:2}}; }
+    if (url.pathname === '/api/admin/platform/integration-events/IEVT-1/reconcile-group') { reconciled += 1; return {groupReconciliationStatus:'verified_match',notificationIntentStatus:'queued'}; }
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('system-admin'), {waitUntil:'domcontentloaded'}); await page.waitForSelector('#app:not([hidden])');
+  assert.match(await page.locator('#careOperationsContent').textContent(), /สัญญาณชีพ/);
+  await page.getByRole('button',{name:'ผู้พักรอเชื่อม'}).click(); await page.getByRole('button',{name:'เชื่อมผู้พัก'}).click();
+  await page.locator('select[aria-label="เลือกผู้พักที่ต้องการเชื่อม"]').selectOption('RES-A'); await page.getByRole('button',{name:'ยืนยันเชื่อมผู้พัก'}).click();
+  await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('ไม่มีผู้พักรอเชื่อม')); assert.equal(mapped,1);
+  await page.getByRole('button',{name:'กลุ่ม LINE'}).click(); assert.match(await page.locator('#careOperationsContent').textContent(), /MISMATCH/);
+  await page.getByRole('button',{name:'ตรวจสอบอีกครั้ง'}).click(); await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('VERIFIED')); assert.equal(reconciled,1);
+  assert.doesNotMatch(await page.locator('#careOperationsPanel').textContent(), /send anyway|ส่งต่อไปเลย/i); await page.close();
+}
+
 async function pharmacistConsoleJourney(browser) {
   const page=await browser.newPage({viewport:{width:1440,height:900}});
   await mockBackend(page,async(url,request)=>{
@@ -307,7 +369,7 @@ async function pharmacistConsoleJourney(browser) {
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, pharmacistConsoleJourney })) {
+  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney })) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }

@@ -109,6 +109,13 @@ function createPlatformAdminRouter() {
     res.json({ capabilities: await service.listCenterCapabilities(req.params.centerId) });
   }));
 
+  router.get('/centers/:centerId/resident-options', platformAction(async (req, res, service) => {
+    res.json({ residents: await service.listCenterResidentOptions(req.params.centerId, {
+      search: req.query.search || null,
+      limit: req.query.limit,
+    }) });
+  }));
+
   router.patch('/centers/:centerId/capabilities/:capabilityKey', platformAction(async (req, res, service, actorReference) => {
     const capability = await service.setCenterCapability({
       centerId: req.params.centerId, capabilityKey: req.params.capabilityKey,

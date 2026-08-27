@@ -45,6 +45,7 @@ function projectSet(row, observations = row.observations || []) {
     occurredAt: row.occurred_at,
     recordedAt: row.recorded_at,
     sourceType: row.source_type,
+    centerName: row.center_name || null,
     observations: observations.map(projectObservation),
   };
 }
@@ -174,7 +175,12 @@ function createVitalSignService(overrides = {}) {
     });
     const hasMore = rows.length > boundedLimit;
     const page = rows.slice(0, boundedLimit);
-    return { items:page.map((row)=>projectSet(row)), nextCursor:hasMore ? encodeCursor(page.at(-1)) : null };
+    const centerNames = new Map();
+    for (const centerId of [...new Set(page.map((row) => row.center_id).filter(Boolean))]) {
+      const center = await centers.findOne((row) => row.center_id === centerId);
+      centerNames.set(centerId, center?.name || null);
+    }
+    return { items:page.map((row)=>projectSet({ ...row, center_name:centerNames.get(row.center_id) || null })), nextCursor:hasMore ? encodeCursor(page.at(-1)) : null };
   }
 
   async function voidVitalSet({ lineUserId, centerId, vitalSetId, reason }) {

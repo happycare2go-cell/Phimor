@@ -62,6 +62,17 @@ test('missing capability is false and System Admin state is scoped per Center', 
   assert.equal(repository.state.auditEvents.filter((row)=>row.event_type==='center.capability_changed').length, 2);
 });
 
+test('System Admin resident options are minimized and restricted to the selected Center', async () => {
+  const { service } = await setupTwoTenants();
+  await db.Residents.insert({ resident_id:'RES-A1', center_id:'CTR-A', care_profile_id:'CP-A1', full_name:'คุณยายเอ', room:'A-1', status:'active', phone:'081-secret' });
+  await db.Residents.insert({ resident_id:'RES-A2', center_id:'CTR-A', care_profile_id:null, full_name:'คุณตาอรุณ', room:'A-2', status:'active' });
+  await db.Residents.insert({ resident_id:'RES-B1', center_id:'CTR-B', care_profile_id:'CP-B1', full_name:'คุณยายบี', room:'B-1', status:'active' });
+  await db.Residents.insert({ resident_id:'RES-A3', center_id:'CTR-A', full_name:'ย้ายออก', status:'inactive' });
+  const rows = await service.listCenterResidentOptions('CTR-A', { search:'ยาย', limit:20 });
+  assert.deepEqual(rows, [{ residentId:'RES-A1', displayName:'คุณยายเอ', room:'A-1', careProfileLinked:true }]);
+  assert.doesNotMatch(JSON.stringify(rows), /081-secret|CP-A1|RES-B1/);
+});
+
 test('unknown capability and non-boolean state fail closed', async () => {
   const { service } = await setupTwoTenants();
   await assert.rejects(service.setCenterCapability({ centerId:'CTR-A', capabilityKey:'hhs_special', enabled:true, actorReference:'ADM-1' }), { code:'UNKNOWN_CAPABILITY' });

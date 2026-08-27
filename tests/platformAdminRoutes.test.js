@@ -59,6 +59,18 @@ test('System Admin capability API lists missing rows as OFF and can enable/disab
   assert.equal((await response.json()).capability.enabled, false);
 });
 
+test('System Admin resident-option API returns only active residents from the requested Center', async () => {
+  await setupCenter('CTR-A');
+  await setupCenter('CTR-B');
+  await db.Residents.insert({ resident_id:'RES-A', center_id:'CTR-A', care_profile_id:'CP-A', full_name:'คุณยายเอ', room:'A-1', status:'active', phone:'081-secret' });
+  await db.Residents.insert({ resident_id:'RES-B', center_id:'CTR-B', care_profile_id:'CP-B', full_name:'คุณยายบี', room:'B-1', status:'active' });
+  const response = await call('/api/admin/platform/centers/CTR-A/resident-options?search=%E0%B8%A2%E0%B8%B2%E0%B8%A2&limit=20', { headers:admin });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.residents, [{ residentId:'RES-A', displayName:'คุณยายเอ', room:'A-1', careProfileLinked:true }]);
+  assert.doesNotMatch(JSON.stringify(body), /081-secret|CP-A|RES-B/);
+});
+
 test('Center actor cannot mutate Platform capability and unknown key is rejected', async () => {
   await setupCenter();
   let response = await call('/api/admin/platform/centers/CTR-A/capabilities/vital_signs_v1', {
