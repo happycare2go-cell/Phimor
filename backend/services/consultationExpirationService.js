@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { withTransaction } = require('../db');
 const { createConsultationRepository } = require('./consultationRepository');
 const { effectiveConsultationState, ConsultationDomainError } = require('../domain/consultation');
+const { consultationRealtimeBus } = require('./consultationRealtimeBus');
 
 async function materializeExpiredCaseInTransaction({consultationCase,repository,eventId}) {
   if (!consultationCase) throw new ConsultationDomainError('CASE_NOT_FOUND',404);
@@ -24,13 +25,16 @@ async function materializeExpiredCaseInTransaction({consultationCase,repository,
 function createConsultationExpirationService({
   repository=createConsultationRepository(),transaction=withTransaction,
   eventId=()=>`CEVT-${randomUUID()}`,
+  realtime=consultationRealtimeBus,
 }={}) {
   async function materializeCase(caseId) {
     if (typeof caseId!=='string' || !caseId.trim()) throw new ConsultationDomainError('CASE_REQUIRED');
-    return transaction(`consultation-expire:${caseId.trim()}`,async()=>{
+    const result=await transaction(`consultation-expire:${caseId.trim()}`,async()=>{
       const consultationCase=await repository.findCaseForUpdate(caseId.trim());
       return materializeExpiredCaseInTransaction({consultationCase,repository,eventId});
     });
+    if(result.changed){try{await realtime.publish({eventType:'case.updated',caseId:result.case.case_id,state:'closed'});}catch(_){/* state persists */}}
+    return result;
   }
 
   async function sweepExpired({limit=100}={}) {

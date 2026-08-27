@@ -32,6 +32,7 @@ const CENTER_LAB_REVIEW_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', '
 const CENTER_CARE_RECORDING_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'care-recording-ui.js'), 'utf8');
 const FAMILY_PLUS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'plus-ui.js'), 'utf8');
 const FAMILY_CONSULTATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'consultation-ui.js'), 'utf8');
+const CONSULTATION_REALTIME_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'consultation-realtime-client.js'), 'utf8');
 const FAMILY_DOCTOR_VISIT_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'doctor-visit-ui.js'), 'utf8');
 const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.js'), 'utf8');
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
@@ -45,6 +46,7 @@ function localHtml(name) {
     .replace('<script src="./care-recording-ui.js"></script>', `<script>${CENTER_CARE_RECORDING_SOURCE}</script>`)
     .replace('<script src="./plus-ui.js"></script>', `<script>${FAMILY_PLUS_SOURCE}</script>`)
     .replace('<script src="./consultation-ui.js"></script>', `<script>${FAMILY_CONSULTATION_SOURCE}</script>`)
+    .replace('<script src="../consultation-realtime-client.js"></script>', `<script>${CONSULTATION_REALTIME_SOURCE}</script>`)
     .replace('<script src="./doctor-visit-ui.js"></script>', `<script>${FAMILY_DOCTOR_VISIT_SOURCE}</script>`)
     .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`);

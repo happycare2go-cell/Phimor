@@ -40,34 +40,52 @@
         <button id="loadMoreButton" class="secondary-button" type="button" hidden>โหลดเพิ่มเติม</button>
       </aside>
 
-      <section class="chat-column" aria-label="การสนทนา">
-        <header id="caseHeader" class="case-header">
-          <div class="empty-state">เลือกเคสจากรายการเพื่อเปิดการสนทนา</div>
-        </header>
-        <section id="caseContext" class="case-context" aria-label="ข้อมูลผู้ติดต่อและ Care Profile" hidden></section>
-        <div id="chatMessages" class="chat-messages" aria-live="polite" aria-label="ข้อความในเคส"></div>
+      <section class="chat-column pharmacist-chat-room" aria-label="การสนทนา">
+        <div class="chat-room-toolbar">
+          <button id="closeChatButton" class="chat-back-button" type="button" aria-label="กลับไปรายการเคส">‹</button>
+          <header id="caseHeader" class="case-header">
+            <div class="empty-state">เลือกเคสจากรายการเพื่อเปิดการสนทนา</div>
+          </header>
+          <span id="chatConnectionState" class="connection-state" role="status"></span>
+        </div>
+        <div id="chatRoomActions" class="chat-room-actions" hidden>
+          <button id="showCaseContextButton" class="secondary-button" type="button">ข้อมูลเคส</button>
+          <button id="showAssistantButton" class="secondary-button" type="button">ผู้ช่วยเภสัชกร</button>
+        </div>
+        <div id="chatInitialQuestion" class="chat-initial-question" hidden></div>
+        <button id="loadOlderMessagesButton" class="load-older-button" type="button" hidden>โหลดข้อความก่อนหน้า</button>
+        <div id="chatMessages" class="chat-messages" role="log" aria-live="polite" aria-label="ข้อความในเคส"></div>
+        <button id="newMessagesButton" class="new-messages-button" type="button" hidden>ข้อความใหม่ ↓</button>
         <div class="resolve-note">
           <button id="resolveButton" class="secondary-button" type="button" hidden>ทำเครื่องหมายว่าตอบประเด็นหลักแล้ว</button>
           <p>Resolved ไม่ปิดการสนทนาก่อนเวลา ผู้ใช้ยังถามต่อในประเด็นที่เกี่ยวข้องได้จนหมด 24 ชั่วโมง</p>
         </div>
+        <div id="chatClosedState" class="chat-closed-state" hidden>การปรึกษาสิ้นสุดแล้ว ห้องนี้เปิดอ่านย้อนหลังได้</div>
         <div class="composer-wrap">
-          <label for="messageComposer">ข้อความจากเภสัชกร</label>
-          <textarea id="messageComposer" maxlength="4000" rows="4" disabled placeholder="พิมพ์คำตอบที่เภสัชกรตรวจสอบและตัดสินใจเอง"></textarea>
-          <div class="composer-actions"><small>สูงสุด 4,000 ตัวอักษร · Enter เพื่อส่ง · Shift+Enter ขึ้นบรรทัดใหม่</small><button id="sendMessageButton" class="primary-button" type="button" disabled>ส่งข้อความ</button></div>
+          <label class="sr-only" for="messageComposer">ข้อความจากเภสัชกร</label>
+          <textarea id="messageComposer" maxlength="4000" rows="1" disabled placeholder="พิมพ์ข้อความ..."></textarea>
+          <button id="sendMessageButton" class="chat-send-button" type="button" disabled aria-label="ส่งข้อความ">➤</button>
         </div>
       </section>
 
-      <aside class="assistant-column" aria-label="AI Pharmacist Assistant">
-        <div class="assistant-heading">
+      <aside id="caseContextPanel" class="support-panel case-context-panel" aria-label="ข้อมูลเคส" hidden>
+        <div class="support-panel__heading"><h2>ข้อมูลเคส</h2><button id="closeCaseContextButton" class="icon-button" type="button">ปิด</button></div>
+        <section id="caseContext" class="case-context" aria-label="ข้อมูลผู้ติดต่อและ Care Profile"></section>
+      </aside>
+
+      <aside id="assistantPanel" class="support-panel assistant-column" aria-label="AI Pharmacist Assistant" hidden>
+        <div class="assistant-heading support-panel__heading">
           <div><span class="ai-label">PRIVATE ASSISTANT</span><h2>AI Pharmacist Assistant</h2></div>
-          <div class="assistant-actions"><button id="generateAssistantButton" class="primary-button" type="button" disabled>สร้างสรุปช่วยตอบ</button><button id="refreshAssistantButton" class="secondary-button" type="button" disabled hidden>รีเฟรชข้อมูล</button></div>
+          <button id="closeAssistantButton" class="icon-button" type="button">ปิด</button>
         </div>
+        <div class="assistant-actions"><button id="generateAssistantButton" class="primary-button" type="button" disabled>สร้างสรุปช่วยตอบ</button><button id="refreshAssistantButton" class="secondary-button" type="button" disabled hidden>รีเฟรชข้อมูล</button></div>
         <div class="ai-boundary" role="note">AI ช่วยสรุปและเสนอประเด็นประกอบการพิจารณาเท่านั้น เภสัชกรเป็นผู้ตัดสินใจและพิมพ์คำตอบให้ผู้ใช้เอง</div>
         <div id="assistantContent" class="assistant-content"><p class="empty-state">เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ</p></div>
       </aside>
     </section>
     <div id="statusLive" class="status-live" role="status" aria-live="polite"></div>
   </main>
+  <script src="../consultation-realtime-client.js"></script>
   <script src="./console.js"></script>
   <script>
     window.PhimorPharmacistConsole.bootstrap();

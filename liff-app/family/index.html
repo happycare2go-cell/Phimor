@@ -264,13 +264,22 @@
         <button type="button" class="consultation-refresh" id="consultationRefreshButton">รีเฟรชรายการคำปรึกษา</button>
       </div>
       <div id="consultationGroups" class="consultation-groups" aria-label="รายการคำปรึกษา"></div>
-      <section id="consultationChat" class="consultation-chat" hidden>
-        <div id="consultationCaseHeader" class="consultation-case-header"></div>
-        <div id="consultationMessages" class="consultation-messages" role="log" aria-live="polite"></div>
+      <section id="consultationCaseSummary" class="consultation-case-summary" hidden></section>
+      <section id="consultationChat" class="consultation-chat-room" hidden aria-label="ห้องแชทปรึกษาเภสัชกร">
+        <header class="consultation-room-header">
+          <button type="button" class="consultation-room-back" id="consultationChatBack" aria-label="กลับไปรายการคำปรึกษา">‹</button>
+          <div class="consultation-room-heading"><h3 id="consultationRoomParticipant">เภสัชกร</h3><p id="consultationRoomStatus">กำลังปรึกษา</p></div>
+          <span id="consultationConnectionState" class="consultation-connection" role="status">กำลังเชื่อมต่อ…</span>
+        </header>
+        <div id="consultationInitialQuestion" class="consultation-room-intro" hidden></div>
+        <button type="button" id="consultationLoadOlder" class="consultation-load-older" hidden>โหลดข้อความก่อนหน้า</button>
+        <div id="consultationMessages" class="consultation-messages" role="log" aria-live="polite" aria-label="ข้อความในห้องปรึกษา"></div>
+        <button type="button" id="consultationNewMessages" class="consultation-new-messages" hidden>ข้อความใหม่</button>
+        <div id="consultationRoomClosed" class="consultation-room-closed" hidden>การปรึกษาสิ้นสุดแล้ว ห้องนี้เปิดอ่านย้อนหลังได้</div>
         <div class="consultation-composer">
-          <label for="consultationMessageComposer">ส่งข้อความถึงเภสัชกร</label>
-          <textarea id="consultationMessageComposer" maxlength="4000"></textarea>
-          <button type="button" class="btn btn-primary" id="consultationSendButton">ส่งข้อความ</button>
+          <label class="sr-only" for="consultationMessageComposer">ส่งข้อความถึงเภสัชกร</label>
+          <textarea id="consultationMessageComposer" maxlength="4000" rows="1" placeholder="พิมพ์ข้อความ..."></textarea>
+          <button type="button" class="consultation-send" id="consultationSendButton" aria-label="ส่งข้อความ">➤</button>
         </div>
       </section>
     </section>
@@ -477,6 +486,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="./plus-ui.js"></script>
+<script src="../consultation-realtime-client.js"></script>
 <script src="./consultation-ui.js"></script>
 <script src="./doctor-visit-ui.js"></script>
 <script src="./lab-results-ui.js"></script>
@@ -640,7 +650,8 @@ async function ensureConsultationUI(){
   if(!CONSULTATION_UI){
     let controller=null;
     const checkoutAdapter=({careProfileId,question,termsVersion})=>consultationApi('/api/consultations/checkout',{method:'POST',body:JSON.stringify({careProfileId,question,termsAccepted:true,termsVersion})});
-    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,checkoutAdapter,onChange:(state)=>{controller?.render(state);refreshHome();}});
+    const realtimeFactory=window.PhimorConsultationRealtime?({onEvent,onRecover,onStatus})=>window.PhimorConsultationRealtime.createRealtimeClient({request:consultationApi,backendUrl:BACKEND_URL,ticketPath:(caseId)=>`/api/consultations/${encodeURIComponent(caseId)}/realtime-ticket`,onEvent,onRecover,onStatus}):null;
+    const session=window.PhimorFamilyConsultationUI.createFamilyConsultationSession({request:consultationApi,checkoutAdapter,realtimeFactory,onChange:(state)=>{controller?.render(state);refreshHome();}});
     controller=window.PhimorFamilyConsultationUI.createController({doc:document,session});
     CONSULTATION_UI={session,controller};
   }

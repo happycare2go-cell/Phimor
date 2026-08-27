@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('node:http');
 const express = require('express');
 const cors = require('cors');
 const cron = require('node-cron');
@@ -32,6 +33,7 @@ const notificationService = require('./services/notificationService');
 const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
 const { missingRuntimeEnvironment, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
+const { createConsultationRealtimeGateway } = require('./realtime/consultationRealtimeGateway');
 
 const app = express();
 
@@ -97,8 +99,9 @@ app.get('/ready', async (req, res) => {
   let database = true; let databaseError = null;
   try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
   const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
+  const consultationRealtime = app.locals.consultationRealtimeHealth?.() || { configured:false, started:false };
   const ready = database && missing.length === 0;
-  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications });
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications, consultationRealtime });
 });
 app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 
@@ -149,9 +152,18 @@ function startScheduler() {
 function stopScheduler() { scheduledTasks.forEach((t) => t.stop()); scheduledTasks = []; }
 
 const PORT = process.env.PORT || 3000;
+function createBackendHttpServer({ realtimeGateway = createConsultationRealtimeGateway() } = {}) {
+  const server = http.createServer(app);
+  realtimeGateway.attach(server);
+  app.locals.consultationRealtimeHealth = () => realtimeGateway.health();
+  server.consultationRealtimeGateway = realtimeGateway;
+  return server;
+}
 if (require.main === module) {
-  db.initializeDatabase().then(() => {
-    app.listen(PORT, () => {
+  db.initializeDatabase().then(async () => {
+    const server = createBackendHttpServer();
+    await server.consultationRealtimeGateway.start();
+    server.listen(PORT, () => {
       console.log(`พี่หมอ Backend กำลังทำงานที่พอร์ต ${PORT}`);
       startScheduler();
     });
@@ -164,3 +176,4 @@ module.exports = app;
 module.exports.startScheduler = startScheduler;
 module.exports.stopScheduler = stopScheduler;
 module.exports.schedulerReferenceDate = schedulerReferenceDate;
+module.exports.createBackendHttpServer = createBackendHttpServer;

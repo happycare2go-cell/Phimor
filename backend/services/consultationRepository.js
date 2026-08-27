@@ -216,6 +216,16 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async findPharmacistById(pharmacistId) {
+      const result = await queryFn(
+        `SELECT pharmacist_id, line_user_id, display_name, license_number,
+                license_verified_at, status, created_at, updated_at
+         FROM pharmacist_accounts WHERE pharmacist_id = $1`,
+        [pharmacistId]
+      );
+      return result.rows[0] || null;
+    },
+
     async findPaymentSupportRecord(reference) {
       const result = await queryFn(
         `SELECT
@@ -284,12 +294,22 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
     async findCaseForRead(caseId) {
       const result = await queryFn(
         `SELECT c.*, o.initial_question, o.status AS order_status,
+                p.display_name AS pharmacist_display_name,
                 o.provisioning_status, CURRENT_TIMESTAMP AS database_now,
                 COALESCE((SELECT MAX(m.message_sequence)
                           FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
-                  AS last_message_sequence
+                  AS last_message_sequence,
+                COALESCE((SELECT COUNT(*) FROM consultation_messages m
+                          WHERE m.case_id = c.case_id AND m.sender_type = 'pharmacist'
+                            AND m.message_sequence > c.customer_last_read_sequence), 0)
+                  AS customer_unread_count,
+                COALESCE((SELECT COUNT(*) FROM consultation_messages m
+                          WHERE m.case_id = c.case_id AND m.sender_type = 'customer'
+                            AND m.message_sequence > c.pharmacist_last_read_sequence), 0)
+                  AS pharmacist_unread_count
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
+         LEFT JOIN pharmacist_accounts p ON p.pharmacist_id = c.assigned_pharmacist_id
          WHERE c.case_id = $1`,
         [caseId]
       );
@@ -299,13 +319,23 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
     async listCasesForCustomer(lineUserId) {
       const result = await queryFn(
         `SELECT c.*, o.initial_question,
+                p.display_name AS pharmacist_display_name,
                 o.status AS order_status, o.provisioning_status,
                 CURRENT_TIMESTAMP AS database_now,
                 COALESCE((SELECT MAX(m.message_sequence)
                           FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
-                  AS last_message_sequence
+                  AS last_message_sequence,
+                COALESCE((SELECT COUNT(*) FROM consultation_messages m
+                          WHERE m.case_id = c.case_id AND m.sender_type = 'pharmacist'
+                            AND m.message_sequence > c.customer_last_read_sequence), 0)
+                  AS customer_unread_count,
+                COALESCE((SELECT COUNT(*) FROM consultation_messages m
+                          WHERE m.case_id = c.case_id AND m.sender_type = 'customer'
+                            AND m.message_sequence > c.pharmacist_last_read_sequence), 0)
+                  AS pharmacist_unread_count
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
+         LEFT JOIN pharmacist_accounts p ON p.pharmacist_id = c.assigned_pharmacist_id
          WHERE c.customer_line_user_id = $1
            AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
          ORDER BY c.created_at DESC, c.case_id DESC`,
@@ -348,13 +378,19 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       if (!predicate) throw new Error('Unsupported consultation collection');
       const result = await queryFn(
         `SELECT c.*, o.initial_question,
+                p.display_name AS pharmacist_display_name,
                 o.status AS order_status, o.provisioning_status,
                 CURRENT_TIMESTAMP AS database_now,
                 COALESCE((SELECT MAX(m.message_sequence)
                           FROM consultation_messages m WHERE m.case_id = c.case_id), 0)
-                  AS last_message_sequence
+                  AS last_message_sequence,
+                COALESCE((SELECT COUNT(*) FROM consultation_messages m
+                          WHERE m.case_id = c.case_id AND m.sender_type = 'customer'
+                            AND m.message_sequence > c.pharmacist_last_read_sequence), 0)
+                  AS pharmacist_unread_count
          FROM consultation_cases c
          JOIN consultation_orders o ON o.order_id = c.order_id
+         LEFT JOIN pharmacist_accounts p ON p.pharmacist_id = c.assigned_pharmacist_id
          WHERE c.assigned_pharmacist_id = $1 AND ${predicate}
            AND o.status = 'paid' AND o.provisioning_status = 'provisioned'
          ORDER BY c.updated_at DESC, c.case_id DESC
@@ -387,6 +423,54 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
         [caseId, afterSequence, limit]
       );
       return result.rows;
+    },
+
+    async listMessagesBefore(caseId, { beforeSequence = 0, limit = 21 } = {}) {
+      const result = await queryFn(
+        `SELECT message_id, case_id, message_sequence, sender_type, sender_id, body, created_at
+         FROM (
+           SELECT message_id, case_id, message_sequence, sender_type, sender_id, body, created_at
+           FROM consultation_messages
+           WHERE case_id = $1 AND ($2 = 0 OR message_sequence < $2)
+           ORDER BY message_sequence DESC
+           LIMIT $3
+         ) page
+         ORDER BY message_sequence`,
+        [caseId, beforeSequence, limit]
+      );
+      return result.rows;
+    },
+
+    async findMessageBySequence(caseId, sequence) {
+      const result = await queryFn(
+        `SELECT message_id, case_id, message_sequence, sender_type, sender_id, body, created_at
+         FROM consultation_messages WHERE case_id = $1 AND message_sequence = $2`,
+        [caseId, sequence]
+      );
+      return result.rows[0] || null;
+    },
+
+    async getLastMessageSequence(caseId) {
+      const result = await queryFn(
+        `SELECT COALESCE(MAX(message_sequence), 0) AS last_message_sequence
+         FROM consultation_messages WHERE case_id = $1`,
+        [caseId]
+      );
+      return Number(result.rows[0]?.last_message_sequence || 0);
+    },
+
+    async updateReadSequence(caseId, reader, sequence) {
+      const column = reader === 'customer' ? 'customer_last_read_sequence'
+        : reader === 'pharmacist' ? 'pharmacist_last_read_sequence' : null;
+      if (!column) throw new Error('Unsupported consultation reader');
+      const result = await queryFn(
+        `UPDATE consultation_cases SET
+           ${column} = GREATEST(${column}, $2), updated_at = CURRENT_TIMESTAMP
+         WHERE case_id = $1
+         RETURNING *, CURRENT_TIMESTAMP AS database_now`,
+        [caseId, sequence]
+      );
+      return result.rows[0] || null;
     },
 
     async listRecentMessages(caseId, { limit = 12 } = {}) {
