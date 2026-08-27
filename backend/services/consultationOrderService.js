@@ -24,6 +24,21 @@ function createConsultationOrderService({
   orderId = () => `CORD-${randomUUID()}`,
   safetyClassifier = classifyConsultationSafety,
 } = {}) {
+  function staleDraft(order, referenceTime) {
+    if (order?.status !== 'draft' || !order.created_at) return false;
+    const created = new Date(order.created_at).getTime();
+    const reference = new Date(referenceTime).getTime();
+    return Number.isFinite(created) && Number.isFinite(reference)
+      && reference - created >= 10 * 60 * 1000;
+  }
+
+  function expiredPending(order, referenceTime) {
+    if (order?.status !== 'payment_pending' || !order.payment_due_at) return false;
+    const due = new Date(order.payment_due_at).getTime();
+    const reference = new Date(referenceTime).getTime();
+    return Number.isFinite(due) && Number.isFinite(reference) && due <= reference;
+  }
+
   async function createDraft({
     lineUserId, careProfileId, initialQuestion, termsAccepted, termsVersion,
   } = {}) {
@@ -43,13 +58,26 @@ function createConsultationOrderService({
         lineUserId: lineUserId.trim(), careProfileId: careProfileId.trim(),
         permission: 'view', requireActiveCenter: true,
       });
-      return repository.createOrder({
+      let existing = typeof repository.findActiveCheckoutForUpdate==='function'
+        ? await repository.findActiveCheckoutForUpdate(lineUserId.trim(), careProfileId.trim()) : null;
+      if (staleDraft(existing, now()) || expiredPending(existing, now())) {
+        if (typeof repository.markOrderExpired==='function') await repository.markOrderExpired(existing.order_id);
+        existing = null;
+      }
+      if (existing) return { ...existing, checkout_reused:true };
+
+      const created = await repository.createOrder({
         order_id: orderId(), customer_line_user_id: lineUserId.trim(),
         care_profile_id: careProfileId.trim(), initial_question: question,
         amount_minor: CONSULTATION_PRICE_MINOR, currency: CONSULTATION_CURRENCY,
         duration_minutes: CONSULTATION_DURATION_MINUTES,
         terms_version: acceptedVersion, terms_accepted_at: now(),
       });
+      if (created) return { ...created, checkout_reused:false };
+      existing = typeof repository.findActiveCheckoutForUpdate==='function'
+        ? await repository.findActiveCheckoutForUpdate(lineUserId.trim(), careProfileId.trim()) : null;
+      if (!existing) throw new ConsultationDomainError('CHECKOUT_RESERVATION_FAILED', 409);
+      return { ...existing, checkout_reused:true };
     });
   }
 

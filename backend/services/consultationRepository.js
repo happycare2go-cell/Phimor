@@ -10,6 +10,7 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
           amount_minor, currency, duration_minutes, terms_version,
           terms_accepted_at, status, provisioning_status
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft', 'pending')
+        ON CONFLICT DO NOTHING
         RETURNING *`,
         [
           record.order_id, record.customer_line_user_id, record.care_profile_id,
@@ -17,7 +18,37 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
           record.duration_minutes, record.terms_version, record.terms_accepted_at,
         ]
       );
-      return result.rows[0];
+      return result.rows[0] || null;
+    },
+
+    async findActiveCheckoutForUpdate(customerLineUserId, careProfileId) {
+      const result = await queryFn(
+        `SELECT * FROM consultation_orders
+         WHERE customer_line_user_id = $1 AND care_profile_id = $2
+           AND (status IN ('draft', 'payment_pending')
+             OR (status = 'paid' AND provisioning_status <> 'provisioned'))
+         ORDER BY created_at DESC, order_id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [customerLineUserId, careProfileId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async findCurrentCheckout(customerLineUserId, careProfileId) {
+      const result = await queryFn(
+        `SELECT o.*, c.case_id, c.state AS case_state, c.accepted_at, c.expires_at,
+                c.closed_at, c.close_reason, CURRENT_TIMESTAMP AS database_now
+         FROM consultation_orders o
+         LEFT JOIN consultation_cases c ON c.order_id = o.order_id
+         WHERE o.customer_line_user_id = $1 AND o.care_profile_id = $2
+           AND (o.status IN ('draft', 'payment_pending')
+             OR (o.status = 'paid' AND o.provisioning_status <> 'provisioned'))
+         ORDER BY o.created_at DESC, o.order_id DESC
+         LIMIT 1`,
+        [customerLineUserId, careProfileId]
+      );
+      return result.rows[0] || null;
     },
 
     async findOrderForUpdate(orderId) {
@@ -26,25 +57,36 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
     },
 
     async findOrder(orderId) {
-      const result = await queryFn('SELECT * FROM consultation_orders WHERE order_id = $1', [orderId]);
+      const result = await queryFn(
+        'SELECT *, CURRENT_TIMESTAMP AS database_now FROM consultation_orders WHERE order_id = $1',
+        [orderId]
+      );
       return result.rows[0] || null;
     },
 
-    async markOrderPaymentPending(orderId, { provider, providerCheckoutId, paymentDueAt = null }) {
+    async markOrderPaymentPending(orderId, {
+      provider, providerCheckoutId, paymentDueAt = null, paymentResumeData = null,
+    }) {
       const result = await queryFn(
         `UPDATE consultation_orders SET
           status = 'payment_pending', provider = $2, provider_checkout_id = $3,
-          payment_due_at = $4, updated_at = CURRENT_TIMESTAMP
+          payment_due_at = $4, payment_resume_data = $5::jsonb,
+          reconciliation_attempts = 0,
+          reconciliation_next_attempt_at = CURRENT_TIMESTAMP + INTERVAL '2 minutes',
+          reconciliation_last_error = NULL,
+          updated_at = CURRENT_TIMESTAMP
          WHERE order_id = $1 AND status <> 'paid'
          RETURNING *`,
-        [orderId, provider, providerCheckoutId, paymentDueAt]
+        [orderId, provider, providerCheckoutId, paymentDueAt,
+          paymentResumeData ? JSON.stringify(paymentResumeData) : null]
       );
       return result.rows[0] || null;
     },
 
     async markOrderPaymentFailed(orderId) {
       const result = await queryFn(
-        `UPDATE consultation_orders SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+        `UPDATE consultation_orders SET status = 'failed', payment_resume_data = NULL,
+          reconciliation_next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP
          WHERE order_id = $1 AND status <> 'paid'
          RETURNING *`,
         [orderId]
@@ -226,6 +268,72 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async markOrderExpired(orderId) {
+      const result = await queryFn(
+        `UPDATE consultation_orders SET status = 'expired', payment_resume_data = NULL,
+          reconciliation_next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE order_id = $1 AND status IN ('draft', 'payment_pending')
+         RETURNING *`,
+        [orderId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async expireStaleDraftOrders(maxAgeMinutes = 10) {
+      const result = await queryFn(
+        `UPDATE consultation_orders SET status = 'expired',
+          reconciliation_next_attempt_at = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE status = 'draft'
+           AND created_at <= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 minute')
+         RETURNING order_id`,
+        [maxAgeMinutes]
+      );
+      return result.rows.map((row) => row.order_id);
+    },
+
+    async listOrdersDueForReconciliation(limit = 25) {
+      const result = await queryFn(
+        `SELECT order_id
+         FROM consultation_orders
+         WHERE (status = 'payment_pending'
+             OR (status = 'paid' AND provisioning_status <> 'provisioned'))
+           AND COALESCE(reconciliation_next_attempt_at, updated_at) <= CURRENT_TIMESTAMP
+         ORDER BY COALESCE(reconciliation_next_attempt_at, updated_at), order_id
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows.map((row) => row.order_id);
+    },
+
+    async markOrderReconciliationAttempt(orderId, { nextAttemptAt, errorCode = null } = {}) {
+      const result = await queryFn(
+        `UPDATE consultation_orders SET
+          reconciliation_attempts = reconciliation_attempts + 1,
+          reconciliation_next_attempt_at = $2,
+          reconciliation_last_error = $3,
+          updated_at = CURRENT_TIMESTAMP
+         WHERE order_id = $1
+           AND (status = 'payment_pending'
+             OR (status = 'paid' AND provisioning_status <> 'provisioned'))
+         RETURNING *`,
+        [orderId, nextAttemptAt || null, errorCode || null]
+      );
+      return result.rows[0] || null;
+    },
+
+    async finishOrderReconciliation(orderId, { nextAttemptAt = null, errorCode = null } = {}) {
+      const result = await queryFn(
+        `UPDATE consultation_orders SET
+          reconciliation_next_attempt_at = $2,
+          reconciliation_last_error = $3,
+          updated_at = CURRENT_TIMESTAMP
+         WHERE order_id = $1
+         RETURNING *`,
+        [orderId, nextAttemptAt, errorCode]
+      );
+      return result.rows[0] || null;
+    },
+
     async findPaymentSupportRecord(reference) {
       const result = await queryFn(
         `SELECT
@@ -274,6 +382,73 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
            AND line_user_id IS NOT NULL
            AND btrim(line_user_id) <> ''
          ORDER BY pharmacist_id`
+      );
+      return result.rows;
+    },
+
+    async listAcceptedNotificationCandidates(since) {
+      const result = await queryFn(
+        `SELECT c.case_id, c.customer_line_user_id, e.occurred_at
+         FROM consultation_events e
+         JOIN consultation_cases c ON c.case_id = e.case_id
+         WHERE e.event_type = 'accepted' AND e.occurred_at >= $1
+         ORDER BY e.occurred_at, c.case_id`,
+        [since]
+      );
+      return result.rows;
+    },
+
+    async listClosedNotificationCandidates(since) {
+      const result = await queryFn(
+        `SELECT c.case_id, c.customer_line_user_id, e.occurred_at
+         FROM consultation_events e
+         JOIN consultation_cases c ON c.case_id = e.case_id
+         WHERE e.event_type = 'closed' AND e.occurred_at >= $1
+         ORDER BY e.occurred_at, c.case_id`,
+        [since]
+      );
+      return result.rows;
+    },
+
+    async listNearExpiryNotificationCandidates(milestoneMinutes = 120) {
+      const result = await queryFn(
+        `SELECT case_id, customer_line_user_id, expires_at
+         FROM consultation_cases
+         WHERE state IN ('active', 'resolved')
+           AND expires_at > CURRENT_TIMESTAMP
+           AND expires_at <= CURRENT_TIMESTAMP + ($1 * INTERVAL '1 minute')
+         ORDER BY expires_at, case_id`,
+        [milestoneMinutes]
+      );
+      return result.rows;
+    },
+
+    async listUnreadMessageNotificationCandidates(limit = 100) {
+      const result = await queryFn(
+        `SELECT c.case_id, c.waiting_on, c.customer_line_user_id,
+                p.pharmacist_id, p.line_user_id AS pharmacist_line_user_id,
+                unread.message_sequence, unread.sender_type
+         FROM consultation_cases c
+         LEFT JOIN pharmacist_accounts p ON p.pharmacist_id = c.assigned_pharmacist_id
+         JOIN LATERAL (
+           SELECT m.message_sequence, m.sender_type
+           FROM consultation_messages m
+           WHERE m.case_id = c.case_id
+             AND (
+               (c.waiting_on = 'customer' AND m.sender_type = 'pharmacist'
+                 AND m.message_sequence > c.customer_last_read_sequence)
+               OR
+               (c.waiting_on = 'pharmacist' AND m.sender_type = 'customer'
+                 AND m.message_sequence > c.pharmacist_last_read_sequence)
+             )
+           ORDER BY m.message_sequence
+           LIMIT 1
+         ) unread ON TRUE
+         WHERE c.state IN ('active', 'resolved')
+           AND c.expires_at > CURRENT_TIMESTAMP
+         ORDER BY c.updated_at, c.case_id
+         LIMIT $1`,
+        [limit]
       );
       return result.rows;
     },

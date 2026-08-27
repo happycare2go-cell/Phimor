@@ -27,7 +27,7 @@ task.
 ## Production migration readiness
 
 The repository migration chain currently ends at
-`0012_align_care_finalization_and_routing.js`. Application startup (`npm
+`0013_add_consultation_payment_recovery.js`. Application startup (`npm
 start`) does not run migrations.
 
 The supported commands are only the following, run from `backend` with the
@@ -55,12 +55,13 @@ Production sequence:
    `0008_create_platform_organizations_and_integrations`,
    `0009_create_canonical_vital_signs`,
    `0010_create_daily_care_reports`,
-   `0011_create_integration_event_inbox`, then
-   `0012_align_care_finalization_and_routing`;
+   `0011_create_integration_event_inbox`,
+   `0012_align_care_finalization_and_routing`, then
+   `0013_add_consultation_payment_recovery`;
 6. if older than `0007`, review every reported pending migration rather than
    assuming the starting state;
 7. run `npm run migrate` once; do not interrupt the runner;
-8. run `npm run migrate:status` again and require current version `0012`, no
+8. run `npm run migrate:status` again and require current version `0013`, no
    pending migration, and no checksum mismatch;
 9. deploy/redeploy `phimor-backend` from the approved commit;
 10. verify `/health`, `/ready`, scheduler heartbeat, notification health, and
@@ -79,7 +80,7 @@ truth. A checksum mismatch is a stop condition.
 `render.yaml` defines `phimor-backend` and `phimor-liff` but does not set
 `autoDeploy:false`; its header also describes automatic Blueprint deployment.
 It has no migration `preDeployCommand`. Therefore a merge can deploy backend
-code requiring migrations 0008–0012 before schema preparation.
+code requiring migrations 0008–0013 before schema preparation.
 
 Before merging/deploying the pilot release, an authorized operator must disable
 or pause auto-deploy for both production services in Render (or otherwise hold

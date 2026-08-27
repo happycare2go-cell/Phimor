@@ -34,6 +34,9 @@ const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
 const { missingRuntimeEnvironment, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
 const { createConsultationRealtimeGateway } = require('./realtime/consultationRealtimeGateway');
+const { createConsultationLifecycleSchedulerService } = require('./services/consultationLifecycleSchedulerService');
+
+const consultationLifecycleScheduler = createConsultationLifecycleSchedulerService();
 
 const app = express();
 
@@ -142,6 +145,10 @@ function startScheduler() {
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => { heartbeat(); webhookRouter.processPendingWebhookEvents?.().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => {
     heartbeat(); integrationEventService.processDue().catch(() => console.error('integration inbox processing unavailable'));
+  }, { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => {
+    heartbeat();consultationLifecycleScheduler.runDueWork()
+      .catch(() => console.error('consultation lifecycle processing unavailable'));
   }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('15 2 * * *', () => { heartbeat(); require('./services/centerService').reconcileAllCenterStaff().catch(console.error); }, { timezone: TZ }));
   scheduledTasks.push(cron.schedule('45 2 * * *', () => { heartbeat(); require('./services/retentionService').purgeExpiredSourceImages().catch(console.error); }, { timezone: TZ }));
