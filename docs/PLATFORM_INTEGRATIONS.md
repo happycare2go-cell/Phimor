@@ -1,40 +1,60 @@
 # PHIMOR Platform integrations
 
-Platform P0 introduces reusable external-integration identity. PHIMOR and
-Care2Go remain first-party services; external care-center software is onboarded
-through an Organization and Integration Client configured by System Admin.
+PHIMOR and Care2Go are first-party services. External care-center software is
+onboarded through the vendor-neutral Organization, Integration Client,
+credential, Center scope, event scope, and exact external mapping foundation.
+The canonical domains do not branch on a vendor name.
 
-## Trust boundary
+## Trust and tenant boundary
 
-- The bearer credential resolves the Integration Client, Organization and
-  trusted `source_system`.
-- Center and event-type access must be explicitly granted.
-- External Center and Resident identities use exact mappings. Names are for
-  human review only and never authorize or automatically merge a person.
-- An unknown resident in an otherwise valid tenant is a future operational
-  `pending_subject_mapping` state, not a cross-tenant security error.
-- Credential tokens are shown once. Only a salted scrypt hash and public prefix
-  are stored. Rotation and revocation are explicit and audited without secrets.
+- A bearer credential resolves the trusted Integration Client, Organization,
+  and `source_system`; values in a clinical event cannot replace that identity.
+- Center and event scopes must be explicitly granted by System Admin.
+- External Center and Resident identities use exact mappings. Names, rooms,
+  and LINE groups are not patient identity and never authorize a request.
+- The mapped Resident must belong to the mapped Center and Care Profile.
+- Unknown Residents become `pending_subject_mapping`. PHIMOR does not guess or
+  attach the payload to another person.
+- Credential secrets are displayed once and only salted hashes are stored.
 
-## Capability control
+The Center capabilities `vital_signs_v1` and `daily_care_v1` are OFF when the
+corresponding row is missing. Only System Admin can change them. Center owners,
+managers, staff, and Integration Clients cannot enable capabilities.
 
-`vital_signs_v1` and `daily_care_v1` default to off when their database row is
-missing. Only System Admin platform APIs can change a Center capability. Center
-owners and managers have no feature-toggle endpoint.
+## Finalization responsibility
 
-## Deprecated legacy endpoint
+An external system owns its staff drafting, transcription, review, and approval
+workflow. It sends PHIMOR only the final approved snapshot. PHIMOR does not need
+the external draft or source audio and does not call the vendor back to fetch
+the final clinical values.
 
-`POST /api/external/vitals` and `X-Center-Api-Key` remain temporarily for
-backward compatibility. They are not the canonical integration foundation and
-must not be used for a new customer. The route marks responses as deprecated,
-uses the server-derived source `legacy_center_api_key`, and stores any reported
-source only as non-authoritative compatibility metadata.
+The safe sequence is:
 
-The legacy `Centers.external_api_key` is retained until an explicitly approved
-retirement plan is complete. It is redacted from Center, registration and
-ordinary Admin projections. New integrations must use Integration Clients.
+```text
+external staff records
+→ external review/approval
+→ external database commit and outbox
+→ care.daily_report.finalized
+→ PHIMOR canonical finalized Daily Care
+→ PHIMOR GroupBinding reconciliation
+→ asynchronous Family notification intent
+```
 
-## Event ingestion contract (v1)
+Native PHIMOR Centers use the same finalized canonical record downstream, but
+PHIMOR supplies the review loop:
+
+```text
+staff submits
+→ owner/manager reviews
+→ return for correction and resubmit, or finalize
+→ asynchronous Family notification intent
+```
+
+Submitted and returned reports are stored but are not Family-visible and do not
+create a Family notification. A finalized report is not rolled back when LINE
+is temporarily unavailable.
+
+## Endpoint and common envelope
 
 New integrations send events to:
 
@@ -44,179 +64,249 @@ Authorization: Bearer <one-time-issued-integration-credential>
 Content-Type: application/json
 ```
 
-The server accepts at most 256 KiB and rejects unknown fields. The credential,
-event scope, Center scope, active Center, exact external Center mapping and
-Center capability are all checked by the backend. A successful HTTP response
-does not bypass those checks.
-
-The common envelope is:
+The request is limited to 256 KiB and unknown fields are rejected. Both camel
+case and the documented snake case aliases are normalized deterministically.
 
 ```json
 {
-  "schemaVersion": "1.0",
-  "eventId": "hhs-event-20260827-0001",
-  "eventType": "care.vitals.recorded",
-  "occurredAt": "2026-08-27T02:15:00.000Z",
+  "schema_version": "1.0",
+  "event_id": "vendor-stable-event-1001",
+  "event_type": "care.vitals.recorded",
+  "occurred_at": "2026-08-27T07:30:00+07:00",
   "subject": {
-    "externalCenterId": "hhs-center-01",
-    "externalResidentId": "hhs-resident-204",
-    "displayName": "optional matching hint",
-    "room": "optional matching hint"
+    "center_external_id": "branch-01",
+    "resident_external_id": "resident-10025",
+    "display": {
+      "first_name": "สมใจ",
+      "last_name": "ใจดี",
+      "room": "A-201"
+    }
   },
   "recorder": {
-    "externalStaffId": "optional-stable-staff-id",
-    "displayName": "optional recorder display name"
+    "external_staff_id": "staff-417",
+    "display_name": "ผู้ดูแลกะเช้า"
   },
   "data": {}
 }
 ```
 
-`firstName`, `lastName`, `displayName`, and `room` are optional operational
-matching hints. They never grant access and never replace the exact external
-subject mapping. Recorder fields are optional provenance only and never grant
-staff or Care Profile authorization.
+Display and recorder fields are optional provenance and review hints. They do
+not grant access or replace exact subject mapping.
 
-### Vital Signs event
+## `care.vitals.recorded`
 
-Use `eventType: care.vitals.recorded`. The `data` object contains an optional
-stable `externalRecordId` and `observations`. Supported measurements and input
-units are deliberately bounded:
+Standalone Vital events are stored in canonical Vital history. By default they
+do **not** create a Family LINE notification. Immediate clinical alerts require
+a separately approved rule product and are not inferred here.
 
-| measurementType | accepted sourceUnit |
-| --- | --- |
-| `temperature` | `Cel`, `°C`, `C` |
-| `blood_pressure_systolic` | `mm[Hg]`, `mmHg` |
-| `blood_pressure_diastolic` | `mm[Hg]`, `mmHg` |
-| `pulse` | `/min`, `bpm` |
-| `spo2` | `%` |
-| `respiratory_rate` | `/min`, `breaths/min` |
+`data.observations` is a partial array: send only facts actually measured.
+Unknown types and units fail with stable validation errors.
+
+| type | accepted unit | optional context |
+| --- | --- | --- |
+| `temperature` | `Cel`, `°C`, `C` | none |
+| `blood_pressure_systolic` | `mm[Hg]`, `mmHg` | none |
+| `blood_pressure_diastolic` | `mm[Hg]`, `mmHg` | none |
+| `pulse` | `/min`, `bpm` | none |
+| `spo2` | `%` | none |
+| `respiratory_rate` | `/min`, `breaths/min` | none |
+| `blood_glucose` | `mg/dL`, `mmol/L` | `fasting`, `before_meal`, `after_meal`, `random`, `unspecified` |
+| `weight` | `kg` | none |
 
 ```json
 {
-  "externalRecordId": "vital-204-001",
+  "external_record_id": "vital-10025-20260827-01",
   "observations": [
-    { "measurementType": "temperature", "numericValue": 36.8, "sourceUnit": "Cel" },
-    { "measurementType": "pulse", "numericValue": 72, "sourceUnit": "/min" }
+    { "type": "temperature", "value": 36.6, "unit": "Cel" },
+    { "type": "blood_pressure_systolic", "value": 128, "unit": "mm[Hg]" },
+    { "type": "blood_pressure_diastolic", "value": 76, "unit": "mm[Hg]" },
+    { "type": "blood_glucose", "value": 108, "unit": "mg/dL", "context": "fasting" },
+    { "type": "weight", "value": 54.2, "unit": "kg" }
   ]
 }
 ```
 
-PHIMOR stores the factual source values and deterministic canonical unit only.
-This ingestion path does not diagnose, score risk, or infer a clinical state.
+PHIMOR preserves glucose in its supported source unit; it does not guess a
+conversion between `mg/dL` and `mmol/L`. The ingestion path adds no normal,
+abnormal, high, low, critical, diagnosis, or recommendation label.
 
-### Daily Care event
+## `care.daily_report.finalized`
 
-Use `eventType: care.daily_report.recorded`. Supported `itemType` values are
-`shift`, `nutrition`, `fluid_intake`, `sleep_rest`, `bowel_movement`,
-`urination`, `activity`, `mood_behavior`, `general_condition`, and
-`symptom_note`. A value is explicitly `text`,
-`numeric`, or `boolean`. Only numeric values may have `sourceUnit`.
+This event means the external system has committed and approved the complete
+Family-facing snapshot. The prior experimental event name
+`care.daily_report.recorded` is not accepted by the V1 registry. Migration 0012
+also stops if it finds legacy inbox rows under that ambiguous event name so an
+operator must review them instead of silently changing their meaning.
 
 ```json
 {
-  "externalRecordId": "daily-204-001",
-  "items": [
-    {
-      "itemType": "nutrition",
-      "valueType": "text",
-      "textValue": "รับประทานอาหารได้ครึ่งจาน"
-    },
-    {
-      "itemType": "fluid_intake",
-      "valueType": "numeric",
-      "numericValue": 850,
-      "sourceUnit": "mL"
+  "schema_version": "1.0",
+  "event_id": "vendor-final-10025-20260827-day",
+  "event_type": "care.daily_report.finalized",
+  "occurred_at": "2026-08-27T20:05:00+07:00",
+  "subject": {
+    "center_external_id": "branch-01",
+    "resident_external_id": "resident-10025",
+    "expected_line_group_id": "Cxxxxxxxxxxxxxxxx",
+    "display": {
+      "first_name": "สมใจ",
+      "last_name": "ใจดี",
+      "room": "A-201"
     }
-  ]
+  },
+  "data": {
+    "external_record_id": "daily-10025-20260827-day",
+    "care_date": "2026-08-27",
+    "shift": { "code": "day", "source_label": "D" },
+    "observations": [
+      { "type": "pulse", "value": 72, "unit": "/min" },
+      { "type": "spo2", "value": 97, "unit": "%" }
+    ],
+    "care_items": [
+      { "item_type": "nutrition", "value_type": "text", "value": "รับประทานอาหารได้" },
+      { "item_type": "general_condition", "value_type": "text", "value": "พูดคุยได้" }
+    ],
+    "recorded_by": {
+      "external_staff_id": "staff-417",
+      "display_name": "ผู้ดูแลกะเช้า"
+    },
+    "finalized_by": {
+      "external_staff_id": "manager-02",
+      "display_name": "ผู้จัดการ"
+    },
+    "recorded_at": "2026-08-27T19:55:00+07:00",
+    "finalized_at": "2026-08-27T20:05:00+07:00"
+  }
 }
 ```
 
-`data.vitalSigns` may optionally carry `{ occurredAt, observations }`. Those
-observations use the same Vital Signs validation and are committed in the same
-database transaction as the Daily Care report.
+`care_items` supports `shift`, `nutrition`, `fluid_intake`, `sleep_rest`,
+`bowel_movement`, `urination`, `activity`, `mood_behavior`,
+`general_condition`, and `symptom_note`. Values are explicitly text, numeric,
+or boolean; only numeric values may have a unit. Missing observations and items
+remain absent.
+
+`shift.code` is a normalized, bounded code and `shift.source_label` preserves
+the source label. `day` and `night` are useful for a two-shift pilot but the
+platform is not limited to two shifts or two reports per day.
+
+For the HHS pilot, source labels for its Day and Night shifts may map to `day`
+and `night`; one finalized shift report normally means one Family notification,
+so its expected operational maximum is two Daily Care pushes per Resident per
+day. This is an HHS policy example, not a global platform constraint. HHS
+Integration V1 sends final approved text/data only; source audio remains in the
+HHS system and is not sent to PHIMOR.
+
+Observations embedded in the finalized snapshot become a linked canonical
+Vital set inside the same care transaction. They are rendered in the one Daily
+Care notification and do not create a second Vital notification.
+
+## Expected LINE group reconciliation
+
+`subject.expected_line_group_id` is optional. It is a routing assertion for
+cross-system reconciliation, not authentication, patient identity, or a LINE
+destination. Only an active PHIMOR `GroupBinding` for the resolved Care Profile
+is authoritative.
+
+- Expected group omitted: use the existing verified Family GroupBinding and,
+  if none exists, the established Care Profile owner fallback policy.
+- Expected group matches the PHIMOR binding: store the finalized record and
+  queue the notification to that verified PHIMOR binding.
+- Expected group differs: store the finalized record, do not queue LINE, and
+  persist `group_binding_mismatch`.
+- Expected group is present but no verified binding exists: store the finalized
+  record, do not queue LINE, and persist `group_binding_missing`.
+
+When an expected group is supplied, PHIMOR never falls back to the profile
+owner. This prevents bypassing the reconciliation assertion. A group bound to
+another Care Profile or Center cannot be used. Correcting the PHIMOR binding
+does not rewrite clinical data; System Admin may explicitly retry routing for
+the already processed finalized event.
+
+System Admin endpoints provide minimized pending-subject and routing status:
+
+```text
+GET  /api/admin/platform/pending-subjects
+POST /api/admin/platform/pending-subjects/map
+GET  /api/admin/platform/integration-events/status
+POST /api/admin/platform/integration-events/:integrationEventId/reconcile-group
+```
+
+Operational status includes Integration Client, Organization, Center, external
+subject, mapping status, group match/mismatch/missing, and notification intent
+state. LINE routing identifiers are masked in the API projection. Full Daily
+Care and Vital payloads are not returned by this operational endpoint.
+
+## Pending subjects
+
+A valid event for an unknown external Resident is durably retained as
+`pending_subject_mapping`; no canonical record is attached to another person
+and no LINE notification is created. System Admin performs an exact mapping,
+after which pending events are reprocessed in arrival order. Name, room, and
+expected group are never fuzzy identity keys.
 
 ## Acknowledgement, idempotency, and recovery
 
-- New valid events return HTTP 202. The response status is normally
-  `processed`, `pending_subject_mapping`, `retrying`, `rejected`, or `dead`.
-- Repeating the same `eventId` for the same Integration Client and byte-equivalent
-  normalized payload returns the existing result with `duplicate: true`.
-- Reusing an `eventId` with changed content returns HTTP 409 and creates no
+- The inbox identity is `(Integration Client, event_id)` plus a SHA-256 of the
+  normalized payload.
+- Repeating the same identity and payload returns the existing result.
+- Reusing the event ID with changed content returns HTTP 409 and creates no
   second canonical record.
-- An unknown external resident is durably retained internally and returned as
-  `pending_subject_mapping` with
-  `pendingReason: subject_mapping`. It is not matched by name.
-- A System Admin can inspect the minimized pending-subject projection and make
-  an exact Resident mapping. Pending events are then reprocessed in order.
-- Transient failures use bounded exponential retry. After five processing
-  attempts the inbox row becomes `dead`; it is retained for operational review.
-- The production server invokes the due-event processor once per minute.
+- External record IDs provide an additional canonical idempotency boundary.
+- Deterministic validation errors are rejected. Transient processing failures
+  retry with bounded backoff and become dead after five attempts.
+- The server invokes due-event processing once per minute.
 
-When processed, the safe response contains only the external event identity,
-status, and canonical resource type/id. It does not expose Care Profile health
-context, LINE identities, integration secrets, or raw database errors.
+Family notification intent identity remains canonical report + projection
+version + recipient. The outbox claim/lease is retained. Each LINE target has
+one persistent UUID `X-Line-Retry-Key`, used on the first push and every retry,
+including worker recovery. A documented LINE 409 indicating that the retry key
+was already accepted is treated as provider acceptance.
 
-## Family notification boundary
+The standard five-attempt schedule retries after 2, 4, 8, and 16 minutes, a
+30-minute first-to-last horizon (normally about 32 minutes with the scheduler).
+Ambiguous delivery is not retried beyond LINE's 24-hour retry-key window. A
+long outage can therefore dead-letter an ambiguous intent for human review;
+the provider key is not indefinite exactly-once delivery.
 
-Native Center writes and external events use the same canonical Vital Signs and
-Daily Care services. After a canonical record and its append-only event exist,
-a recipient-specific notification intent is inserted into the existing
-notification outbox in the same transaction. Delivery is asynchronous and a
-LINE delivery failure cannot undo the saved care record.
+## Family notification policy
 
-The notification is a privacy-minimized factual care report. When present in
-the canonical record it may contain the Care Profile display name, room,
-Center/branch name, care time, shift, recorded Vital values, Daily Care items,
-and a safe recorder display name. Missing fields are omitted. PHIMOR does not
-add normal/abnormal labels, thresholds, diagnosis, advice, or recommendations.
-It never includes internal/external technical IDs or credentials. An active
-Family Group Binding is preferred; the established active Care Profile owner
-is the fallback. The integration payload cannot choose the LINE destination,
-and no unsafe recipient is guessed.
+PHIMOR follows “store many, notify few”:
 
-A Daily Care report with linked Vital Signs creates one coherent notification;
-the nested Vital write suppresses its separate notification. Standalone Vital
-records retain their own recipient-specific canonical dedupe identity.
+| Canonical record state | Store | Family push |
+| --- | --- | --- |
+| finalized Daily Care | yes | yes, after routing reconciliation |
+| submitted Daily Care | yes | no |
+| returned Daily Care | yes | no |
+| standalone Vital | yes | no |
 
-Each notification target stores one UUID provider retry key in the existing
-outbox before delivery. The first LINE push and every worker retry use that
-same `X-Line-Retry-Key`. A LINE HTTP 409 for an already accepted retry key is
-treated as provider acceptance. This complements, but does not replace, the
-PHIMOR dedupe key, delivery claim, and lease.
+The finalized Daily notification factually renders available Care Profile
+name, room, Center, care date/time, shift, linked Vital observations, Daily
+Care items, recorder, and optional finalizer display. It omits missing fields
+and technical IDs. It does not add thresholds, interpretation, diagnosis, or
+medical advice. LINE delivery failure never rolls back finalized care.
 
-Delivery uses five total attempts with exponential waits of 2, 4, 8, and 16
-minutes: the normal first-to-last retry horizon is 30 minutes. The scheduler
-runs every two minutes, so a newly queued intent normally reaches its final
-attempt within about 32 minutes. An ambiguous delivery is never retried after
-24 hours from its first provider attempt because LINE retains retry-key state
-for only 24 hours. A process outage lasting beyond that boundary can leave an
-ambiguous notification dead-lettered for human review; retry keys do not
-provide indefinite exactly-once delivery.
+## Legacy endpoint
 
-## HHS onboarding draft
+`POST /api/external/vitals` with `X-Center-Api-Key` remains a deprecated
+compatibility route. It is not the canonical foundation for a new vendor.
+`Centers.external_api_key` is redacted from ordinary projections and remains
+pending an explicitly approved retirement plan.
 
-This v1 contract is the proposed HHS integration boundary; HHS-specific code is
-not required. Before sandbox testing, PHIMOR System Admin and HHS must agree on:
+## Vendor onboarding checklist
 
-1. one Organization and source-system identifier;
-2. one or more Integration Clients and credential owners;
-3. the exact external Center IDs and PHIMOR Center mappings;
-4. allowed Center and event-type scopes;
-5. exact external Resident mapping operations and ownership of unmatched cases;
-6. stable HHS `eventId` and `externalRecordId` generation;
-7. UTC/RFC 3339 timestamp semantics and the supported source units above;
-8. retry policy for network/5xx responses and reconciliation of `pending` or
-   `dead` events without issuing changed payloads under an old `eventId`.
+Before a sandbox integration, agree on:
 
-The operational save boundary stays in HHS: HHS commits its own care record and
-outbox first, then its worker delivers to PHIMOR asynchronously. A PHIMOR outage
-must not fail or roll back the HHS save. Network/5xx delivery is retried with the
-same event ID and identical payload. A PHIMOR `pending` subject response is a
-durable acceptance and does not require HHS to resend the event.
+1. Organization, Integration Client, and credential owners;
+2. exact external Center IDs and PHIMOR Center mappings;
+3. Center and event scopes and required Center capabilities;
+4. exact external Resident mapping operations;
+5. stable event and external record ID generation;
+6. RFC 3339 timestamps, shift codes/source labels, and supported units;
+7. the external final-approval and outbox boundary;
+8. optional expected Family group cross-check and mismatch ownership;
+9. network retry behavior using the same event ID and identical payload;
+10. operational handling of pending, mismatch, retry, and dead states.
 
-Credentials must be exchanged outside clinical payloads, stored as secrets,
-and rotated through the System Admin integration API. Do not place credentials,
-LINE IDs, phone numbers, or free-form resident health history in this document
-or in matching metadata.
-
-The legacy `/api/external/vitals` endpoint is not part of the HHS contract.
+Do not put integration credentials, LINE IDs, phone numbers, source audio, or
+unnecessary free-form health history in operational matching metadata.

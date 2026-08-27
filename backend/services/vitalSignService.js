@@ -2,7 +2,6 @@ const { Centers, CenterStaff, Residents, id, withTransaction } = require('../db'
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { platformService } = require('./platformService');
 const { createVitalSignRepository } = require('./vitalSignRepository');
-const { familyCareNotificationService } = require('./familyCareNotificationService');
 const {
   VitalSignsError, requiredId, requiredTimestamp, optionalText, normalizeObservations,
 } = require('../domain/vitalSigns');
@@ -35,6 +34,7 @@ function projectObservation(row) {
     numericValue: Number(row.numeric_value),
     sourceUnit: row.source_unit,
     canonicalUnit: row.canonical_unit,
+    context: row.measurement_context || null,
   };
 }
 
@@ -58,7 +58,6 @@ function createVitalSignService(overrides = {}) {
   const platform = overrides.platformService || platformService;
   const idFactory = overrides.idFactory || id;
   const transact = overrides.withTransaction || withTransaction;
-  const familyNotifications = overrides.familyCareNotificationService || familyCareNotificationService;
 
   async function assertSubject({ organizationId, centerId, residentId, careProfileId }) {
     const center = await centers.findOne((row) => row.center_id === centerId && row.status === 'active');
@@ -76,12 +75,12 @@ function createVitalSignService(overrides = {}) {
     return { center, resident, organization };
   }
 
-  async function recordCanonical({ tenant, subject, observations, occurredAt, provenance, suppressFamilyNotification = false }) {
+  async function recordCanonical({ tenant, subject, observations, occurredAt, provenance }) {
     const organizationId = requiredId(tenant?.organizationId, 'Organization ID');
     const centerId = requiredId(subject?.centerId, 'Center ID');
     const residentId = requiredId(subject?.residentId, 'Resident ID');
     const careProfileId = requiredId(subject?.careProfileId, 'Care Profile ID');
-    const subjectDetails = await assertSubject({ organizationId, centerId, residentId, careProfileId });
+    await assertSubject({ organizationId, centerId, residentId, careProfileId });
     if (!await platform.isCenterCapabilityEnabled(centerId, 'vital_signs_v1')) {
       throw new VitalSignsError('CAPABILITY_DISABLED', 'ศูนย์ยังไม่ได้เปิดใช้การบันทึกสัญญาณชีพ', 403);
     }
@@ -134,21 +133,6 @@ function createVitalSignService(overrides = {}) {
         actorType, actorReference:actor,
         metadata:{ measurementTypes:normalized.map((item)=>item.measurementType), sourceType },
       });
-      if (!suppressFamilyNotification) {
-        await familyNotifications.enqueueRecorded({
-          kind:'vital_signs', careProfileId, resourceId:vitalSetId,
-          projection:{
-            careRecipientName:subjectDetails.resident.full_name || null,
-            room:subjectDetails.resident.room || null,
-            centerDisplayName:subjectDetails.center.name || null,
-            occurredAt:row.occurred_at, recordedAt:row.recorded_at,
-            vitalSigns:stored.map(projectObservation),
-            recorderDisplayName:optionalText(
-              provenance?.recorderDisplayName || provenance?.externalStaffDisplayName, 160,
-            ),
-          },
-        });
-      }
       return { duplicate:false, item:projectSet(row, stored) };
     });
   }

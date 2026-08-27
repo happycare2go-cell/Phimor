@@ -26,11 +26,11 @@ function createVitalSignRepository({ queryFn = databaseQuery } = {}) {
       return one(
         `INSERT INTO vital_sign_observations (
           vital_observation_id, vital_set_id, source_ordinal, measurement_type,
-          source_value_text, numeric_value, source_unit, canonical_unit
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          source_value_text, numeric_value, source_unit, canonical_unit, measurement_context
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [record.vitalObservationId, record.vitalSetId, record.sourceOrdinal,
           record.measurementType, record.sourceValueText, record.numericValue,
-          record.sourceUnit, record.canonicalUnit]
+          record.sourceUnit, record.canonicalUnit, record.measurementContext]
       );
     },
 
@@ -94,7 +94,8 @@ function createVitalSignRepository({ queryFn = databaseQuery } = {}) {
               'source_value_text', o.source_value_text,
               'numeric_value', o.numeric_value,
               'source_unit', o.source_unit,
-              'canonical_unit', o.canonical_unit
+              'canonical_unit', o.canonical_unit,
+              'measurement_context', o.measurement_context
             ) ORDER BY o.source_ordinal, o.vital_observation_id)
             FROM vital_sign_observations o WHERE o.vital_set_id = v.vital_set_id
           ), '[]'::jsonb) AS observations

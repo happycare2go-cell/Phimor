@@ -1,10 +1,10 @@
 const { CareProfiles, GroupBindings } = require('../db');
 const notificationService = require('./notificationService');
 
-const PROJECTION_VERSION = 'family-care-v2';
+const PROJECTION_VERSION = 'family-care-v3-finalized';
 const KINDS = Object.freeze({
   vital_signs: Object.freeze({ kind:'family_vital_signs_recorded', title:'รายงานสัญญาณชีพ' }),
-  daily_care: Object.freeze({ kind:'family_daily_care_recorded', title:'รายงานการดูแลประจำวัน' }),
+  daily_care: Object.freeze({ kind:'family_daily_care_finalized', title:'รายงานการดูแลประจำวัน' }),
 });
 const DAILY_LABELS = Object.freeze({
   nutrition:'อาหาร/โภชนาการ', fluid_intake:'ปริมาณน้ำ', sleep_rest:'การนอน/พักผ่อน',
@@ -14,6 +14,10 @@ const DAILY_LABELS = Object.freeze({
 const VITAL_LABELS = Object.freeze({
   temperature:'อุณหภูมิ', pulse:'ชีพจร', spo2:'SpO₂', respiratory_rate:'อัตราการหายใจ',
   blood_pressure_systolic:'ความดันตัวบน', blood_pressure_diastolic:'ความดันตัวล่าง',
+  blood_glucose:'น้ำตาลในเลือด', weight:'น้ำหนัก',
+});
+const GLUCOSE_CONTEXT_LABELS = Object.freeze({
+  fasting:'อดอาหาร', before_meal:'ก่อนอาหาร', after_meal:'หลังอาหาร', random:'สุ่มเวลา',
 });
 
 function validId(value) {
@@ -36,6 +40,12 @@ function thaiDateTime(value) {
     date:new Intl.DateTimeFormat('th-TH', { dateStyle:'medium', timeZone:'Asia/Bangkok' }).format(date),
     time:new Intl.DateTimeFormat('th-TH', { hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'Asia/Bangkok' }).format(date),
   };
+}
+
+function thaiCareDate(value) {
+  const clean = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return null;
+  return thaiDateTime(`${clean}T00:00:00+07:00`)?.date || null;
 }
 
 function displayUnit(value) {
@@ -66,9 +76,14 @@ function renderVitals(observations = []) {
     lines.push(`• ความดัน ${systolicValue}/${diastolicValue}${unit ? ` ${unit}` : ''}`);
     byType.delete('blood_pressure_systolic'); byType.delete('blood_pressure_diastolic');
   }
-  for (const type of ['temperature', 'blood_pressure_systolic', 'blood_pressure_diastolic', 'pulse', 'spo2', 'respiratory_rate']) {
+  for (const type of ['temperature', 'blood_pressure_systolic', 'blood_pressure_diastolic', 'pulse', 'spo2', 'respiratory_rate', 'blood_glucose', 'weight']) {
     const value = observationValue(byType.get(type));
-    if (value) lines.push(`• ${VITAL_LABELS[type]} ${value}`);
+    if (value) {
+      const observation = byType.get(type);
+      const context = type === 'blood_glucose'
+        ? GLUCOSE_CONTEXT_LABELS[observation?.context ?? observation?.measurement_context] : null;
+      lines.push(`• ${VITAL_LABELS[type]} ${value}${context ? ` • ${context}` : ''}`);
+    }
   }
   return lines;
 }
@@ -99,11 +114,13 @@ function renderFamilyCareMessage({ kind, profile, projection = {} }) {
   const room = cleanText(projection.room, 80, true);
   const center = cleanText(projection.centerDisplayName, 200, true);
   const occurred = thaiDateTime(projection.occurredAt);
+  const careDate = thaiCareDate(projection.careDate) || occurred?.date || null;
   const recorded = thaiDateTime(projection.recordedAt);
   if (recipientName) lines.push(`ผู้รับการดูแล: ${recipientName}`);
   if (room) lines.push(`ห้อง: ${room}`);
   if (center) lines.push(`ศูนย์/สาขา: ${center}`);
-  if (occurred) lines.push(`วันที่ดูแล: ${occurred.date}`, `เวลาการดูแล: ${occurred.time} น.`);
+  if (careDate) lines.push(`วันที่ดูแล: ${careDate}`);
+  if (occurred) lines.push(`เวลาการดูแล: ${occurred.time} น.`);
   if (recorded && (!occurred || recorded.date !== occurred.date || recorded.time !== occurred.time)) {
     lines.push(`บันทึกเข้าระบบ: ${recorded.date} ${recorded.time} น.`);
   }
@@ -125,6 +142,8 @@ function renderFamilyCareMessage({ kind, profile, projection = {} }) {
 
   const recorder = cleanText(projection.recorderDisplayName, 160, true);
   if (recorder) lines.push('', `ผู้บันทึก: ${recorder}`);
+  const finalizer = cleanText(projection.finalizerDisplayName, 160, true);
+  if (finalizer) lines.push(`ผู้ยืนยันรายงาน: ${finalizer}`);
   lines.push('', 'ข้อมูลนี้เป็นข้อเท็จจริงตามที่บันทึกไว้ โดยไม่มีการแปลผลทางการแพทย์');
   const message = lines.join('\n');
   return message.length <= 4900 ? message : `${message.slice(0, 4899)}…`;
@@ -135,41 +154,63 @@ function createFamilyCareNotificationService(overrides = {}) {
   const bindings = overrides.GroupBindings || GroupBindings;
   const enqueue = overrides.enqueue || notificationService.enqueue;
 
-  async function resolveRecipient(careProfileId) {
+  async function resolveRecipient(careProfileId, { expectedLineGroupId = null } = {}) {
     const profileId = validId(careProfileId);
     if (!profileId) return null;
+    const expected = cleanText(expectedLineGroupId, 255, true);
     const binding = await bindings.findOne((row) => row.kind === 'family'
       && row.care_profile_id === profileId && row.status === 'active'
       && typeof row.line_group_id === 'string' && row.line_group_id.trim());
-    if (binding) return { to:binding.line_group_id.trim(), type:'family_group', reference:binding.binding_id };
+    const verified = binding?.line_group_id?.trim() || null;
+    if (expected) {
+      if (!verified) return { recipient:null, status:'group_binding_missing', expectedLineGroupId:expected, verifiedLineGroupId:null };
+      if (verified !== expected) return { recipient:null, status:'group_binding_mismatch', expectedLineGroupId:expected, verifiedLineGroupId:verified };
+      return { recipient:{ to:verified, type:'family_group', reference:binding.binding_id },
+        status:'verified_match', expectedLineGroupId:expected, verifiedLineGroupId:verified };
+    }
+    if (binding) return { recipient:{ to:verified, type:'family_group', reference:binding.binding_id },
+      status:'no_expected_group', expectedLineGroupId:null, verifiedLineGroupId:verified };
     const profile = await profiles.findOne((row) => row.care_profile_id === profileId
       && !['inactive', 'revoked', 'deleted'].includes(row.status));
     if (typeof profile?.owner_line_id === 'string' && profile.owner_line_id.trim()) {
-      return { to:profile.owner_line_id.trim(), type:'profile_owner', reference:profileId };
+      return { recipient:{ to:profile.owner_line_id.trim(), type:'profile_owner', reference:profileId },
+        status:'no_expected_group', expectedLineGroupId:null, verifiedLineGroupId:null };
     }
-    return null;
+    return { recipient:null, status:'no_expected_group', expectedLineGroupId:null, verifiedLineGroupId:null };
   }
 
-  async function enqueueRecorded({ kind, careProfileId, resourceId, projection = {} }) {
+  async function enqueueFinalized({ kind, careProfileId, resourceId, projection = {}, expectedLineGroupId = null }) {
     const definition = KINDS[kind];
     const profileId = validId(careProfileId); const recordId = validId(resourceId);
     if (!definition || !profileId || !recordId) {
       throw Object.assign(new Error('invalid family notification intent'), { code:'INVALID_FAMILY_NOTIFICATION_INTENT', status:400 });
     }
-    const recipient = await resolveRecipient(profileId);
-    if (!recipient) return { ok:false, reason:'no_family_recipient' };
+    const reconciliation = await resolveRecipient(profileId, { expectedLineGroupId });
+    const recipient = reconciliation?.recipient || null;
+    if (!recipient) {
+      const reasons = { group_binding_missing:'group_binding_missing', group_binding_mismatch:'group_binding_mismatch' };
+      return { ok:false, reason:reasons[reconciliation?.status] || 'no_family_recipient',
+        groupReconciliationStatus:reconciliation?.status || 'no_expected_group',
+        expectedLineGroupId:reconciliation?.expectedLineGroupId || null,
+        verifiedLineGroupId:reconciliation?.verifiedLineGroupId || null };
+    }
     const profile = await profiles.findOne((row) => row.care_profile_id === profileId) || null;
     const text = renderFamilyCareMessage({ kind, profile, projection });
-    const dedupeKey = `care-recorded:${kind}:${recordId}:${PROJECTION_VERSION}:${recipient.type}:${recipient.reference}`;
-    return enqueue({
+    const dedupeKey = `care-finalized:${kind}:${recordId}:${PROJECTION_VERSION}:${recipient.type}:${recipient.reference}`;
+    const queued = await enqueue({
       dedupeKey, to:recipient.to, kind:definition.kind,
       meta:{ careProfileId:profileId, resourceType:kind, resourceId:recordId,
         projectionVersion:PROJECTION_VERSION, recipientType:recipient.type },
       messages:[{ type:'text', text }],
     });
+    return { ...queued, groupReconciliationStatus:reconciliation.status,
+      expectedLineGroupId:reconciliation.expectedLineGroupId,
+      verifiedLineGroupId:reconciliation.verifiedLineGroupId };
   }
 
-  return { resolveRecipient, enqueueRecorded };
+  // Compatibility alias for internal callers while all new Daily Care paths use finalized semantics.
+  const enqueueRecorded = enqueueFinalized;
+  return { resolveRecipient, enqueueFinalized, enqueueRecorded };
 }
 
 const familyCareNotificationService = createFamilyCareNotificationService();

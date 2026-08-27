@@ -32,6 +32,7 @@ function createVitalSignMemoryRepository() {
         source_value_text:record.sourceValueText,
         numeric_value:record.numericValue, source_unit:record.sourceUnit,
         canonical_unit:record.canonicalUnit,
+        measurement_context:record.measurementContext || null,
       };
       state.observations.push(row); return clone(row);
     },

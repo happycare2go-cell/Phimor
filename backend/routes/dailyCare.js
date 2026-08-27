@@ -13,7 +13,18 @@ function createDailyCareRouter(){const router=express.Router();router.use(requir
     from:req.query.from||null,to:req.query.to||null,cursor:req.query.cursor||null,limit:req.query.limit}))));
   router.post('/center/:centerId/residents/:residentId/daily-care',requireCenterStaff(['owner','manager','staff']),action(async(req,res,service)=>{
     const result=await service.recordNative({lineUserId:req.user.lineUserId,centerId:req.params.centerId,residentId:req.params.residentId,
-      occurredAt:req.body.occurredAt,items:req.body.items,vitalSigns:req.body.vitalSigns||null});return res.status(result.duplicate?200:201).json(result);}));
+      occurredAt:req.body.occurredAt,careDate:req.body.careDate||null,shift:req.body.shift||null,
+      items:req.body.items,vitalSigns:req.body.vitalSigns||null});return res.status(result.duplicate?200:201).json(result);}));
+  router.get('/center/:centerId/daily-care/review',requireCenterStaff(['owner','manager','staff']),action(async(req,res,service)=>res.json(await service.listCenterWorkflow({
+    lineUserId:req.user.lineUserId,centerId:req.params.centerId,status:req.query.status||'submitted',limit:req.query.limit}))));
+  router.post('/center/:centerId/daily-care/:dailyReportId/return',requireCenterStaff(['owner','manager']),action(async(req,res,service)=>res.json({item:await service.returnForCorrection({
+    lineUserId:req.user.lineUserId,centerId:req.params.centerId,dailyReportId:req.params.dailyReportId,reason:req.body.reason})})));
+  router.post('/center/:centerId/daily-care/:dailyReportId/resubmit',requireCenterStaff(['owner','manager','staff']),action(async(req,res,service)=>{
+    const result=await service.resubmitReport({lineUserId:req.user.lineUserId,centerId:req.params.centerId,dailyReportId:req.params.dailyReportId,
+      occurredAt:req.body.occurredAt,careDate:req.body.careDate||null,shift:req.body.shift||null,
+      items:req.body.items,vitalSigns:req.body.vitalSigns||null});return res.status(201).json(result);}));
+  router.post('/center/:centerId/daily-care/:dailyReportId/finalize',requireCenterStaff(['owner','manager']),action(async(req,res,service)=>res.json(await service.finalizeReport({
+    lineUserId:req.user.lineUserId,centerId:req.params.centerId,dailyReportId:req.params.dailyReportId}))));
   router.post('/center/:centerId/daily-care/:dailyReportId/void',requireCenterStaff(['owner','manager']),action(async(req,res,service)=>res.json({item:await service.voidReport({
     lineUserId:req.user.lineUserId,centerId:req.params.centerId,dailyReportId:req.params.dailyReportId,reason:req.body.reason})})));
   return router;}

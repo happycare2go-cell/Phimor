@@ -30,6 +30,7 @@ function retryKeys() {
 const fullProjection = {
   careRecipientName:'ชื่อจาก payload ที่ไม่ควรแทน canonical', room:'A-12',
   centerDisplayName:'ศูนย์พี่หมอ สาขาทดสอบ',
+  careDate:'2026-08-27',
   occurredAt:'2026-08-27T01:30:00Z', recordedAt:'2026-08-27T01:31:00Z',
   recorderDisplayName:'ผู้ดูแลเวรเช้า',
   vitalSigns:[
@@ -39,6 +40,8 @@ const fullProjection = {
     { measurementType:'pulse', numericValue:72, sourceUnit:'bpm' },
     { measurementType:'spo2', numericValue:95, sourceUnit:'%' },
     { measurementType:'respiratory_rate', numericValue:18, sourceUnit:'breaths/min' },
+    { measurementType:'blood_glucose', numericValue:108, sourceUnit:'mg/dL', context:'before_meal' },
+    { measurementType:'weight', numericValue:54.2, sourceUnit:'kg' },
   ],
   dailyCare:[
     { itemType:'shift', valueType:'text', textValue:'เวรเช้า' },
@@ -76,9 +79,36 @@ test('missing active GroupBinding and owner creates no unsafe external recipient
     CareProfiles:table([{ care_profile_id:'CP-A', owner_line_id:null, status:'active' }]),
     GroupBindings:table([]), enqueue:async () => { calls += 1; },
   });
-  assert.deepEqual(await service.enqueueRecorded({ kind:'vital_signs', careProfileId:'CP-A', resourceId:'VSET-1',
-    projection:{ to:'G-UNTRUSTED' } }), { ok:false, reason:'no_family_recipient' });
+  assert.deepEqual(await service.enqueueFinalized({ kind:'daily_care', careProfileId:'CP-A', resourceId:'DCR-1',
+    projection:{ to:'G-UNTRUSTED' } }), { ok:false, reason:'no_family_recipient',
+    groupReconciliationStatus:'no_expected_group',expectedLineGroupId:null,verifiedLineGroupId:null });
   assert.equal(calls, 0);
+});
+
+test('expected group is only a cross-check: match queues to verified binding while mismatch never falls back', async () => {
+  const calls=[];
+  const profiles=table([{care_profile_id:'CP-A',owner_line_id:'U-OWNER',patient_name:'คุณยาย',status:'active'}]);
+  const bindings=table([{binding_id:'GB-A',kind:'family',care_profile_id:'CP-A',line_group_id:'G-VERIFIED',status:'active'}]);
+  const service=createFamilyCareNotificationService({CareProfiles:profiles,GroupBindings:bindings,
+    enqueue:async(input)=>{calls.push(input);return{ok:true};}});
+  const matched=await service.enqueueFinalized({kind:'daily_care',careProfileId:'CP-A',resourceId:'DCR-MATCH',
+    expectedLineGroupId:'G-VERIFIED',projection:fullProjection});
+  assert.equal(matched.groupReconciliationStatus,'verified_match');assert.equal(calls[0].to,'G-VERIFIED');
+  const mismatch=await service.enqueueFinalized({kind:'daily_care',careProfileId:'CP-A',resourceId:'DCR-MISMATCH',
+    expectedLineGroupId:'G-EXTERNAL',projection:fullProjection});
+  assert.equal(mismatch.reason,'group_binding_mismatch');assert.equal(mismatch.verifiedLineGroupId,'G-VERIFIED');
+  assert.equal(calls.length,1);assert.notEqual(calls[0].to,'G-EXTERNAL');
+});
+
+test('expected group with no verified binding is held and cannot use owner fallback', async () => {
+  let calls=0;const service=createFamilyCareNotificationService({
+    CareProfiles:table([{care_profile_id:'CP-A',owner_line_id:'U-OWNER',status:'active'}]),
+    GroupBindings:table([]),enqueue:async()=>{calls+=1;return{ok:true};},
+  });
+  const result=await service.enqueueFinalized({kind:'daily_care',careProfileId:'CP-A',resourceId:'DCR-MISSING',
+    expectedLineGroupId:'G-EXPECTED',projection:fullProjection});
+  assert.equal(result.reason,'group_binding_missing');assert.equal(result.groupReconciliationStatus,'group_binding_missing');
+  assert.equal(calls,0);
 });
 
 test('Family Daily Care projection renders canonical identity, factual Daily fields, and recorded Vital values', () => {
@@ -87,7 +117,8 @@ test('Family Daily Care projection renders canonical identity, factual Daily fie
   for (const expected of [
     'คุณยายใจดี', 'ห้อง: A-12', 'ศูนย์พี่หมอ สาขาทดสอบ', 'เวรเช้า',
     'อุณหภูมิ 36.7 °C', 'ความดัน 128/76 mmHg', 'ชีพจร 72 bpm', 'SpO₂ 95%',
-    'อัตราการหายใจ 18 breaths/min', 'รับประทานอาหารได้ครึ่งจาน', '500 mL',
+    'อัตราการหายใจ 18 breaths/min', 'น้ำตาลในเลือด 108 mg/dL • ก่อนอาหาร', 'น้ำหนัก 54.2 kg',
+    'รับประทานอาหารได้ครึ่งจาน', '500 mL',
     'ปัสสาวะ 3 ครั้ง', 'พักกลางวัน 1 ชั่วโมง', 'เดินรอบอาคาร', 'พูดคุยดี',
     'รู้สึกตัวดี', 'บ่นปวดเข่าหลังเดิน', 'ผู้ดูแลเวรเช้า',
   ]) assert.match(text, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
@@ -118,7 +149,7 @@ test('notification text and metadata expose no internal or external technical id
   assert.doesNotMatch(publicPayload, /CP-SECRET|DCR-SECRET|EXT-RES-SECRET|INT-SECRET|EV-SECRET|U-SECRET|TOKEN-SECRET|G-SECRET|GB-SECRET/);
 });
 
-test('canonical record, projection version, and recipient dedupe create one replay-safe intent', async () => {
+test('canonical finalized report, projection version, and recipient dedupe create one replay-safe intent', async () => {
   const outbox = table([]);
   const notifications = createNotificationService({ NotificationOutbox:outbox,
     lineClient:{ async pushMessage() {} }, idFactory:() => `N-${outbox.rows.length + 1}`,
@@ -126,8 +157,8 @@ test('canonical record, projection version, and recipient dedupe create one repl
   const family = createFamilyCareNotificationService({ CareProfiles:table([]),
     GroupBindings:table([{ binding_id:'GB-A', kind:'family', care_profile_id:'CP-A', line_group_id:'G-SECRET', status:'active' }]),
     enqueue:notifications.enqueue });
-  const first = await family.enqueueRecorded({ kind:'vital_signs', careProfileId:'CP-A', resourceId:'VSET-1', projection:fullProjection });
-  const replay = await family.enqueueRecorded({ kind:'vital_signs', careProfileId:'CP-A', resourceId:'VSET-1', projection:fullProjection });
+  const first = await family.enqueueFinalized({ kind:'daily_care', careProfileId:'CP-A', resourceId:'DCR-1', projection:fullProjection });
+  const replay = await family.enqueueFinalized({ kind:'daily_care', careProfileId:'CP-A', resourceId:'DCR-1', projection:fullProjection });
   assert.equal(first.duplicate, undefined); assert.equal(replay.duplicate, true);
   assert.equal(outbox.rows.length, 1); assert.match(outbox.rows[0].dedupe_key, new RegExp(PROJECTION_VERSION));
   assert.doesNotMatch(outbox.rows[0].dedupe_key, /G-SECRET/);

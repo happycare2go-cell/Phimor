@@ -100,3 +100,15 @@ test('Center receives read-only capability visibility but no feature-toggle endp
   assert.doesNotMatch(source, /router\.(?:post|patch|put|delete)\([^\n]*capabilit/i);
   assert.doesNotMatch(source, /setCenterCapability/);
 });
+
+test('System Admin can inspect minimized group reconciliation state and request an explicit retry',async()=>{
+  const calls=[];app.locals.integrationEventService={
+    async listOperationalStatus(input){calls.push(['list',input]);return{items:[{integrationEventId:'IEVT-1',groupReconciliationStatus:'group_binding_mismatch',expectedLineGroupId:'G-EX…CTED',verifiedLineGroupId:'G-VE…FIED'}],summary:{group_binding_mismatch:1}};},
+    async reconcileGroupRouting(input){calls.push(['reconcile',input]);return{integrationEventId:input.integrationEventId,groupReconciliationStatus:'verified_match',notificationIntentStatus:'queued'};},
+  };
+  let response=await call('/api/admin/platform/integration-events/status?groupStatus=group_binding_mismatch&limit=20',{headers:admin});
+  assert.equal(response.status,200);let body=await response.json();assert.equal(body.summary.group_binding_mismatch,1);assert.doesNotMatch(JSON.stringify(body),/clinical|canonical_payload/i);assert.doesNotMatch(JSON.stringify(body),/G-EXPECTED|G-VERIFIED/);
+  response=await call('/api/admin/platform/integration-events/IEVT-1/reconcile-group',{method:'POST',headers:admin,body:'{}'});
+  assert.equal(response.status,200);body=await response.json();assert.equal(body.notificationIntentStatus,'queued');
+  assert.equal(calls[0][1].groupStatus,'group_binding_mismatch');assert.deepEqual(calls[1],["reconcile",{integrationEventId:'IEVT-1'}]);
+});

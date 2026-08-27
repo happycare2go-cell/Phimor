@@ -3,7 +3,7 @@ const ORGANIZATION_TYPES = Object.freeze(['external_care_center', 'platform_inte
 const CAPABILITY_KEYS = Object.freeze(['vital_signs_v1', 'daily_care_v1']);
 const INTEGRATION_EVENT_TYPES = Object.freeze([
   'care.vitals.recorded',
-  'care.daily_report.recorded',
+  'care.daily_report.finalized',
 ]);
 const INTEGRATION_CLIENT_STATUSES = Object.freeze(['active', 'suspended', 'revoked']);
 const CREDENTIAL_STATUSES = Object.freeze(['active', 'revoked']);

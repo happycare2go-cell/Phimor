@@ -746,6 +746,7 @@ async function syncCenterCareContext() {
     if (requestedCenterId !== CENTER_ID) return;
     centerCareUi.setContext({
       centerId: requestedCenterId,
+      role: CURRENT_ROLE,
       residents: residentsCache,
       capabilities: data.capabilities || {},
     });

@@ -7,6 +7,16 @@ const VITAL_MEASUREMENT_TYPES = Object.freeze([
   'pulse',
   'spo2',
   'respiratory_rate',
+  'blood_glucose',
+  'weight',
+]);
+
+const BLOOD_GLUCOSE_CONTEXTS = Object.freeze([
+  'fasting',
+  'before_meal',
+  'after_meal',
+  'random',
+  'unspecified',
 ]);
 
 const UNIT_RULES = Object.freeze({
@@ -16,6 +26,11 @@ const UNIT_RULES = Object.freeze({
   pulse: Object.freeze({ canonical:'/min', accepted:Object.freeze(['/min', 'bpm']) }),
   spo2: Object.freeze({ canonical:'%', accepted:Object.freeze(['%']) }),
   respiratory_rate: Object.freeze({ canonical:'/min', accepted:Object.freeze(['/min', 'breaths/min']) }),
+  blood_glucose: Object.freeze({
+    canonicalBySource:Object.freeze({ 'mg/dL':'mg/dL', 'mmol/L':'mmol/L' }),
+    accepted:Object.freeze(['mg/dL', 'mmol/L']),
+  }),
+  weight: Object.freeze({ canonical:'kg', accepted:Object.freeze(['kg']) }),
 });
 
 class VitalSignsError extends Error {
@@ -69,13 +84,24 @@ function normalizeObservation(input, index) {
   if (!sourceUnit || !rule.accepted.includes(sourceUnit)) {
     throw new VitalSignsError('UNSUPPORTED_UNIT', `หน่วยของ ${type} ไม่รองรับ`, 400);
   }
+  const suppliedContext = optionalText(input.context ?? input.measurementContext ?? input.measurement_context, 32);
+  let measurementContext = null;
+  if (type === 'blood_glucose') {
+    measurementContext = suppliedContext || 'unspecified';
+    if (!BLOOD_GLUCOSE_CONTEXTS.includes(measurementContext)) {
+      throw new VitalSignsError('INVALID_GLUCOSE_CONTEXT', 'บริบทการตรวจน้ำตาลในเลือดไม่รองรับ', 400);
+    }
+  } else if (suppliedContext) {
+    throw new VitalSignsError('MEASUREMENT_CONTEXT_NOT_ALLOWED', `ไม่รองรับบริบทสำหรับ ${type}`, 400);
+  }
   return {
     sourceOrdinal: index + 1,
     measurementType: type,
     sourceValueText: optionalText(input.sourceValueText, 80) || String(input.numericValue ?? input.value),
     numericValue: numeric,
     sourceUnit,
-    canonicalUnit: rule.canonical,
+    canonicalUnit: rule.canonicalBySource?.[sourceUnit] || rule.canonical,
+    measurementContext,
   };
 }
 
@@ -94,6 +120,7 @@ module.exports = {
   VITAL_SET_STATUSES,
   VITAL_SOURCE_TYPES,
   VITAL_MEASUREMENT_TYPES,
+  BLOOD_GLUCOSE_CONTEXTS,
   UNIT_RULES,
   VitalSignsError,
   requiredId,

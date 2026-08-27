@@ -1,4 +1,11 @@
-const DAILY_REPORT_STATUSES = Object.freeze(['recorded', 'voided']);
+// `recorded` is retained only for rows created by the approved P0-P6 checkpoint.
+// New native and integration writes use the explicit review/finalization states.
+const DAILY_REPORT_STATUSES = Object.freeze([
+  'recorded', 'submitted', 'changes_requested', 'finalized', 'voided',
+]);
+const DAILY_EVENT_TYPES = Object.freeze([
+  'recorded', 'submitted', 'returned', 'finalized', 'correction_submitted', 'voided',
+]);
 const DAILY_SOURCE_TYPES = Object.freeze(['native_phimor', 'external_integration']);
 const DAILY_ITEM_TYPES = Object.freeze([
   'shift', 'nutrition', 'fluid_intake', 'sleep_rest', 'bowel_movement',
@@ -8,6 +15,7 @@ const DAILY_ITEM_ALIASES = Object.freeze({
   fluid:'fluid_intake', sleep:'sleep_rest', bowel:'bowel_movement', mood:'mood_behavior',
 });
 const DAILY_VALUE_TYPES = Object.freeze(['text', 'numeric', 'boolean']);
+const SHIFT_CODE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 
 class DailyCareError extends Error {
   constructor(code, message, status = 400) {
@@ -36,6 +44,31 @@ function optionalText(value, max = 1000) {
   if (!clean) return null;
   if (clean.length > max) throw new DailyCareError('VALUE_TOO_LONG', 'ข้อความยาวเกินกำหนด', 400);
   return clean;
+}
+
+function optionalCareDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const clean = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    throw new DailyCareError('INVALID_CARE_DATE', 'วันที่ดูแลไม่ถูกต้อง', 400);
+  }
+  const date = new Date(`${clean}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== clean) {
+    throw new DailyCareError('INVALID_CARE_DATE', 'วันที่ดูแลไม่ถูกต้อง', 400);
+  }
+  return clean;
+}
+
+function normalizeShift(input) {
+  if (input === undefined || input === null) return { code:null, sourceLabel:null };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new DailyCareError('INVALID_SHIFT', 'ข้อมูลช่วงเวรไม่ถูกต้อง', 400);
+  }
+  const code = optionalText(input.code, 40);
+  if (code && !SHIFT_CODE_PATTERN.test(code)) {
+    throw new DailyCareError('INVALID_SHIFT_CODE', 'รหัสช่วงเวรไม่ถูกต้อง', 400);
+  }
+  return { code, sourceLabel:optionalText(input.sourceLabel ?? input.source_label, 120) };
 }
 
 function normalizeItem(input, index) {
@@ -77,6 +110,8 @@ function normalizeItems(items) {
 }
 
 module.exports = {
-  DAILY_REPORT_STATUSES, DAILY_SOURCE_TYPES, DAILY_ITEM_TYPES, DAILY_ITEM_ALIASES, DAILY_VALUE_TYPES,
-  DailyCareError, requiredId, requiredTimestamp, optionalText, normalizeItem, normalizeItems,
+  DAILY_REPORT_STATUSES, DAILY_EVENT_TYPES, DAILY_SOURCE_TYPES, DAILY_ITEM_TYPES,
+  DAILY_ITEM_ALIASES, DAILY_VALUE_TYPES, SHIFT_CODE_PATTERN,
+  DailyCareError, requiredId, requiredTimestamp, optionalText, optionalCareDate,
+  normalizeShift, normalizeItem, normalizeItems,
 };

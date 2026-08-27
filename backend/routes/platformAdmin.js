@@ -62,6 +62,22 @@ function createPlatformAdminRouter() {
     }));
   }));
 
+  router.get('/integration-events/status', platformAction(async (req, res) => {
+    res.json(await eventServiceFor(req).listOperationalStatus({
+      integrationClientId:req.query.integrationClientId || null,
+      organizationId:req.query.organizationId || null,
+      centerId:req.query.centerId || null,
+      groupStatus:req.query.groupStatus || null,
+      limit:req.query.limit,
+    }));
+  }));
+
+  router.post('/integration-events/:integrationEventId/reconcile-group', platformAction(async (req, res) => {
+    res.json(await eventServiceFor(req).reconcileGroupRouting({
+      integrationEventId:req.params.integrationEventId,
+    }));
+  }));
+
   router.post('/organizations', platformAction(async (req, res, service, actorReference) => {
     const organization = await service.createOrganization({
       organizationCode: req.body.organizationCode,

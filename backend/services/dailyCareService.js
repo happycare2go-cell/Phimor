@@ -1,10 +1,12 @@
-const { Centers, CenterStaff, Residents, id, withTransaction } = require('../db');
+const { Centers, CenterStaff, Residents, id, withTransaction, now } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { platformService } = require('./platformService');
-const { vitalSignService } = require('./vitalSignService');
+const { vitalSignService, projectSet:projectVitalSet } = require('./vitalSignService');
 const { createDailyCareRepository } = require('./dailyCareRepository');
-const { projectSet:projectVitalSet } = require('./vitalSignService');
-const { DailyCareError, requiredId, requiredTimestamp, optionalText, normalizeItems } = require('../domain/dailyCare');
+const {
+  DailyCareError, requiredId, requiredTimestamp, optionalText, optionalCareDate,
+  normalizeShift, normalizeItems,
+} = require('../domain/dailyCare');
 const { familyCareNotificationService } = require('./familyCareNotificationService');
 
 function actorReference(value) {
@@ -12,22 +14,67 @@ function actorReference(value) {
   if(!clean||clean.length>128) throw new DailyCareError('ACTOR_REQUIRED','ไม่พบผู้บันทึก',401);
   return clean;
 }
-function projectItem(row){return {itemType:row.item_type,valueType:row.value_type,
-  sourceValueText:row.source_value_text||null,textValue:row.text_value||null,
-  numericValue:row.numeric_value===null||row.numeric_value===undefined?null:Number(row.numeric_value),
-  booleanValue:row.boolean_value===null||row.boolean_value===undefined?null:Boolean(row.boolean_value),
-  sourceUnit:row.source_unit||null};}
-function projectReport(row,items=row.items||[],vitals=row.vital_signs||[]){return {
-  dailyReportId:row.daily_report_id,status:row.status,occurredAt:row.occurred_at,
-  recordedAt:row.recorded_at,sourceType:row.source_type,items:items.map(projectItem),
-  vitalSigns:vitals.map((vital)=>projectVitalSet(vital,vital.observations||[])),
-};}
-function encodeCursor(row){return Buffer.from(JSON.stringify({occurredAt:row.occurred_at,dailyReportId:row.daily_report_id})).toString('base64url');}
-function decodeCursor(value){if(!value)return null;try{const parsed=JSON.parse(Buffer.from(String(value),'base64url').toString('utf8'));
-  return {occurredAt:requiredTimestamp(parsed.occurredAt,'INVALID_CURSOR'),dailyReportId:requiredId(parsed.dailyReportId,'Daily Report ID')};
-}catch(error){if(error instanceof DailyCareError&&error.code==='INVALID_CURSOR')throw error;throw new DailyCareError('INVALID_CURSOR','cursor ไม่ถูกต้อง',400);}}
 
-function createDailyCareService(overrides={}){
+function projectItem(row) {
+  return {
+    itemType:row.item_type, valueType:row.value_type,
+    sourceValueText:row.source_value_text||null, textValue:row.text_value||null,
+    numericValue:row.numeric_value===null||row.numeric_value===undefined?null:Number(row.numeric_value),
+    booleanValue:row.boolean_value===null||row.boolean_value===undefined?null:Boolean(row.boolean_value),
+    sourceUnit:row.source_unit||null,
+  };
+}
+
+function projectReport(row, items=row.items||[], vitals=row.vital_signs||[], subject={}) {
+  return {
+    dailyReportId:row.daily_report_id, status:row.status,
+    versionNo:Number(row.version_no||1), occurredAt:row.occurred_at,
+    careDate:row.care_date||null,
+    shift:row.shift_code||row.shift_source_label
+      ? { code:row.shift_code||null, sourceLabel:row.shift_source_label||null } : null,
+    recordedAt:row.source_recorded_at||row.recorded_at,
+    submittedAt:row.submitted_at||null, returnedAt:row.returned_at||null,
+    returnReason:row.return_reason||null, finalizedAt:row.finalized_at||null,
+    sourceType:row.source_type,
+    recorderDisplayName:row.recorder_display_name||row.external_staff_display_name||null,
+    finalizerDisplayName:row.finalizer_display_name||null,
+    residentId:subject.residentId||null, careRecipientName:subject.careRecipientName||null, room:subject.room||null,
+    items:items.map(projectItem),
+    vitalSigns:vitals.map((vital)=>projectVitalSet(vital,vital.observations||[])),
+  };
+}
+
+function encodeCursor(row) {
+  return Buffer.from(JSON.stringify({occurredAt:row.occurred_at,dailyReportId:row.daily_report_id})).toString('base64url');
+}
+function decodeCursor(value) {
+  if(!value)return null;
+  try {
+    const parsed=JSON.parse(Buffer.from(String(value),'base64url').toString('utf8'));
+    return {occurredAt:requiredTimestamp(parsed.occurredAt,'INVALID_CURSOR'),dailyReportId:requiredId(parsed.dailyReportId,'Daily Report ID')};
+  } catch(error) {
+    if(error instanceof DailyCareError&&error.code==='INVALID_CURSOR')throw error;
+    throw new DailyCareError('INVALID_CURSOR','cursor ไม่ถูกต้อง',400);
+  }
+}
+
+function bangkokCareDate(iso) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone:'Asia/Bangkok', year:'numeric', month:'2-digit', day:'2-digit',
+  }).formatToParts(new Date(iso));
+  const values = Object.fromEntries(parts.map((part)=>[part.type,part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function notificationState(result) {
+  if (result?.ok) return result.duplicate ? 'duplicate' : 'queued';
+  if (result?.reason === 'group_binding_missing') return 'held_group_missing';
+  if (result?.reason === 'group_binding_mismatch') return 'held_group_mismatch';
+  if (result?.reason === 'no_family_recipient') return 'recipient_missing';
+  return 'enqueue_failed';
+}
+
+function createDailyCareService(overrides={}) {
   const repository=overrides.repository||createDailyCareRepository();
   const centers=overrides.Centers||Centers; const staffTable=overrides.CenterStaff||CenterStaff;
   const residents=overrides.Residents||Residents;
@@ -35,87 +82,191 @@ function createDailyCareService(overrides={}){
   const platform=overrides.platformService||platformService;
   const vitals=overrides.vitalSignService||vitalSignService;
   const idFactory=overrides.idFactory||id; const transact=overrides.withTransaction||withTransaction;
+  const clock=overrides.now||now;
   const familyNotifications=overrides.familyCareNotificationService||familyCareNotificationService;
 
-  async function assertSubject({organizationId,centerId,residentId,careProfileId}){
+  async function assertSubject({organizationId,centerId,residentId,careProfileId}) {
     const center=await centers.findOne((row)=>row.center_id===centerId&&row.status==='active');
     if(!center)throw new DailyCareError('CENTER_UNAVAILABLE','ศูนย์ไม่พร้อมใช้งาน',403);
     const organization=await platform.getOrganizationForCenter(centerId);
-    if(!organization||organization.organizationId!==organizationId||organization.status!=='active')throw new DailyCareError('TENANT_MISMATCH','ข้อมูล tenant ไม่ถูกต้อง',403);
+    if(!organization||organization.organizationId!==organizationId||organization.status!=='active') {
+      throw new DailyCareError('TENANT_MISMATCH','ข้อมูล tenant ไม่ถูกต้อง',403);
+    }
     const resident=await residents.findOne((row)=>row.resident_id===residentId&&row.center_id===centerId&&row.status==='active');
     if(!resident)throw new DailyCareError('RESIDENT_NOT_IN_CENTER','ไม่พบผู้พักในศูนย์นี้',403);
-    if(!resident.care_profile_id||resident.care_profile_id!==careProfileId)throw new DailyCareError('CARE_PROFILE_RELATIONSHIP_MISMATCH','Care Profile ไม่สัมพันธ์กับผู้พัก',403);
+    if(!resident.care_profile_id||resident.care_profile_id!==careProfileId) {
+      throw new DailyCareError('CARE_PROFILE_RELATIONSHIP_MISMATCH','Care Profile ไม่สัมพันธ์กับผู้พัก',403);
+    }
     return {center,resident,organization};
   }
 
-  async function recordCanonical({tenant,subject,occurredAt,items,vitalSigns=null,provenance}){
+  async function requireStaff({ lineUserId, centerId, roles=['owner','manager','staff'] }) {
+    const staff=await staffTable.findOne((row)=>row.center_id===centerId&&row.line_user_id===lineUserId
+      && row.status==='active'&&roles.includes(row.role));
+    if(!staff)throw new DailyCareError('CENTER_ACCESS_DENIED','ไม่มีสิทธิ์ดำเนินการรายงานของศูนย์นี้',403);
+    return staff;
+  }
+
+  async function validateExternalClient({integrationClientId,organizationId,centerId}) {
+    const client=await platform.inspectIntegrationClient(integrationClientId);
+    if(client.status!=='active'||client.organizationId!==organizationId) {
+      throw new DailyCareError('INTEGRATION_TENANT_MISMATCH','Integration Client ไม่สัมพันธ์กับ tenant',403);
+    }
+    if(!client.centers.some((scope)=>scope.center_id===centerId)) {
+      throw new DailyCareError('INTEGRATION_CENTER_SCOPE_DENIED','Integration Client ไม่มีสิทธิ์ในศูนย์นี้',403);
+    }
+  }
+
+  async function createCanonicalReport({
+    tenant,subject,occurredAt,careDate=null,shift=null,items,vitalSigns=null,provenance,
+    lifecycleStatus,reportGroupId=null,versionNo=1,supersedesReportId=null,
+  }) {
     const organizationId=requiredId(tenant?.organizationId,'Organization ID');
-    const centerId=requiredId(subject?.centerId,'Center ID'); const residentId=requiredId(subject?.residentId,'Resident ID');
+    const centerId=requiredId(subject?.centerId,'Center ID');
+    const residentId=requiredId(subject?.residentId,'Resident ID');
     const careProfileId=requiredId(subject?.careProfileId,'Care Profile ID');
-    const subjectDetails=await assertSubject({organizationId,centerId,residentId,careProfileId});
-    if(!await platform.isCenterCapabilityEnabled(centerId,'daily_care_v1'))throw new DailyCareError('CAPABILITY_DISABLED','ศูนย์ยังไม่ได้เปิดใช้การดูแลประจำวัน',403);
+    await assertSubject({organizationId,centerId,residentId,careProfileId});
+    if(!await platform.isCenterCapabilityEnabled(centerId,'daily_care_v1')) {
+      throw new DailyCareError('CAPABILITY_DISABLED','ศูนย์ยังไม่ได้เปิดใช้การดูแลประจำวัน',403);
+    }
+    if(!['submitted','finalized'].includes(lifecycleStatus)) {
+      throw new DailyCareError('INVALID_INITIAL_STATUS','สถานะเริ่มต้นของรายงานไม่ถูกต้อง',400);
+    }
     const normalized=normalizeItems(items); const at=requiredTimestamp(occurredAt);
+    const normalizedCareDate=optionalCareDate(careDate)||bangkokCareDate(at);
+    const normalizedShift=normalizeShift(shift);
     const sourceType=provenance?.sourceType;
-    if(!['native_phimor','external_integration'].includes(sourceType))throw new DailyCareError('INVALID_SOURCE_TYPE','แหล่งข้อมูลไม่ถูกต้อง',400);
+    if(!['native_phimor','external_integration'].includes(sourceType)) {
+      throw new DailyCareError('INVALID_SOURCE_TYPE','แหล่งข้อมูลไม่ถูกต้อง',400);
+    }
+    if(sourceType==='native_phimor'&&lifecycleStatus!=='submitted') {
+      throw new DailyCareError('NATIVE_REVIEW_REQUIRED','รายงานจาก PHIMOR ต้องผ่านการตรวจสอบก่อนยืนยัน',409);
+    }
+    if(sourceType==='external_integration'&&lifecycleStatus!=='finalized') {
+      throw new DailyCareError('EXTERNAL_FINALIZED_REQUIRED','Integration ต้องส่งเฉพาะรายงานที่ยืนยันแล้ว',400);
+    }
     const sourceSystem=optionalText(provenance?.sourceSystem,100);
     if(!sourceSystem)throw new DailyCareError('SOURCE_SYSTEM_REQUIRED','ไม่พบระบบต้นทาง',400);
-    const integrationClientId=sourceType==='external_integration'?requiredId(provenance?.integrationClientId,'Integration Client ID'):null;
-    const externalRecordId=sourceType==='external_integration'?requiredId(provenance?.externalRecordId,'External record ID'):null;
+    const integrationClientId=sourceType==='external_integration'
+      ? requiredId(provenance?.integrationClientId,'Integration Client ID'):null;
+    const externalRecordId=sourceType==='external_integration'
+      ? requiredId(provenance?.externalRecordId,'External record ID'):null;
     const actorType=sourceType==='external_integration'?'integration_client':'center_staff';
     const actor=actorReference(provenance?.actorReference);
-    if(integrationClientId){const client=await platform.inspectIntegrationClient(integrationClientId);
-      if(client.status!=='active'||client.organizationId!==organizationId)throw new DailyCareError('INTEGRATION_TENANT_MISMATCH','Integration Client ไม่สัมพันธ์กับ tenant',403);
-      if(!client.centers.some((scope)=>scope.center_id===centerId))throw new DailyCareError('INTEGRATION_CENTER_SCOPE_DENIED','Integration Client ไม่มีสิทธิ์ในศูนย์นี้',403);}
+    if(integrationClientId)await validateExternalClient({integrationClientId,organizationId,centerId});
 
-    return transact(`daily-record:${integrationClientId||centerId}:${externalRecordId||`${residentId}:${at}`}`,async()=>{
-      if(integrationClientId){const duplicate=await repository.findByExternalRecord(integrationClientId,externalRecordId);
-        if(duplicate)return {duplicate:true,item:projectReport(duplicate,await repository.listItems(duplicate.daily_report_id),[])};}
+    return transact(`daily-create:${integrationClientId||centerId}:${externalRecordId||`${reportGroupId||residentId}:${versionNo}`}`,async()=>{
+      if(integrationClientId) {
+        const duplicate=await repository.findByExternalRecord(integrationClientId,externalRecordId);
+        if(duplicate) {
+          const detail=await repository.getReportDetail(duplicate.daily_report_id);
+          return {duplicate:true,item:projectReport(detail)};
+        }
+      }
       const dailyReportId=idFactory('DCR');
-      const row=await repository.insertReport({dailyReportId,organizationId,centerId,residentId,careProfileId,occurredAt:at,
-        actorType,actorReference:actor,sourceType,sourceSystem,integrationClientId,
+      const groupId=reportGroupId||dailyReportId;
+      const submittedAt=lifecycleStatus==='submitted' ? clock() : null;
+      const finalizedAt=lifecycleStatus==='finalized'
+        ? requiredTimestamp(provenance?.finalizedAt,'INVALID_FINALIZED_AT') : null;
+      const finalizedByActorReference=lifecycleStatus==='finalized'
+        ? actorReference(provenance?.finalizedByActorReference||actor) : null;
+      const row=await repository.insertReport({
+        dailyReportId,reportGroupId:groupId,versionNo,supersedesReportId,
+        organizationId,centerId,residentId,careProfileId,status:lifecycleStatus,occurredAt:at,
+        careDate:normalizedCareDate,shiftCode:normalizedShift.code,shiftSourceLabel:normalizedShift.sourceLabel,
+        sourceRecordedAt:provenance?.sourceRecordedAt?requiredTimestamp(provenance.sourceRecordedAt,'INVALID_RECORDED_AT'):null,
+        actorType,actorReference:actor,recorderDisplayName:optionalText(provenance?.recorderDisplayName||provenance?.externalStaffDisplayName,160),
+        submittedAt,submittedByActorReference:submittedAt?actor:null,
+        finalizedAt,finalizedByActorType:finalizedAt?actorType:null,
+        finalizedByActorReference,finalizerDisplayName:optionalText(provenance?.finalizerDisplayName,160),
+        sourceType,sourceSystem,integrationClientId,
         integrationEventId:provenance?.integrationEventId||null,externalRecordId,
         externalStaffId:optionalText(provenance?.externalStaffId,160),
-        externalStaffDisplayName:optionalText(provenance?.externalStaffDisplayName,160)});
-      const stored=[];for(const item of normalized)stored.push(await repository.insertItem({dailyItemId:idFactory('DCI'),dailyReportId,...item}));
+        externalStaffDisplayName:optionalText(provenance?.externalStaffDisplayName,160),
+      });
+      const stored=[];
+      for(const item of normalized)stored.push(await repository.insertItem({dailyItemId:idFactory('DCI'),dailyReportId,...item}));
       const storedVitals=[];
-      if(vitalSigns){
+      if(vitalSigns) {
         const vitalAt=requiredTimestamp(vitalSigns.occurredAt||at);
         const vitalResult=await vitals.recordCanonical({tenant:{organizationId},subject:{centerId,residentId,careProfileId},
           occurredAt:vitalAt,observations:vitalSigns.observations,
           provenance:{sourceType,sourceSystem,integrationClientId,integrationEventId:provenance?.integrationEventId||null,
-            externalRecordId:integrationClientId?`${externalRecordId}:vitals`:null,externalStaffId:provenance?.externalStaffId||null,
-            externalStaffDisplayName:provenance?.externalStaffDisplayName||null,actorReference:actor},
-          suppressFamilyNotification:true});
-        await repository.linkVital(dailyReportId,vitalResult.item.vitalSetId);storedVitals.push(vitalResult.item);
+            externalRecordId:integrationClientId?`${externalRecordId}:vitals`:null,
+            externalStaffId:provenance?.externalStaffId||null,
+            externalStaffDisplayName:provenance?.externalStaffDisplayName||null,actorReference:actor}});
+        await repository.linkVital(dailyReportId,vitalResult.item.vitalSetId,vitalResult.item);
+        storedVitals.push(vitalResult.item);
       }
-      await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId,eventType:'recorded',actorType,actorReference:actor,
-        metadata:{itemTypes:normalized.map((item)=>item.itemType),hasVitalSigns:Boolean(vitalSigns),sourceType}});
-      await familyNotifications.enqueueRecorded({kind:'daily_care',careProfileId,resourceId:dailyReportId,
-        projection:{careRecipientName:subjectDetails.resident.full_name||null,room:subjectDetails.resident.room||null,
-          centerDisplayName:subjectDetails.center.name||null,occurredAt:row.occurred_at,recordedAt:row.recorded_at,
-          dailyCare:stored.map(projectItem),vitalSigns:storedVitals.flatMap((item)=>item.observations||[]),
-          recorderDisplayName:optionalText(provenance?.recorderDisplayName||provenance?.externalStaffDisplayName,160)}});
+      const eventType=lifecycleStatus==='finalized'?'finalized':(versionNo>1?'correction_submitted':'submitted');
+      await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId,eventType,
+        actorType,actorReference:actor,metadata:{itemTypes:normalized.map((item)=>item.itemType),
+          hasVitalSigns:storedVitals.length>0,sourceType,versionNo}});
       return {duplicate:false,item:{...projectReport(row,stored,[]),vitalSigns:storedVitals}};
     });
   }
 
-  async function recordNative({lineUserId,centerId,residentId,occurredAt,items,vitalSigns}){
+  async function enqueueFinalizedNotificationByReport({dailyReportId,expectedLineGroupId=null}) {
+    const reportId=requiredId(dailyReportId,'Daily Report ID');
+    const row=await repository.getReportDetail(reportId);
+    if(!row||row.status!=='finalized') {
+      throw new DailyCareError('FINALIZED_REPORT_NOT_FOUND','ไม่พบรายงานที่ยืนยันแล้ว',404);
+    }
+    const resident=await residents.findOne((item)=>item.resident_id===row.resident_id
+      && item.center_id===row.center_id&&item.care_profile_id===row.care_profile_id&&item.status==='active');
+    const center=await centers.findOne((item)=>item.center_id===row.center_id&&item.status==='active');
+    if(!resident||!center)throw new DailyCareError('REPORT_SUBJECT_UNAVAILABLE','ความสัมพันธ์ผู้รับการดูแลไม่พร้อมใช้งาน',409);
+    try {
+      const result=await familyNotifications.enqueueFinalized({kind:'daily_care',careProfileId:row.care_profile_id,
+        resourceId:reportId,expectedLineGroupId,
+        projection:{careRecipientName:resident.full_name||null,room:resident.room||null,
+          centerDisplayName:center.name||null,careDate:row.care_date||null,occurredAt:row.occurred_at,
+          recordedAt:row.source_recorded_at||row.recorded_at,finalizedAt:row.finalized_at,
+          dailyCare:(row.items||[]).map(projectItem),
+          vitalSigns:(row.vital_signs||[]).flatMap((item)=>(item.observations||[]).map((observation)=>({
+            measurementType:observation.measurement_type,sourceValueText:observation.source_value_text,
+            numericValue:observation.numeric_value===null?null:Number(observation.numeric_value),
+            sourceUnit:observation.source_unit,canonicalUnit:observation.canonical_unit,
+            context:observation.measurement_context||null,
+          }))),
+          recorderDisplayName:row.recorder_display_name||row.external_staff_display_name||null,
+          finalizerDisplayName:row.finalizer_display_name||null}});
+      return {...result,notificationStatus:notificationState(result)};
+    } catch (_error) {
+      return {ok:false,reason:'enqueue_failed',notificationStatus:'enqueue_failed',
+        groupReconciliationStatus:expectedLineGroupId?'group_binding_missing':'no_expected_group',
+        expectedLineGroupId:expectedLineGroupId||null,verifiedLineGroupId:null};
+    }
+  }
+
+  async function recordCanonical(input) {
+    const result=await createCanonicalReport({...input,lifecycleStatus:'finalized'});
+    const notification=await enqueueFinalizedNotificationByReport({dailyReportId:result.item.dailyReportId,
+      expectedLineGroupId:input.expectedLineGroupId||null});
+    return {...result,notification};
+  }
+
+  async function recordNative({lineUserId,centerId,residentId,occurredAt,careDate=null,shift=null,items,vitalSigns}) {
     const centerKey=requiredId(centerId,'Center ID');const residentKey=requiredId(residentId,'Resident ID');
-    const staff=await staffTable.findOne((row)=>row.center_id===centerKey&&row.line_user_id===lineUserId&&row.status==='active'&&['owner','manager','staff'].includes(row.role));
-    if(!staff)throw new DailyCareError('CENTER_ACCESS_DENIED','ไม่มีสิทธิ์บันทึกข้อมูลศูนย์นี้',403);
+    const staff=await requireStaff({lineUserId,centerId:centerKey});
     const resident=await residents.findOne((row)=>row.resident_id===residentKey&&row.center_id===centerKey&&row.status==='active');
     if(!resident?.care_profile_id)throw new DailyCareError('RESIDENT_NOT_READY','ผู้พักยังไม่มี Care Profile ที่พร้อมใช้งาน',409);
     const organization=await platform.getOrganizationForCenter(centerKey);
     if(!organization)throw new DailyCareError('CENTER_TENANT_UNAVAILABLE','ไม่พบ tenant ของศูนย์',409);
-    return recordCanonical({tenant:{organizationId:organization.organizationId},subject:{centerId:centerKey,residentId:residentKey,careProfileId:resident.care_profile_id},
-      occurredAt,items,vitalSigns,provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',actorReference:`center_staff:${staff.staff_id}`,
+    return createCanonicalReport({tenant:{organizationId:organization.organizationId},
+      subject:{centerId:centerKey,residentId:residentKey,careProfileId:resident.care_profile_id},
+      occurredAt,careDate,shift,items,vitalSigns,lifecycleStatus:'submitted',
+      provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',
+        actorReference:`center_staff:${staff.staff_id}`,
         recorderDisplayName:staff.display_name||staff.full_name||staff.name||null}});
   }
 
-  async function listHistory({lineUserId,careProfileId,centerId=null,from=null,to=null,cursor=null,limit=20}){
+  async function listHistory({lineUserId,careProfileId,centerId=null,from=null,to=null,cursor=null,limit=20}) {
     const profileId=requiredId(careProfileId,'Care Profile ID');
     await authorize({lineUserId,careProfileId:profileId,permission:'view',centerId:centerId||null,requireActiveCenter:false});
-    const bounded=Math.min(50,Math.max(1,Number(limit)||20));const fromAt=from?requiredTimestamp(from,'INVALID_DATE_RANGE'):null;const toAt=to?requiredTimestamp(to,'INVALID_DATE_RANGE'):null;
+    const bounded=Math.min(50,Math.max(1,Number(limit)||20));
+    const fromAt=from?requiredTimestamp(from,'INVALID_DATE_RANGE'):null;
+    const toAt=to?requiredTimestamp(to,'INVALID_DATE_RANGE'):null;
     if(fromAt&&toAt&&new Date(fromAt)>new Date(toAt))throw new DailyCareError('INVALID_DATE_RANGE','ช่วงวันที่ไม่ถูกต้อง',400);
     if(fromAt&&toAt&&new Date(toAt)-new Date(fromAt)>366*86400000)throw new DailyCareError('DATE_RANGE_TOO_LARGE','ช่วงวันที่ต้องไม่เกิน 366 วัน',400);
     const rows=await repository.listHistory({careProfileId:profileId,centerId:centerId||null,from:fromAt,to:toAt,cursor:decodeCursor(cursor),limit:bounded});
@@ -123,19 +274,130 @@ function createDailyCareService(overrides={}){
     return {items:page.map((row)=>projectReport(row)),nextCursor:hasMore?encodeCursor(page.at(-1)):null};
   }
 
-  async function voidReport({lineUserId,centerId,dailyReportId,reason}){
-    const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');const cleanReason=optionalText(reason,500);
-    if(!cleanReason)throw new DailyCareError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผล',400);
-    const staff=await staffTable.findOne((row)=>row.center_id===centerKey&&row.line_user_id===lineUserId&&row.status==='active'&&['owner','manager'].includes(row.role));
-    if(!staff)throw new DailyCareError('CENTER_ACCESS_DENIED','ไม่มีสิทธิ์ยกเลิกรายการนี้',403);
-    return transact(`daily-void:${reportId}`,async()=>{const current=await repository.findReport(reportId);
-      if(!current||current.center_id!==centerKey)throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายการ',404);
-      if(current.status==='voided')return projectReport(current,await repository.listItems(reportId),[]);
-      const actor=`center_staff:${staff.staff_id}`;const updated=await repository.voidReport({dailyReportId:reportId,actorReference:actor,reason:cleanReason});
-      await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId:reportId,eventType:'voided',actorType:'center_staff',actorReference:actor,metadata:{reasonCode:'human_void'}});
-      return projectReport(updated,await repository.listItems(reportId),[]);});
+  async function listCenterWorkflow({lineUserId,centerId,status='submitted',limit=50}) {
+    const centerKey=requiredId(centerId,'Center ID');
+    const staff=await requireStaff({lineUserId,centerId:centerKey});
+    if(!await platform.isCenterCapabilityEnabled(centerKey,'daily_care_v1')) {
+      throw new DailyCareError('CAPABILITY_DISABLED','ศูนย์ยังไม่ได้เปิดใช้การดูแลประจำวัน',403);
+    }
+    const requested=String(status||'submitted');
+    if(!['submitted','changes_requested'].includes(requested)) {
+      throw new DailyCareError('INVALID_REVIEW_STATUS','สถานะรายการตรวจไม่ถูกต้อง',400);
+    }
+    if(requested==='submitted'&&!['owner','manager'].includes(staff.role)) {
+      const rows=await repository.listCenterWorkflow({centerId:centerKey,statuses:['submitted'],
+        actorReference:`center_staff:${staff.staff_id}`,limit:Math.min(100,Math.max(1,Number(limit)||50))});
+      return {items:await attachSubjects(rows),role:staff.role};
+    }
+    const rows=await repository.listCenterWorkflow({centerId:centerKey,statuses:[requested],
+      actorReference:staff.role==='staff'?`center_staff:${staff.staff_id}`:null,
+      limit:Math.min(100,Math.max(1,Number(limit)||50))});
+    return {items:await attachSubjects(rows),role:staff.role};
   }
-  return {recordCanonical,recordNative,listHistory,voidReport,repository};
+
+  async function attachSubjects(rows) {
+    const items=[];
+    for(const row of rows) {
+      const resident=await residents.findOne((item)=>item.resident_id===row.resident_id&&item.center_id===row.center_id);
+      items.push(projectReport(row,row.items||[],row.vital_signs||[],{
+        residentId:resident?.resident_id||null,careRecipientName:resident?.full_name||null,room:resident?.room||null,
+      }));
+    }
+    return items;
+  }
+
+  async function returnForCorrection({lineUserId,centerId,dailyReportId,reason}) {
+    const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');
+    const staff=await requireStaff({lineUserId,centerId:centerKey,roles:['owner','manager']});
+    const cleanReason=optionalText(reason,500);
+    if(!cleanReason)throw new DailyCareError('RETURN_REASON_REQUIRED','กรุณาระบุสิ่งที่ต้องแก้ไข',400);
+    return transact(`daily-return:${reportId}`,async()=>{
+      const current=await repository.findReportForUpdate(reportId);
+      if(!current||current.center_id!==centerKey||current.source_type!=='native_phimor') {
+        throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายงาน',404);
+      }
+      if(current.status==='changes_requested')return projectReport(await repository.getReportDetail(reportId));
+      if(current.status!=='submitted')throw new DailyCareError('DAILY_REPORT_NOT_SUBMITTED','รายงานนี้ไม่อยู่ระหว่างรอตรวจ',409);
+      const actor=`center_staff:${staff.staff_id}`;
+      const updated=await repository.markReturned({dailyReportId:reportId,actorReference:actor,reason:cleanReason});
+      await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId:reportId,eventType:'returned',
+        actorType:'center_staff',actorReference:actor,metadata:{reasonCode:'changes_requested'}});
+      return projectReport(updated,await repository.listItems(reportId),[]);
+    });
+  }
+
+  async function resubmitReport({lineUserId,centerId,dailyReportId,occurredAt,careDate=null,shift=null,items,vitalSigns}) {
+    const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');
+    const staff=await requireStaff({lineUserId,centerId:centerKey});
+    return transact(`daily-revision:${reportId}`,async()=>{
+      const current=await repository.findReportForUpdate(reportId);
+      if(!current||current.center_id!==centerKey||current.source_type!=='native_phimor') {
+        throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายงาน',404);
+      }
+      if(current.status!=='changes_requested')throw new DailyCareError('DAILY_REPORT_NOT_RETURNED','รายงานนี้ยังไม่ได้ถูกส่งกลับแก้ไข',409);
+      if(staff.role==='staff'&&current.recorded_by_actor_reference!==`center_staff:${staff.staff_id}`) {
+        throw new DailyCareError('CENTER_ACCESS_DENIED','แก้ไขได้เฉพาะรายงานที่ตนเองบันทึก',403);
+      }
+      if(await repository.findSupersedingReport(reportId)) {
+        throw new DailyCareError('DAILY_REPORT_ALREADY_RESUBMITTED','รายงานนี้ถูกแก้ไขและส่งตรวจอีกครั้งแล้ว',409);
+      }
+      const organization=await platform.getOrganizationForCenter(centerKey);
+      const versionRow=await repository.nextVersion(current.report_group_id);
+      return createCanonicalReport({tenant:{organizationId:organization.organizationId},
+        subject:{centerId:centerKey,residentId:current.resident_id,careProfileId:current.care_profile_id},
+        occurredAt,careDate,shift,items,vitalSigns,lifecycleStatus:'submitted',
+        reportGroupId:current.report_group_id,versionNo:Number(versionRow.next_version),supersedesReportId:reportId,
+        provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',
+          actorReference:`center_staff:${staff.staff_id}`,
+          recorderDisplayName:staff.display_name||staff.full_name||staff.name||null}});
+    });
+  }
+
+  async function finalizeReport({lineUserId,centerId,dailyReportId}) {
+    const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');
+    const staff=await requireStaff({lineUserId,centerId:centerKey,roles:['owner','manager']});
+    const finalized=await transact(`daily-finalize:${reportId}`,async()=>{
+      const current=await repository.findReportForUpdate(reportId);
+      if(!current||current.center_id!==centerKey||current.source_type!=='native_phimor') {
+        throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายงาน',404);
+      }
+      if(current.status==='finalized')return {duplicate:true,row:current};
+      if(current.status!=='submitted')throw new DailyCareError('DAILY_REPORT_NOT_SUBMITTED','รายงานนี้ไม่อยู่ระหว่างรอตรวจ',409);
+      if(!await platform.isCenterCapabilityEnabled(centerKey,'daily_care_v1')) {
+        throw new DailyCareError('CAPABILITY_DISABLED','ศูนย์ยังไม่ได้เปิดใช้การดูแลประจำวัน',403);
+      }
+      const actor=`center_staff:${staff.staff_id}`;
+      const row=await repository.markFinalized({dailyReportId:reportId,actorType:'center_staff',actorReference:actor,
+        finalizerDisplayName:staff.display_name||staff.full_name||staff.name||null});
+      await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId:reportId,eventType:'finalized',
+        actorType:'center_staff',actorReference:actor,metadata:{versionNo:Number(row.version_no||1)}});
+      return {duplicate:false,row};
+    });
+    const notification=await enqueueFinalizedNotificationByReport({dailyReportId:reportId});
+    const detail=await repository.getReportDetail(reportId);
+    return {duplicate:finalized.duplicate,item:projectReport(detail),notification};
+  }
+
+  async function voidReport({lineUserId,centerId,dailyReportId,reason}) {
+    const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');
+    const cleanReason=optionalText(reason,500);
+    if(!cleanReason)throw new DailyCareError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผล',400);
+    const staff=await requireStaff({lineUserId,centerId:centerKey,roles:['owner','manager']});
+    return transact(`daily-void:${reportId}`,async()=>{
+      const current=await repository.findReportForUpdate(reportId);
+      if(!current||current.center_id!==centerKey)throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายการ',404);
+      if(current.status==='voided')return projectReport(await repository.getReportDetail(reportId));
+      const actor=`center_staff:${staff.staff_id}`;
+      const updated=await repository.voidReport({dailyReportId:reportId,actorReference:actor,reason:cleanReason});
+      await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId:reportId,eventType:'voided',
+        actorType:'center_staff',actorReference:actor,metadata:{reasonCode:'human_void'}});
+      return projectReport(updated,await repository.listItems(reportId),[]);
+    });
+  }
+
+  return {recordCanonical,recordNative,listHistory,listCenterWorkflow,returnForCorrection,
+    resubmitReport,finalizeReport,enqueueFinalizedNotificationByReport,voidReport,repository};
 }
+
 const dailyCareService=createDailyCareService();
-module.exports={createDailyCareService,dailyCareService,projectItem,projectReport,decodeCursor};
+module.exports={createDailyCareService,dailyCareService,projectItem,projectReport,decodeCursor,notificationState};

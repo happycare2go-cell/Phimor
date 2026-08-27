@@ -8,22 +8,25 @@ const ui = require('../liff-app/center-admin/care-recording-ui');
 const uiSource = fs.readFileSync(path.join(__dirname, '..', 'liff-app', 'center-admin', 'care-recording-ui.js'), 'utf8');
 const htmlSource = fs.readFileSync(path.join(__dirname, '..', 'liff-app', 'center-admin', 'index.html'), 'utf8');
 
-test('Center vital form creates canonical observation types and exact source units without interpretation', () => {
-  assert.deepEqual(ui.buildVitalObservations({ temperature:'36.8', systolic:'120', diastolic:'70', pulse:'64', spo2:'98', respiratoryRate:'16' }), [
+test('Center vital form creates controlled observation types including glucose context and weight without interpretation', () => {
+  assert.deepEqual(ui.buildVitalObservations({ temperature:'36.8', systolic:'120', diastolic:'70', pulse:'64', spo2:'98', respiratoryRate:'16',bloodGlucose:'108',glucoseContext:'fasting',weight:'54.2' }), [
     { measurementType:'temperature', numericValue:36.8, sourceUnit:'Cel', sourceValueText:'36.8' },
     { measurementType:'blood_pressure_systolic', numericValue:120, sourceUnit:'mm[Hg]', sourceValueText:'120' },
     { measurementType:'blood_pressure_diastolic', numericValue:70, sourceUnit:'mm[Hg]', sourceValueText:'70' },
     { measurementType:'pulse', numericValue:64, sourceUnit:'/min', sourceValueText:'64' },
     { measurementType:'spo2', numericValue:98, sourceUnit:'%', sourceValueText:'98' },
     { measurementType:'respiratory_rate', numericValue:16, sourceUnit:'/min', sourceValueText:'16' },
+    { measurementType:'blood_glucose', numericValue:108, sourceUnit:'mg/dL', sourceValueText:'108', context:'fasting' },
+    { measurementType:'weight', numericValue:54.2, sourceUnit:'kg', sourceValueText:'54.2' },
   ]);
   assert.throws(() => ui.buildVitalObservations({}), /อย่างน้อย 1 รายการ/);
   assert.doesNotMatch(uiSource, /ดีขึ้น|แย่ลง|อันตราย|วินิจฉัยว่า/);
 });
 
-test('Center daily form preserves shift, factual text, intake and bowel count', () => {
-  assert.deepEqual(ui.buildDailyItems({ shift:'เช้า', fluid:'850', bowelCount:'1', nutrition:'รับประทานอาหารได้ครึ่งจาน', mood:'พูดคุยตามปกติ' }), [
-    { itemType:'shift', valueType:'text', textValue:'เช้า', sourceValueText:'เช้า' },
+test('Center daily form preserves normalized shift plus source label, factual text, intake and bowel count', () => {
+  assert.deepEqual(ui.buildShift({shift:'day'}),{code:'day',sourceLabel:'กลางวัน'});
+  assert.deepEqual(ui.buildDailyItems({ shift:'day', fluid:'850', bowelCount:'1', nutrition:'รับประทานอาหารได้ครึ่งจาน', mood:'พูดคุยตามปกติ' }), [
+    { itemType:'shift', valueType:'text', textValue:'กลางวัน', sourceValueText:'กลางวัน' },
     { itemType:'fluid_intake', valueType:'numeric', numericValue:850, sourceUnit:'mL', sourceValueText:'850' },
     { itemType:'bowel_movement', valueType:'numeric', numericValue:1, sourceUnit:'times', sourceValueText:'1' },
     { itemType:'nutrition', valueType:'text', textValue:'รับประทานอาหารได้ครึ่งจาน', sourceValueText:'รับประทานอาหารได้ครึ่งจาน' },
@@ -45,14 +48,30 @@ test('controller follows authoritative capabilities and canonical Center routes'
   await assert.rejects(() => controller.submitDaily({ residentId:'RES/1', occurredAt:'2026-08-27T09:30:00+07:00', nutrition:'ปกติ' }), /ยังไม่ได้เปิดใช้/);
 });
 
-test('daily submit carries shift, bowel count and optional linked vitals through P2', async () => {
+test('daily submit carries shift, bowel count and optional linked vitals into submitted workflow', async () => {
   let call;
   const controller=ui.createController({api:async(route,options)=>{call={route,body:JSON.parse(options.body)};return{item:{}};}});
-  controller.configure({centerId:'CTR-A',residents:[{resident_id:'RES-A',full_name:'A'}],capabilities:{daily_care_v1:true,vital_signs_v1:true}});
-  await controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:30:00+07:00',shift:'เช้า',bowelCount:'2',nutrition:'ทานได้',dailySpo2:'98'});
+  controller.configure({centerId:'CTR-A',role:'staff',residents:[{resident_id:'RES-A',full_name:'A'}],capabilities:{daily_care_v1:true,vital_signs_v1:true}});
+  await controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:30:00+07:00',shift:'day',bowelCount:'2',nutrition:'ทานได้',dailySpo2:'98'});
   assert.equal(call.route,'/api/center/CTR-A/residents/RES-A/daily-care');
   assert.deepEqual(call.body.items.map((item)=>item.itemType),['shift','bowel_movement','nutrition']);
+  assert.deepEqual(call.body.shift,{code:'day',sourceLabel:'กลางวัน'});assert.equal(call.body.careDate,'2026-08-27');
   assert.equal(call.body.vitalSigns.observations[0].measurementType,'spo2');
+});
+
+test('Manager review controller loads, returns and finalizes through authoritative Center routes',async()=>{
+  const calls=[];const controller=ui.createController({api:async(route,options={})=>{calls.push({route,options});return{items:[]};}});
+  controller.configure({centerId:'CTR-A',role:'manager',residents:[],capabilities:{daily_care_v1:true}});
+  await controller.listDailyWorkflow('submitted');await controller.returnDaily('DCR-1','แก้ไขข้อมูลอาหาร');await controller.finalizeDaily('DCR-2');
+  assert.deepEqual(calls.map((call)=>call.route),['/api/center/CTR-A/daily-care/review?status=submitted','/api/center/CTR-A/daily-care/DCR-1/return','/api/center/CTR-A/daily-care/DCR-2/finalize']);
+  const staff=ui.createController({api:async()=>({})});staff.configure({centerId:'CTR-A',role:'staff',residents:[],capabilities:{daily_care_v1:true}});
+  assert.throws(()=>staff.finalizeDaily('DCR-1'),/เฉพาะเจ้าของหรือผู้จัดการ/);
+});
+
+test('finalization UX distinguishes queued notification from held or unavailable routing',()=>{
+  assert.equal(ui.finalizationNotice({notification:{notificationStatus:'queued'}}),'ยืนยันรายงานแล้ว ระบบนำรายงานเข้าคิวแจ้งครอบครัว');
+  assert.match(ui.finalizationNotice({notification:{notificationStatus:'recipient_missing'}}),/ยังไม่พบช่องทาง/);
+  assert.match(ui.finalizationNotice({notification:{notificationStatus:'enqueue_failed'}}),/ยังไม่สำเร็จ/);
 });
 
 test('context switch invalidates an in-flight response and clears the previous resident', async () => {
@@ -84,6 +103,7 @@ test('Center LIFF mounts capability-gated mobile forms without browser persisten
   assert.match(htmlSource, /api\/center\/\$\{encodeURIComponent\(requestedCenterId\)\}\/capabilities/);
   assert.match(htmlSource, /centerCareUi\.clear\(\)/);
   assert.match(uiSource, /aria-live="polite"/);
+  assert.match(uiSource, /รายงานรอตรวจ/);assert.match(uiSource,/ยืนยันและส่งครอบครัว/);
   assert.match(uiSource, /inputmode="decimal"/);
   assert.doesNotMatch(uiSource, /localStorage|sessionStorage|location\.(?:search|hash)/);
   assert.doesNotMatch(uiSource, /lineUserId|LINE_USER_ID|phone|emergency/i);

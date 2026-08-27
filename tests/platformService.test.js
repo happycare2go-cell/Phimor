@@ -148,6 +148,8 @@ test('Center and event scopes deny ungranted and cross-Organization targets', as
   await service.addClientEventScope({ integrationClientId:client.integrationClientId, eventType:'care.vitals.recorded', actorReference:'ADM-1' });
   assert.equal(await repository.hasClientEventScope(client.integrationClientId, 'care.vitals.recorded'), true);
   assert.equal(await repository.hasClientEventScope(client.integrationClientId, 'care.daily_report.recorded'), false);
+  await service.addClientEventScope({ integrationClientId:client.integrationClientId, eventType:'care.daily_report.finalized', actorReference:'ADM-1' });
+  assert.equal(await repository.hasClientEventScope(client.integrationClientId, 'care.daily_report.finalized'), true);
   await assert.rejects(service.addClientEventScope({ integrationClientId:client.integrationClientId, eventType:'care.unknown', actorReference:'ADM-1' }), { code:'UNKNOWN_EVENT_TYPE' });
 });
 

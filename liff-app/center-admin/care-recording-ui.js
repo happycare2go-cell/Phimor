@@ -9,7 +9,10 @@
     ['pulse', 'pulse', '/min'],
     ['spo2', 'spo2', '%'],
     ['respiratoryRate', 'respiratory_rate', '/min'],
+    ['bloodGlucose', 'blood_glucose', 'mg/dL', 'glucoseContext'],
+    ['weight', 'weight', 'kg'],
   ]);
+  const SHIFT_LABELS = Object.freeze({ day:'กลางวัน', night:'กลางคืน', morning:'เช้า', evening:'เย็น', other:'อื่น ๆ' });
   const DAILY_TEXT_FIELDS = Object.freeze([
     ['nutrition', 'nutrition'], ['sleep', 'sleep_rest'],
     ['urination', 'urination'], ['activity', 'activity'], ['mood', 'mood_behavior'],
@@ -42,12 +45,15 @@
     const labels = {
       temperature: 'อุณหภูมิ', systolic: 'ความดันตัวบน', diastolic: 'ความดันตัวล่าง',
       pulse: 'ชีพจร', spo2: 'ออกซิเจนปลายนิ้ว', respiratoryRate: 'อัตราการหายใจ',
+      bloodGlucose:'น้ำตาลในเลือด', weight:'น้ำหนัก',
     };
     const observations = [];
-    for (const [field, measurementType, sourceUnit] of VITAL_FIELDS) {
+    for (const [field, measurementType, sourceUnit, contextField] of VITAL_FIELDS) {
       const numericValue = parseNumber(values[field], labels[field]);
       if (numericValue === null) continue;
-      observations.push({ measurementType, numericValue, sourceUnit, sourceValueText:cleanText(values[field]) });
+      const observation = { measurementType, numericValue, sourceUnit, sourceValueText:cleanText(values[field]) };
+      if (contextField) observation.context = cleanText(values[contextField]) || 'unspecified';
+      observations.push(observation);
     }
     if (!observations.length) throw new CenterCareUiError('VITAL_REQUIRED', 'กรุณากรอกสัญญาณชีพอย่างน้อย 1 รายการ');
     return observations;
@@ -55,8 +61,8 @@
 
   function buildDailyItems(values = {}) {
     const items = [];
-    const shift = cleanText(values.shift);
-    if (shift) items.push({ itemType:'shift', valueType:'text', textValue:shift, sourceValueText:shift });
+    const shift = buildShift(values);
+    if (shift) items.push({ itemType:'shift', valueType:'text', textValue:shift.sourceLabel, sourceValueText:shift.sourceLabel });
     const fluid = parseNumber(values.fluid, 'ปริมาณน้ำดื่ม');
     if (fluid !== null) items.push({ itemType:'fluid_intake', valueType:'numeric', numericValue:fluid, sourceUnit:'mL', sourceValueText:cleanText(values.fluid) });
     const bowelCount = parseNumber(values.bowelCount, 'จำนวนครั้งการขับถ่าย');
@@ -69,14 +75,29 @@
     return items;
   }
 
+  function buildShift(values = {}) {
+    const code = cleanText(values.shift);
+    if (!code) return null;
+    return { code, sourceLabel:SHIFT_LABELS[code] || cleanText(values.shiftSourceLabel) || code };
+  }
+
   function buildOptionalDailyVitals(values = {}) {
     const mapped = {
       temperature:values.dailyTemperature, systolic:values.dailySystolic,
       diastolic:values.dailyDiastolic, pulse:values.dailyPulse,
       spo2:values.dailySpo2, respiratoryRate:values.dailyRespiratoryRate,
+      bloodGlucose:values.dailyBloodGlucose, glucoseContext:values.dailyGlucoseContext,
+      weight:values.dailyWeight,
     };
     if (!Object.values(mapped).some((value) => cleanText(value))) return null;
     return { occurredAt:occurredAtIso(values.occurredAt), observations:buildVitalObservations(mapped) };
+  }
+
+  function finalizationNotice(result = {}) {
+    const state = result?.notification?.notificationStatus;
+    if (state === 'queued' || state === 'duplicate') return 'ยืนยันรายงานแล้ว ระบบนำรายงานเข้าคิวแจ้งครอบครัว';
+    if (state === 'recipient_missing') return 'ยืนยันรายงานแล้ว แต่ยังไม่พบช่องทางแจ้งครอบครัว';
+    return 'ยืนยันรายงานแล้ว แต่การนำเข้าคิวแจ้งครอบครัวยังไม่สำเร็จ';
   }
 
   function createController({ api } = {}) {
@@ -93,7 +114,7 @@
         .filter((resident) => resident && resident.resident_id)
         .map((resident) => ({ residentId:String(resident.resident_id), name:String(resident.full_name || 'ผู้รับการดูแล'), room:resident.room ? String(resident.room) : null })) : [];
       context = {
-        centerId:cleanText(next.centerId), residents,
+        centerId:cleanText(next.centerId), role:cleanText(next.role), residents,
         capabilities:{
           [CAPABILITIES.vital]:next.capabilities?.[CAPABILITIES.vital] === true,
           [CAPABILITIES.daily]:next.capabilities?.[CAPABILITIES.daily] === true,
@@ -122,7 +143,8 @@
       const residentId = cleanText(values.residentId);
       const body = kind === 'vital'
         ? { occurredAt:occurredAtIso(values.occurredAt), observations:buildVitalObservations(values) }
-        : { occurredAt:occurredAtIso(values.occurredAt), items:buildDailyItems(values) };
+        : { occurredAt:occurredAtIso(values.occurredAt), careDate:cleanText(values.occurredAt).slice(0, 10),
+          shift:buildShift(values), items:buildDailyItems(values) };
       if (kind === 'daily') {
         const vitalSigns = buildOptionalDailyVitals(values);
         if (vitalSigns && !context.capabilities[CAPABILITIES.vital]) throw new CenterCareUiError('CAPABILITY_UNAVAILABLE', 'ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกสัญญาณชีพ');
@@ -132,7 +154,9 @@
       try {
         const path = kind === 'vital'
           ? `/api/center/${encodeURIComponent(centerId)}/residents/${encodeURIComponent(residentId)}/vital-signs`
-          : `/api/center/${encodeURIComponent(centerId)}/residents/${encodeURIComponent(residentId)}/daily-care`;
+          : values.resubmitReportId
+            ? `/api/center/${encodeURIComponent(centerId)}/daily-care/${encodeURIComponent(cleanText(values.resubmitReportId))}/resubmit`
+            : `/api/center/${encodeURIComponent(centerId)}/residents/${encodeURIComponent(residentId)}/daily-care`;
         const result = await api(path, { method:'POST', body:JSON.stringify(body) });
         if (requestRevision !== revision) return { stale:true };
         return { stale:false, result };
@@ -144,10 +168,38 @@
       }
     }
 
+    async function workflowRequest(path, options = {}) {
+      if (!context?.centerId || !context.capabilities[CAPABILITIES.daily]) {
+        throw new CenterCareUiError('CAPABILITY_UNAVAILABLE', 'ศูนย์นี้ยังไม่ได้เปิดใช้ความสามารถนี้');
+      }
+      const requestRevision = revision;
+      const result = await api(`/api/center/${encodeURIComponent(context.centerId)}${path}`, options);
+      return requestRevision === revision ? { stale:false, result } : { stale:true };
+    }
+
+    function listDailyWorkflow(status) {
+      return workflowRequest(`/daily-care/review?status=${encodeURIComponent(status)}`);
+    }
+
+    function finalizeDaily(reportId) {
+      if (!['owner','manager'].includes(context?.role)) throw new CenterCareUiError('REVIEW_ROLE_REQUIRED', 'เฉพาะเจ้าของหรือผู้จัดการที่ยืนยันรายงานได้');
+      return workflowRequest(`/daily-care/${encodeURIComponent(cleanText(reportId))}/finalize`, { method:'POST', body:'{}' });
+    }
+
+    function returnDaily(reportId, reason) {
+      if (!['owner','manager'].includes(context?.role)) throw new CenterCareUiError('REVIEW_ROLE_REQUIRED', 'เฉพาะเจ้าของหรือผู้จัดการที่ส่งกลับแก้ไขได้');
+      const cleanReason = cleanText(reason);
+      if (!cleanReason) throw new CenterCareUiError('RETURN_REASON_REQUIRED', 'กรุณาระบุสิ่งที่ต้องแก้ไข');
+      return workflowRequest(`/daily-care/${encodeURIComponent(cleanText(reportId))}/return`, {
+        method:'POST', body:JSON.stringify({ reason:cleanReason }),
+      });
+    }
+
     return {
       configure, clear:() => configure(null), snapshot,
       submitVital:(values) => submit('vital', values),
       submitDaily:(values) => submit('daily', values),
+      listDailyWorkflow, finalizeDaily, returnDaily,
     };
   }
 
@@ -171,6 +223,17 @@
           <p>เลือกผู้รับการดูแลและบันทึกข้อมูลตามที่วัดหรือสังเกตได้ ระบบไม่แปลผลทางการแพทย์จากหน้านี้</p>
         </div>
         <p id="centerCareUnavailable" class="center-care__state" role="status" hidden>ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกข้อมูลการดูแล</p>
+        <section id="centerDailyReview" class="center-care__panel center-care__review" aria-labelledby="centerDailyReviewHeading" hidden>
+          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">Manager review</p><h3 id="centerDailyReviewHeading">รายงานรอตรวจ</h3></div><button type="button" class="btn btn-outline center-care__refresh">รีเฟรช</button></div>
+          <p class="center-care__hint">ตรวจข้อมูลก่อนยืนยัน รายงานที่ยังไม่ยืนยันจะไม่ถูกแจ้งให้ครอบครัว</p>
+          <div class="center-care__review-list" role="list"></div>
+          <p class="center-care__review-status" role="status" aria-live="polite"></p>
+        </section>
+        <section id="centerDailyReturned" class="center-care__panel center-care__review" aria-labelledby="centerDailyReturnedHeading" hidden>
+          <h3 id="centerDailyReturnedHeading">รายงานที่ส่งกลับแก้ไข</h3>
+          <p class="center-care__hint">แก้ไขจากข้อมูลต้นฉบับแล้วส่งให้ผู้จัดการตรวจอีกครั้ง</p>
+          <div class="center-care__review-list" role="list"></div>
+        </section>
         <form id="centerVitalForm" class="center-care__panel" novalidate>
           <h3>สัญญาณชีพ</h3>
           <p class="center-care__hint">กรอกเฉพาะค่าที่วัดได้จริง อย่างน้อย 1 รายการ</p>
@@ -183,16 +246,20 @@
             <label>ชีพจร (ครั้ง/นาที)<input name="pulse" type="number" inputmode="numeric" step="1"></label>
             <label>ออกซิเจนปลายนิ้ว (%)<input name="spo2" type="number" inputmode="decimal" step="0.1"></label>
             <label>อัตราการหายใจ (ครั้ง/นาที)<input name="respiratoryRate" type="number" inputmode="numeric" step="1"></label>
+            <label>น้ำตาลในเลือด (mg/dL)<input name="bloodGlucose" type="number" inputmode="decimal" step="0.1"></label>
+            <label>บริบทน้ำตาล<select name="glucoseContext"><option value="unspecified">ไม่ระบุ</option><option value="fasting">อดอาหาร</option><option value="before_meal">ก่อนอาหาร</option><option value="after_meal">หลังอาหาร</option><option value="random">สุ่มเวลา</option></select></label>
+            <label>น้ำหนัก (kg)<input name="weight" type="number" inputmode="decimal" step="0.1"></label>
           </div>
           <button class="btn btn-primary center-care__submit" type="submit">บันทึกสัญญาณชีพ</button>
           <p class="center-care__form-status" role="status" aria-live="polite"></p>
         </form>
         <form id="centerDailyForm" class="center-care__panel" novalidate>
+          <input name="resubmitReportId" type="hidden">
           <h3>รายงานการดูแลประจำวัน</h3>
           <p class="center-care__hint">บันทึกตามสิ่งที่ดูแลหรือสังเกตได้ โดยไม่สรุปวินิจฉัย</p>
           <label>ผู้รับการดูแล<select name="residentId" class="center-care__resident" required></select></label>
           <label>วันและเวลาที่บันทึก<input name="occurredAt" type="datetime-local" required></label>
-          <label>ช่วงเวร<select name="shift"><option value="">ไม่ระบุ</option><option value="เช้า">เช้า</option><option value="บ่าย">บ่าย</option><option value="ดึก">ดึก</option></select></label>
+          <label>ช่วงเวร<select name="shift"><option value="">ไม่ระบุ</option><option value="day">กลางวัน</option><option value="night">กลางคืน</option><option value="morning">เช้า</option><option value="evening">เย็น</option><option value="other">อื่น ๆ</option></select></label>
           <fieldset class="center-care__vitals" data-daily-vitals>
             <legend>สัญญาณชีพที่วัดพร้อมรายงาน (ถ้ามี)</legend>
             <div class="center-care__grid">
@@ -202,6 +269,9 @@
               <label>ชีพจร (ครั้ง/นาที)<input name="dailyPulse" type="number" inputmode="numeric" step="1"></label>
               <label>ออกซิเจนปลายนิ้ว (%)<input name="dailySpo2" type="number" inputmode="decimal" step="0.1"></label>
               <label>อัตราการหายใจ (ครั้ง/นาที)<input name="dailyRespiratoryRate" type="number" inputmode="numeric" step="1"></label>
+              <label>น้ำตาลในเลือด (mg/dL)<input name="dailyBloodGlucose" type="number" inputmode="decimal" step="0.1"></label>
+              <label>บริบทน้ำตาล<select name="dailyGlucoseContext"><option value="unspecified">ไม่ระบุ</option><option value="fasting">อดอาหาร</option><option value="before_meal">ก่อนอาหาร</option><option value="after_meal">หลังอาหาร</option><option value="random">สุ่มเวลา</option></select></label>
+              <label>น้ำหนัก (kg)<input name="dailyWeight" type="number" inputmode="decimal" step="0.1"></label>
             </div>
           </fieldset>
           <label>อาหาร<textarea name="nutrition" maxlength="1000" placeholder="เช่น รับประทานอาหารได้ครึ่งจาน"></textarea></label>
@@ -221,6 +291,105 @@
     const vitalForm = root.querySelector('#centerVitalForm');
     const dailyForm = root.querySelector('#centerDailyForm');
     const unavailable = root.querySelector('#centerCareUnavailable');
+    const reviewSection = root.querySelector('#centerDailyReview');
+    const returnedSection = root.querySelector('#centerDailyReturned');
+    let reviewItems = [];
+    let returnedItems = [];
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+        '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+      })[character]);
+    }
+
+    const itemLabels = Object.freeze({
+      shift:'ช่วงเวร', nutrition:'อาหาร', fluid_intake:'น้ำดื่ม', sleep_rest:'การนอน',
+      bowel_movement:'การขับถ่าย', urination:'การปัสสาวะ', activity:'กิจกรรม',
+      mood_behavior:'อารมณ์', general_condition:'สภาพทั่วไป', symptom_note:'อาการที่สังเกต',
+    });
+    const vitalLabels = Object.freeze({
+      temperature:'อุณหภูมิ', blood_pressure_systolic:'ความดันตัวบน',
+      blood_pressure_diastolic:'ความดันตัวล่าง', pulse:'ชีพจร', spo2:'SpO₂',
+      respiratory_rate:'อัตราการหายใจ', blood_glucose:'น้ำตาลในเลือด', weight:'น้ำหนัก',
+    });
+
+    function factualValue(item) {
+      const value = item.sourceValueText ?? item.textValue ?? item.numericValue
+        ?? (typeof item.booleanValue === 'boolean' ? (item.booleanValue ? 'มี' : 'ไม่มี') : null);
+      return value === null || value === undefined || value === '' ? 'ไม่ระบุ'
+        : `${value}${item.sourceUnit ? ` ${item.sourceUnit}` : ''}`;
+    }
+
+    function renderWorkflowCard(report, mode) {
+      const date = report.careDate || (report.occurredAt ? new Date(report.occurredAt).toLocaleDateString('th-TH') : 'ไม่ระบุวันที่');
+      const shift = report.shift?.sourceLabel || report.shift?.code || 'ไม่ระบุเวร';
+      const items = (report.items || []).map((item) => `<li><strong>${escapeHtml(itemLabels[item.itemType] || item.itemType)}:</strong> ${escapeHtml(factualValue(item))}</li>`).join('');
+      const vitalRows = (report.vitalSigns || []).flatMap((set) => set.observations || [])
+        .map((observation) => `<li><strong>${escapeHtml(vitalLabels[observation.measurementType] || observation.measurementType)}:</strong> ${escapeHtml(`${observation.sourceValueText ?? observation.numericValue}${observation.sourceUnit ? ` ${observation.sourceUnit}` : ''}`)}</li>`).join('');
+      const managerActions = mode === 'review' ? `<div class="center-care__review-actions">
+        <button type="button" class="btn btn-outline" data-care-action="return" data-report-id="${escapeHtml(report.dailyReportId)}">ส่งกลับแก้ไข</button>
+        <button type="button" class="btn btn-primary" data-care-action="finalize" data-report-id="${escapeHtml(report.dailyReportId)}">ยืนยันและส่งครอบครัว</button>
+      </div>` : `<button type="button" class="btn btn-outline" data-care-action="edit-returned" data-report-id="${escapeHtml(report.dailyReportId)}">แก้ไขและส่งตรวจใหม่</button>`;
+      return `<article class="center-care__review-card" role="listitem">
+        <div class="center-care__review-title"><strong>${escapeHtml(report.careRecipientName || 'ผู้รับการดูแล')}</strong>${report.room ? `<span>ห้อง ${escapeHtml(report.room)}</span>` : ''}</div>
+        <p>${escapeHtml(shift)} • ${escapeHtml(date)}</p>
+        ${report.recorderDisplayName ? `<p>ผู้บันทึก: ${escapeHtml(report.recorderDisplayName)}</p>` : ''}
+        ${mode === 'returned' && report.returnReason ? `<p class="center-care__return-reason">สิ่งที่ต้องแก้ไข: ${escapeHtml(report.returnReason)}</p>` : ''}
+        ${vitalRows ? `<h4>สัญญาณชีพ</h4><ul>${vitalRows}</ul>` : ''}
+        ${items ? `<h4>การดูแลประจำวัน</h4><ul>${items}</ul>` : ''}
+        ${managerActions}
+      </article>`;
+    }
+
+    function renderWorkflow(section, items, mode) {
+      const list = section.querySelector('.center-care__review-list');
+      list.innerHTML = items.length ? items.map((item) => renderWorkflowCard(item, mode)).join('')
+        : '<p class="center-care__empty">ยังไม่มีรายการ</p>';
+    }
+
+    async function refreshWorkflow() {
+      const state = controller.snapshot();
+      reviewItems = []; returnedItems = [];
+      if (!state?.capabilities?.[CAPABILITIES.daily]) {
+        reviewSection.hidden = true; returnedSection.hidden = true; return;
+      }
+      reviewSection.hidden = !['owner','manager'].includes(state.role);
+      returnedSection.hidden = false;
+      const status = reviewSection.querySelector('.center-care__review-status');
+      status.textContent = reviewSection.hidden ? '' : 'กำลังโหลดรายงานรอตรวจ...';
+      const [reviewResponse, returnedResponse] = await Promise.all([
+        reviewSection.hidden ? Promise.resolve(null) : controller.listDailyWorkflow('submitted'),
+        controller.listDailyWorkflow('changes_requested'),
+      ]);
+      if (reviewResponse?.stale || returnedResponse?.stale) return;
+      reviewItems = reviewResponse?.result?.items || [];
+      returnedItems = returnedResponse?.result?.items || [];
+      if (!reviewSection.hidden) renderWorkflow(reviewSection, reviewItems, 'review');
+      renderWorkflow(returnedSection, returnedItems, 'returned');
+      returnedSection.hidden = returnedItems.length === 0;
+      status.textContent = '';
+    }
+
+    function populateReturned(report) {
+      dailyForm.reset();
+      dailyForm.elements.resubmitReportId.value = report.dailyReportId;
+      dailyForm.elements.residentId.value = report.residentId || '';
+      dailyForm.elements.occurredAt.value = report.occurredAt ? localDateTimeValue(new Date(report.occurredAt)) : localDateTimeValue();
+      dailyForm.elements.shift.value = report.shift?.code || '';
+      const fieldByType = {nutrition:'nutrition',fluid_intake:'fluid',sleep_rest:'sleep',bowel_movement:'bowelCount',
+        urination:'urination',activity:'activity',mood_behavior:'mood',general_condition:'generalCondition',symptom_note:'symptomNote'};
+      for (const item of report.items || []) {
+        const field = fieldByType[item.itemType]; if (field && dailyForm.elements[field]) dailyForm.elements[field].value = item.textValue ?? item.numericValue ?? '';
+      }
+      const vitalField = {temperature:'dailyTemperature',blood_pressure_systolic:'dailySystolic',blood_pressure_diastolic:'dailyDiastolic',
+        pulse:'dailyPulse',spo2:'dailySpo2',respiratory_rate:'dailyRespiratoryRate',blood_glucose:'dailyBloodGlucose',weight:'dailyWeight'};
+      for (const observation of (report.vitalSigns || []).flatMap((set) => set.observations || [])) {
+        const field = vitalField[observation.measurementType]; if (field) dailyForm.elements[field].value = observation.sourceValueText ?? observation.numericValue ?? '';
+        if (observation.measurementType === 'blood_glucose') dailyForm.elements.dailyGlucoseContext.value = observation.context || 'unspecified';
+      }
+      dailyForm.querySelector('.center-care__submit').textContent = 'แก้ไขและส่งตรวจอีกครั้ง';
+      dailyForm.scrollIntoView({ behavior:'smooth', block:'start' });
+    }
 
     function resetForms() {
       for (const form of [vitalForm, dailyForm]) {
@@ -229,6 +398,7 @@
         form.querySelector('.center-care__form-status').textContent = '';
         form.querySelector('.center-care__submit').disabled = false;
       }
+      dailyForm.querySelector('.center-care__submit').textContent = 'ส่งรายงานให้ผู้จัดการตรวจ';
     }
 
     function renderResidents(residents) {
@@ -258,12 +428,16 @@
       dailyForm.querySelector('[data-daily-vitals]').hidden = !vitalEnabled;
       unavailable.hidden = vitalEnabled || dailyEnabled;
       onVisibility(vitalEnabled || dailyEnabled);
+      refreshWorkflow().catch(() => {
+        reviewSection.querySelector('.center-care__review-status').textContent = 'โหลดรายงานรอตรวจไม่สำเร็จ กรุณาลองใหม่';
+      });
     }
 
     function clear() {
       controller.clear();
       resetForms(); renderResidents([]);
       vitalForm.hidden = true; dailyForm.hidden = true; unavailable.hidden = false;
+      reviewItems = []; returnedItems = []; reviewSection.hidden = true; returnedSection.hidden = true;
       onVisibility(false);
     }
 
@@ -276,6 +450,7 @@
         if (response.stale) return;
         form.querySelectorAll('input:not([name="occurredAt"]), textarea').forEach((field) => { field.value = ''; });
         status.textContent = successMessage; notify(successMessage);
+        if (form === dailyForm) await refreshWorkflow();
       } catch (error) {
         status.textContent = error?.message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่';
       } finally {
@@ -284,12 +459,44 @@
     }
 
     vitalForm.addEventListener('submit', (event) => { event.preventDefault(); submit(vitalForm, controller.submitVital, 'บันทึกสัญญาณชีพแล้ว'); });
-    dailyForm.addEventListener('submit', (event) => { event.preventDefault(); submit(dailyForm, controller.submitDaily, 'บันทึกรายงานประจำวันแล้ว'); });
+    dailyForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const resubmitting = Boolean(dailyForm.elements.resubmitReportId.value);
+      submit(dailyForm, controller.submitDaily, resubmitting
+        ? 'แก้ไขและส่งรายงานให้ผู้จัดการตรวจอีกครั้งแล้ว'
+        : 'ส่งรายงานให้ผู้จัดการตรวจแล้ว ยังไม่มีการแจ้งครอบครัว');
+    });
+    reviewSection.querySelector('.center-care__refresh').addEventListener('click', () => refreshWorkflow().catch(() => {
+      reviewSection.querySelector('.center-care__review-status').textContent = 'รีเฟรชไม่สำเร็จ กรุณาลองใหม่';
+    }));
+    reviewSection.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-care-action]'); if (!button) return;
+      const reportId = button.dataset.reportId; button.disabled = true;
+      try {
+        if (button.dataset.careAction === 'finalize') {
+          if (!globalScope.confirm('ยืนยันรายงานนี้และนำเข้าคิวแจ้งครอบครัวใช่หรือไม่')) return;
+          const response = await controller.finalizeDaily(reportId); if (response.stale) return;
+          notify(finalizationNotice(response.result));
+        } else {
+          const reason = globalScope.prompt('ระบุสิ่งที่ต้องแก้ไข'); if (!reason) return;
+          const response = await controller.returnDaily(reportId, reason); if (response.stale) return;
+          notify('ส่งรายงานกลับให้แก้ไขแล้ว ยังไม่มีการแจ้งครอบครัว');
+        }
+        await refreshWorkflow();
+      } catch (error) { notify(error?.message || 'ดำเนินการไม่สำเร็จ'); }
+      finally { button.disabled = false; }
+    });
+    returnedSection.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-care-action="edit-returned"]'); if (!button) return;
+      const report = returnedItems.find((item) => item.dailyReportId === button.dataset.reportId);
+      if (report) populateReturned(report);
+    });
     clear();
     return { setContext, clear, snapshot:controller.snapshot };
   }
 
-  const api = { CAPABILITIES, CenterCareUiError, buildVitalObservations, buildDailyItems, buildOptionalDailyVitals, occurredAtIso, createController, mount };
+  const api = { CAPABILITIES, CenterCareUiError, buildVitalObservations, buildShift,
+    buildDailyItems, buildOptionalDailyVitals, finalizationNotice, occurredAtIso, createController, mount };
   globalScope.PhimorCenterCareUI = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

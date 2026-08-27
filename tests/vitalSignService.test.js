@@ -50,10 +50,17 @@ const observations = [
   { measurementType:'pulse', numericValue:72, sourceUnit:'bpm' },
 ];
 
-test('normalization accepts only the six canonical types and deterministic unit aliases', () => {
+test('normalization accepts the controlled generic registry and deterministic unit/context rules', () => {
   const normalized = normalizeObservations(observations);
   assert.deepEqual(normalized.map((item) => [item.measurementType,item.canonicalUnit]), [['temperature','Cel'],['pulse','/min']]);
-  assert.throws(() => normalizeObservations([{ measurementType:'weight', numericValue:60, sourceUnit:'kg' }]), { code:'UNSUPPORTED_MEASUREMENT' });
+  assert.deepEqual(normalizeObservations([{ measurementType:'weight', numericValue:60, sourceUnit:'kg' }])[0], {
+    sourceOrdinal:1,measurementType:'weight',sourceValueText:'60',numericValue:60,
+    sourceUnit:'kg',canonicalUnit:'kg',measurementContext:null,
+  });
+  assert.equal(normalizeObservations([{ measurementType:'blood_glucose', numericValue:108, sourceUnit:'mg/dL', context:'fasting' }])[0].measurementContext,'fasting');
+  assert.equal(normalizeObservations([{ measurementType:'blood_glucose', numericValue:6, sourceUnit:'mmol/L' }])[0].canonicalUnit,'mmol/L');
+  assert.throws(() => normalizeObservations([{ measurementType:'blood_glucose', numericValue:108, sourceUnit:'mg/dL', context:'bedtime' }]), { code:'INVALID_GLUCOSE_CONTEXT' });
+  assert.throws(() => normalizeObservations([{ measurementType:'vendor_custom', numericValue:1, sourceUnit:'x' }]), { code:'UNSUPPORTED_MEASUREMENT' });
   assert.throws(() => normalizeObservations([{ measurementType:'spo2', numericValue:98, sourceUnit:'bpm' }]), { code:'UNSUPPORTED_UNIT' });
   assert.throws(() => normalizeObservations([{ measurementType:'pulse', numericValue:70, sourceUnit:'bpm' },{ measurementType:'pulse', numericValue:71, sourceUnit:'bpm' }]), { code:'DUPLICATE_MEASUREMENT' });
 });
@@ -97,22 +104,16 @@ test('external record ID is idempotent and cannot create a second canonical set'
   assert.equal(first.item.vitalSetId, second.item.vitalSetId); assert.equal(repository.state.sets.length, 1);
 });
 
-test('native and external writes create factual Family projections on the shared canonical path', async () => {
+test('native and external standalone Vital writes are stored without automatic Family push', async () => {
   const calls=[]; const {service}=fixture({familyNotifications:{async enqueueRecorded(input){calls.push(input);return{ok:true};}}}); await seed();
   await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',observations});
   await service.recordCanonical({tenant:{organizationId:'ORG-A'},subject:{centerId:'CTR-A',residentId:'RES-A',careProfileId:'CP-A'},occurredAt:'2026-08-27T02:00:00Z',observations,
     provenance:{sourceType:'external_integration',sourceSystem:'trusted',integrationClientId:'INT-A',externalRecordId:'EXT-NOTIFY',
       externalStaffDisplayName:'ผู้ดูแลภายนอก',actorReference:'integration_client:INT-A'}});
-  assert.equal(calls.length,2); assert.ok(calls.every((call)=>call.kind==='vital_signs'&&call.careProfileId==='CP-A'));
-  assert.notEqual(calls[0].resourceId,calls[1].resourceId);
-  assert.equal(calls[0].projection.careRecipientName,'คุณยายเอ');
-  assert.equal(calls[0].projection.room,'A-1'); assert.equal(calls[0].projection.centerDisplayName,'ศูนย์ A');
-  assert.equal(calls[0].projection.recorderDisplayName,'ผู้ดูแลเอ');
-  assert.deepEqual(calls[0].projection.vitalSigns.map((item)=>item.numericValue),[36.7,72]);
-  assert.equal(calls[1].projection.recorderDisplayName,'ผู้ดูแลภายนอก');
+  assert.equal(calls.length,0);
 });
 
-test('parent Daily Care transaction can suppress only its nested vital notification', async () => {
+test('standalone Vital notification cannot be enabled through a legacy suppression flag', async () => {
   const calls=[]; const {service}=fixture({familyNotifications:{async enqueueRecorded(input){calls.push(input);return{ok:true};}}}); await seed();
   await service.recordCanonical({tenant:{organizationId:'ORG-A'},subject:{centerId:'CTR-A',residentId:'RES-A',careProfileId:'CP-A'},occurredAt:'2026-08-27T02:00:00Z',observations,
     provenance:{sourceType:'external_integration',sourceSystem:'trusted',integrationClientId:'INT-A',externalRecordId:'EXT-NESTED',actorReference:'integration_client:INT-A'},suppressFamilyNotification:true});
