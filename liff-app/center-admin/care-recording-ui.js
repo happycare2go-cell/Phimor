@@ -112,7 +112,8 @@
       if (!next) { context = null; return null; }
       const residents = Array.isArray(next.residents) ? next.residents
         .filter((resident) => resident && resident.resident_id)
-        .map((resident) => ({ residentId:String(resident.resident_id), name:String(resident.full_name || 'ผู้รับการดูแล'), room:resident.room ? String(resident.room) : null })) : [];
+        .map((resident) => ({ residentId:String(resident.resident_id), careProfileId:resident.care_profile_id?String(resident.care_profile_id):null,
+          name:String(resident.full_name || 'ผู้รับการดูแล'), room:resident.room ? String(resident.room) : null })) : [];
       context = {
         centerId:cleanText(next.centerId), role:cleanText(next.role), residents,
         capabilities:{
@@ -195,11 +196,54 @@
       });
     }
 
+    function listVitalHistory(residentId='') {
+      if(!context?.centerId||!context.capabilities[CAPABILITIES.vital])throw new CenterCareUiError('CAPABILITY_UNAVAILABLE','ศูนย์นี้ยังไม่ได้เปิดใช้ความสามารถนี้');
+      const query=residentId?`?residentId=${encodeURIComponent(cleanText(residentId))}`:'';
+      return centerRequest(`/vital-signs/history${query}`);
+    }
+
+    function voidVital(vitalSetId,reason){
+      if(!['owner','manager'].includes(context?.role))throw new CenterCareUiError('REVIEW_ROLE_REQUIRED','เฉพาะเจ้าของหรือผู้จัดการที่ยกเลิกรายการได้');
+      const cleanReason=cleanText(reason);if(!cleanReason)throw new CenterCareUiError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผลที่ยกเลิกรายการ');
+      return centerRequest(`/vital-signs/${encodeURIComponent(cleanText(vitalSetId))}/void`,{method:'POST',body:JSON.stringify({reason:cleanReason})});
+    }
+
+    function createDailyCorrection(reportId,reason){
+      if(!['owner','manager'].includes(context?.role))throw new CenterCareUiError('REVIEW_ROLE_REQUIRED','เฉพาะเจ้าของหรือผู้จัดการที่สร้างฉบับแก้ไขได้');
+      const cleanReason=cleanText(reason);if(!cleanReason)throw new CenterCareUiError('CORRECTION_REASON_REQUIRED','กรุณาระบุเหตุผลที่สร้างฉบับแก้ไข');
+      return workflowRequest(`/daily-care/${encodeURIComponent(cleanText(reportId))}/corrections`,{method:'POST',body:JSON.stringify({reason:cleanReason})});
+    }
+
+    function voidDaily(reportId,reason){
+      if(!['owner','manager'].includes(context?.role))throw new CenterCareUiError('REVIEW_ROLE_REQUIRED','เฉพาะเจ้าของหรือผู้จัดการที่ยกเลิกรายการได้');
+      const cleanReason=cleanText(reason);if(!cleanReason)throw new CenterCareUiError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผลที่ยกเลิกรายการ');
+      return workflowRequest(`/daily-care/${encodeURIComponent(cleanText(reportId))}/void`,{method:'POST',body:JSON.stringify({reason:cleanReason})});
+    }
+
+    function centerRequest(path,options={}){
+      if(!context?.centerId)throw new CenterCareUiError('CENTER_REQUIRED','กรุณาเลือกศูนย์');
+      const requestRevision=revision;return api(`/api/center/${encodeURIComponent(context.centerId)}${path}`,options)
+        .then((result)=>requestRevision===revision?{stale:false,result}:{stale:true},(error)=>{if(requestRevision!==revision)return{stale:true};throw error;});
+    }
+
+    function labRequest(residentId,suffix='',options={}){
+      const resident=context?.residents.find((item)=>item.residentId===cleanText(residentId));
+      if(!resident?.careProfileId)throw new CenterCareUiError('CARE_PROFILE_REQUIRED','ผู้รับการดูแลยังไม่มี Care Profile');
+      const requestRevision=revision;
+      const path=`/api/care-profile/${encodeURIComponent(resident.careProfileId)}/lab-reports${suffix}${suffix.includes('?')?'&':'?'}centerId=${encodeURIComponent(context.centerId)}`;
+      return api(path,options).then((result)=>requestRevision===revision?{stale:false,result}:{stale:true},(error)=>{if(requestRevision!==revision)return{stale:true};throw error;});
+    }
+
+    function listLabHistory(residentId){return labRequest(residentId,'?includeHistory=true&limit=20');}
+    function createLabCorrection(residentId,reportId,reason){if(!['owner','manager'].includes(context?.role))throw new CenterCareUiError('REVIEW_ROLE_REQUIRED','เฉพาะเจ้าของหรือผู้จัดการที่สร้างฉบับแก้ไขได้');const cleanReason=cleanText(reason);if(!cleanReason)throw new CenterCareUiError('CORRECTION_REASON_REQUIRED','กรุณาระบุเหตุผลที่สร้างฉบับแก้ไข');return labRequest(residentId,`/${encodeURIComponent(reportId)}/corrections`,{method:'POST',body:JSON.stringify({reason:cleanReason})});}
+    function voidLab(residentId,reportId,reason){if(!['owner','manager'].includes(context?.role))throw new CenterCareUiError('REVIEW_ROLE_REQUIRED','เฉพาะเจ้าของหรือผู้จัดการที่ยกเลิกรายการได้');const cleanReason=cleanText(reason);if(!cleanReason)throw new CenterCareUiError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผลที่ยกเลิกรายการ');return labRequest(residentId,`/${encodeURIComponent(reportId)}/void`,{method:'POST',body:JSON.stringify({reason:cleanReason})});}
+
     return {
       configure, clear:() => configure(null), snapshot,
       submitVital:(values) => submit('vital', values),
       submitDaily:(values) => submit('daily', values),
       listDailyWorkflow, finalizeDaily, returnDaily,
+      listVitalHistory,voidVital,createDailyCorrection,voidDaily,listLabHistory,createLabCorrection,voidLab,
     };
   }
 
@@ -212,7 +256,7 @@
     return shifted.toISOString().slice(0, 16);
   }
 
-  function mount({ root, api, notify = () => {}, onVisibility = () => {} } = {}) {
+  function mount({ root, api, notify = () => {}, onVisibility = () => {}, onOpenLabDraft = () => {} } = {}) {
     if (!root) throw new Error('root is required');
     const controller = createController({ api });
     root.innerHTML = `
@@ -223,6 +267,19 @@
           <p>เลือกผู้รับการดูแลและบันทึกข้อมูลตามที่วัดหรือสังเกตได้ ระบบไม่แปลผลทางการแพทย์จากหน้านี้</p>
         </div>
         <p id="centerCareUnavailable" class="center-care__state" role="status" hidden>ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกข้อมูลการดูแล</p>
+        <section id="centerLabHistory" class="center-care__panel center-care__history" aria-labelledby="centerLabHistoryHeading">
+          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">ประวัติข้อมูลทางคลินิก</p><h3 id="centerLabHistoryHeading">ผลตรวจ Lab ที่ยืนยันแล้ว</h3></div><button type="button" class="btn btn-outline center-care__refresh" data-refresh-history="lab">รีเฟรช</button></div>
+          <label>ผู้รับการดูแล<select id="centerLabResident" class="center-care__resident"></select></label>
+          <p class="center-care__hint">การแก้ไขจะสร้างฉบับใหม่ ประวัติเดิมยังคงอยู่</p><div class="center-care__history-list" role="list"></div><p class="center-care__history-status" role="status" aria-live="polite"></p>
+        </section>
+        <section id="centerVitalHistory" class="center-care__panel center-care__history" aria-labelledby="centerVitalHistoryHeading" hidden>
+          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">ประวัติการบันทึก</p><h3 id="centerVitalHistoryHeading">ประวัติสัญญาณชีพล่าสุด</h3></div><button type="button" class="btn btn-outline center-care__refresh" data-refresh-history="vital">รีเฟรช</button></div>
+          <p class="center-care__hint">รายการที่ยกเลิกยังอยู่ในประวัติ แต่ไม่แสดงเป็นข้อมูลปัจจุบันของครอบครัว</p><div class="center-care__history-list" role="list"></div><p class="center-care__history-status" role="status" aria-live="polite"></p>
+        </section>
+        <section id="centerDailyHistory" class="center-care__panel center-care__history" aria-labelledby="centerDailyHistoryHeading" hidden>
+          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">ประวัติฉบับยืนยัน</p><h3 id="centerDailyHistoryHeading">รายงานที่ยืนยันแล้ว</h3></div><button type="button" class="btn btn-outline center-care__refresh" data-refresh-history="daily">รีเฟรช</button></div>
+          <p class="center-care__hint">สร้างฉบับแก้ไขโดยไม่เขียนทับรายงานเดิม</p><div class="center-care__history-list" role="list"></div><p class="center-care__history-status" role="status" aria-live="polite"></p>
+        </section>
         <section id="centerDailyReview" class="center-care__panel center-care__review" aria-labelledby="centerDailyReviewHeading" hidden>
           <div class="center-care__review-heading"><div><p class="center-care__eyebrow">Manager review</p><h3 id="centerDailyReviewHeading">รายงานรอตรวจ</h3></div><button type="button" class="btn btn-outline center-care__refresh">รีเฟรช</button></div>
           <p class="center-care__hint">ตรวจข้อมูลก่อนยืนยัน รายงานที่ยังไม่ยืนยันจะไม่ถูกแจ้งให้ครอบครัว</p>
@@ -293,8 +350,13 @@
     const unavailable = root.querySelector('#centerCareUnavailable');
     const reviewSection = root.querySelector('#centerDailyReview');
     const returnedSection = root.querySelector('#centerDailyReturned');
+    const labHistorySection=root.querySelector('#centerLabHistory');
+    const vitalHistorySection=root.querySelector('#centerVitalHistory');
+    const dailyHistorySection=root.querySelector('#centerDailyHistory');
+    const actionDialog=globalScope.PhimorClinicalActionDialog?.createDialog({doc:globalScope.document});
     let reviewItems = [];
     let returnedItems = [];
+    let labHistoryItems=[];let vitalHistoryItems=[];let dailyHistoryItems=[];
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, (character) => ({
@@ -319,6 +381,21 @@
       return value === null || value === undefined || value === '' ? 'ไม่ระบุ'
         : `${value}${item.sourceUnit ? ` ${item.sourceUnit}` : ''}`;
     }
+
+    function versionStatus(item){if(item.status==='voided')return'ยกเลิกแล้ว';if(item.status==='changes_requested')return'ส่งกลับแก้ไข';if(item.status==='submitted'||item.status==='draft')return'รอตรวจ';return item.isCurrent===false?'ฉบับก่อนหน้า':'ฉบับปัจจุบัน';}
+    function mutationButtons(item,kind,residentId=''){
+      const caps=item.mutationCapabilities||{};if(!caps.canCreateCorrection&&!caps.canVoid)return'';
+      return `<div class="center-care__review-actions">${caps.canCreateCorrection?`<button type="button" class="btn btn-outline" data-clinical-action="correct-${kind}" data-resident-id="${escapeHtml(residentId)}" data-record-id="${escapeHtml(item.reportId||item.dailyReportId||'')}">สร้างฉบับแก้ไข</button>`:''}${caps.canVoid?`<button type="button" class="btn center-care__void" data-clinical-action="void-${kind}" data-resident-id="${escapeHtml(residentId)}" data-record-id="${escapeHtml(item.reportId||item.dailyReportId||item.vitalSetId||'')}">ยกเลิกรายการ</button>`:''}</div>`;
+    }
+
+    function renderLabHistory(){const list=labHistorySection.querySelector('.center-care__history-list');const residentId=root.querySelector('#centerLabResident').value;
+      list.innerHTML=labHistoryItems.length?labHistoryItems.map((report)=>`<article class="center-care__review-card" role="listitem"><div class="center-care__review-title"><strong>${escapeHtml(report.hospitalName||report.laboratoryName||'ผลตรวจ Lab')}</strong><span class="center-care__status">${escapeHtml(versionStatus(report))}</span></div><p>${escapeHtml(report.specimenCollectedAt?new Date(report.specimenCollectedAt).toLocaleString('th-TH'):'ไม่ระบุวันที่')}</p>${mutationButtons(report,'lab',residentId)}</article>`).join(''):'<p class="center-care__empty">ยังไม่มีผลตรวจที่ยืนยันแล้ว</p>';}
+    function renderVitalHistory(){const list=vitalHistorySection.querySelector('.center-care__history-list');list.innerHTML=vitalHistoryItems.length?vitalHistoryItems.map((set)=>{const values=(set.observations||[]).map((observation)=>`<li><strong>${escapeHtml(vitalLabels[observation.measurementType]||'ค่าที่บันทึก')}:</strong> ${escapeHtml(`${observation.sourceValueText??observation.numericValue}${observation.sourceUnit?` ${observation.sourceUnit}`:''}`)}</li>`).join('');return`<article class="center-care__review-card" role="listitem"><div class="center-care__review-title"><strong>${escapeHtml(set.careRecipientName||'ผู้รับการดูแล')}</strong><span class="center-care__status">${set.status==='voided'?'ยกเลิกแล้ว':'ฉบับปัจจุบัน'}</span></div><p>${escapeHtml(new Date(set.occurredAt).toLocaleString('th-TH'))}${set.sourceType==='external_integration'?' · ข้อมูลจากระบบศูนย์':''}</p><ul>${values}</ul>${mutationButtons(set,'vital')}</article>`;}).join(''):'<p class="center-care__empty">ยังไม่มีสัญญาณชีพ</p>';}
+    function renderDailyHistory(){const list=dailyHistorySection.querySelector('.center-care__history-list');list.innerHTML=dailyHistoryItems.length?dailyHistoryItems.map((report)=>{const shift=report.shift?.sourceLabel||SHIFT_LABELS[report.shift?.code]||report.shift?.code||'ไม่ระบุเวร';return`<article class="center-care__review-card" role="listitem"><div class="center-care__review-title"><strong>${escapeHtml(report.careRecipientName||'ผู้รับการดูแล')}</strong><span class="center-care__status">${escapeHtml(versionStatus(report))}</span></div><p>${escapeHtml(shift)} • ${escapeHtml(report.careDate||'ไม่ระบุวันที่')}${report.sourceType==='external_integration'?' · ข้อมูลจากระบบศูนย์':''}</p>${mutationButtons(report,'daily')}</article>`;}).join(''):'<p class="center-care__empty">ยังไม่มีรายงานที่ยืนยันแล้ว</p>';}
+
+    async function refreshLabHistory(){const residentId=root.querySelector('#centerLabResident').value;const status=labHistorySection.querySelector('.center-care__history-status');labHistoryItems=[];if(!residentId){renderLabHistory();return;}status.textContent='กำลังโหลดผลตรวจ...';try{const response=await controller.listLabHistory(residentId);if(response.stale)return;labHistoryItems=response.result?.items||[];renderLabHistory();status.textContent='';}catch(error){status.textContent=error?.message||'โหลดผลตรวจไม่สำเร็จ กรุณาลองใหม่';}}
+    async function refreshVitalHistory(){const status=vitalHistorySection.querySelector('.center-care__history-status');status.textContent='กำลังโหลดประวัติ...';try{const response=await controller.listVitalHistory();if(response.stale)return;vitalHistoryItems=response.result?.items||[];renderVitalHistory();status.textContent='';}catch(error){status.textContent=error?.message||'โหลดประวัติไม่สำเร็จ กรุณาลองใหม่';}}
+    async function refreshDailyHistory(){const status=dailyHistorySection.querySelector('.center-care__history-status');status.textContent='กำลังโหลดรายงาน...';try{const [finalized,voided]=await Promise.all([controller.listDailyWorkflow('finalized'),controller.listDailyWorkflow('voided')]);if(finalized.stale||voided.stale)return;dailyHistoryItems=[...(finalized.result?.items||[]),...(voided.result?.items||[])].sort((a,b)=>String(b.finalizedAt||b.occurredAt).localeCompare(String(a.finalizedAt||a.occurredAt)));renderDailyHistory();status.textContent='';}catch(error){status.textContent=error?.message||'โหลดรายงานไม่สำเร็จ กรุณาลองใหม่';}}
 
     function renderWorkflowCard(report, mode) {
       const date = report.careDate || (report.occurredAt ? new Date(report.occurredAt).toLocaleDateString('th-TH') : 'ไม่ระบุวันที่');
@@ -401,6 +478,27 @@
       dailyForm.querySelector('.center-care__submit').textContent = 'ส่งรายงานให้ผู้จัดการตรวจ';
     }
 
+    async function runClinicalAction(button){
+      if(!actionDialog)return;
+      const action=button.dataset.clinicalAction;const recordId=button.dataset.recordId;const residentId=button.dataset.residentId||'';
+      const correction=action.startsWith('correct-');const kind=action.split('-').at(-1);
+      return actionDialog.open({title:correction?'สร้างฉบับแก้ไข':kind==='lab'?'ยกเลิกผลตรวจรายการนี้?':kind==='vital'?'ยกเลิกสัญญาณชีพรายการนี้?':'ยกเลิกรายงานการดูแลรายการนี้?',
+        explanation:correction?'ระบบจะสร้างฉบับใหม่ให้ตรวจ โดยเก็บฉบับเดิมไว้ในประวัติ':'รายการจะไม่ถูกใช้เป็นข้อมูลปัจจุบันอีกต่อไป แต่ประวัติเดิมจะยังถูกเก็บไว้',
+        confirmLabel:correction?'สร้างฉบับแก้ไข':'ยืนยันยกเลิกรายการ',danger:!correction,
+        reasonRequired:correction?'กรุณาระบุเหตุผลที่สร้างฉบับแก้ไข':'กรุณาระบุเหตุผลที่ยกเลิกรายการ',
+        onConfirm:async(reason)=>{
+          let response;
+          if(kind==='lab')response=correction?await controller.createLabCorrection(residentId,recordId,reason):await controller.voidLab(residentId,recordId,reason);
+          else if(kind==='vital')response=await controller.voidVital(recordId,reason);
+          else response=correction?await controller.createDailyCorrection(recordId,reason):await controller.voidDaily(recordId,reason);
+          if(response.stale)return response;
+          if(kind==='lab'){await refreshLabHistory();if(correction)onOpenLabDraft({residentId,report:response.result});}
+          if(kind==='vital'){await refreshVitalHistory();const status=vitalHistorySection.querySelector('.center-care__history-status');status.textContent='ยกเลิกรายการแล้ว ';const recordNew=globalScope.document.createElement('button');recordNew.type='button';recordNew.className='btn btn-outline center-care__record-new';recordNew.textContent='บันทึกค่าใหม่';recordNew.addEventListener('click',()=>{vitalForm.reset();vitalForm.elements.occurredAt.value=localDateTimeValue();vitalForm.scrollIntoView({behavior:'smooth',block:'start'});});status.appendChild(recordNew);}
+          if(kind==='daily'){await Promise.all([refreshWorkflow(),refreshDailyHistory()]);if(correction)notify('สร้างฉบับรอตรวจแล้ว ผู้จัดการสามารถตรวจ ส่งกลับแก้ไข หรือยืนยันฉบับใหม่ได้');}
+          if(!correction)notify('ยกเลิกรายการแล้ว ประวัติเดิมยังถูกเก็บไว้');return response;
+        }});
+    }
+
     function renderResidents(residents) {
       root.querySelectorAll('.center-care__resident').forEach((select) => {
         select.replaceChildren();
@@ -425,10 +523,12 @@
       const dailyEnabled = state?.capabilities?.[CAPABILITIES.daily] === true;
       vitalForm.hidden = !vitalEnabled;
       dailyForm.hidden = !dailyEnabled;
+      labHistorySection.hidden=!(state?.residents||[]).some((resident)=>resident.careProfileId);
+      vitalHistorySection.hidden=!vitalEnabled;dailyHistorySection.hidden=!dailyEnabled;
       dailyForm.querySelector('[data-daily-vitals]').hidden = !vitalEnabled;
       unavailable.hidden = vitalEnabled || dailyEnabled;
-      onVisibility(vitalEnabled || dailyEnabled);
-      refreshWorkflow().catch(() => {
+      onVisibility(vitalEnabled || dailyEnabled || !labHistorySection.hidden);
+      Promise.all([refreshWorkflow(),labHistorySection.hidden?null:refreshLabHistory(),vitalEnabled?refreshVitalHistory():null,dailyEnabled?refreshDailyHistory():null]).catch(() => {
         reviewSection.querySelector('.center-care__review-status').textContent = 'โหลดรายงานรอตรวจไม่สำเร็จ กรุณาลองใหม่';
       });
     }
@@ -438,6 +538,7 @@
       resetForms(); renderResidents([]);
       vitalForm.hidden = true; dailyForm.hidden = true; unavailable.hidden = false;
       reviewItems = []; returnedItems = []; reviewSection.hidden = true; returnedSection.hidden = true;
+      labHistoryItems=[];vitalHistoryItems=[];dailyHistoryItems=[];labHistorySection.hidden=true;vitalHistorySection.hidden=true;dailyHistorySection.hidden=true;
       onVisibility(false);
     }
 
@@ -450,7 +551,8 @@
         if (response.stale) return;
         form.querySelectorAll('input:not([name="occurredAt"]), textarea').forEach((field) => { field.value = ''; });
         status.textContent = successMessage; notify(successMessage);
-        if (form === dailyForm) await refreshWorkflow();
+        if(form===dailyForm)await Promise.all([refreshWorkflow(),refreshDailyHistory()]);
+        if(form===vitalForm)await refreshVitalHistory();
       } catch (error) {
         status.textContent = error?.message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่';
       } finally {
@@ -482,7 +584,7 @@
           const response = await controller.returnDaily(reportId, reason); if (response.stale) return;
           notify('ส่งรายงานกลับให้แก้ไขแล้ว ยังไม่มีการแจ้งครอบครัว');
         }
-        await refreshWorkflow();
+        await Promise.all([refreshWorkflow(),refreshDailyHistory()]);
       } catch (error) { notify(error?.message || 'ดำเนินการไม่สำเร็จ'); }
       finally { button.disabled = false; }
     });
@@ -491,6 +593,11 @@
       const report = returnedItems.find((item) => item.dailyReportId === button.dataset.reportId);
       if (report) populateReturned(report);
     });
+    root.addEventListener('click',(event)=>{const button=event.target.closest?.('[data-clinical-action]');if(button)runClinicalAction(button);});
+    root.querySelectorAll('[data-refresh-history]').forEach((button)=>button.addEventListener('click',()=>{
+      const kind=button.dataset.refreshHistory;if(kind==='lab')refreshLabHistory();else if(kind==='vital')refreshVitalHistory();else refreshDailyHistory();
+    }));
+    root.querySelector('#centerLabResident').addEventListener('change',refreshLabHistory);
     clear();
     return { setContext, clear, snapshot:controller.snapshot };
   }

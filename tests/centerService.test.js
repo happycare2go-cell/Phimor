@@ -109,7 +109,8 @@ test('ข้อ B6: ถ้ามีกลุ่มไลน์ครอบคร
     center_id: center.center_id, status: 'linked',
   });
   await db.Residents.update((r) => r.resident_id === resident.resident_id, { care_profile_id: profile.care_profile_id });
-  await db.GroupBindings.insert({ binding_id: 'GB-1', care_profile_id: profile.care_profile_id, line_group_id: 'G_FAMILY_TEST', kind: 'family', bound_at: db.now() });
+  await db.GroupBindings.insert({ binding_id: 'GB-1', care_profile_id: profile.care_profile_id,
+    line_group_id: 'G_FAMILY_TEST', kind: 'family', status:'active', bound_at: db.now() });
 
   await centerService.dischargeResident(resident.resident_id, 'U_OWNER');
   const pushed = lineClient.getSentLog().find((s) => s.type === 'push');

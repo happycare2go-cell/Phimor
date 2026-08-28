@@ -26,7 +26,7 @@ function projectItem(row) {
 }
 
 function projectReport(row, items=row.items||[], vitals=row.vital_signs||[], subject={}) {
-  return {
+  const projected = {
     dailyReportId:row.daily_report_id, status:row.status,
     versionNo:Number(row.version_no||1), occurredAt:row.occurred_at,
     careDate:row.care_date||null,
@@ -43,6 +43,23 @@ function projectReport(row, items=row.items||[], vitals=row.vital_signs||[], sub
     items:items.map(projectItem),
     vitalSigns:vitals.map((vital)=>projectVitalSet(vital,vital.observations||[])),
   };
+  if(typeof row.is_authoritative==='boolean')projected.isCurrent=row.is_authoritative;
+  if(subject.mutationCapabilities)projected.mutationCapabilities=subject.mutationCapabilities;
+  return projected;
+}
+
+function dailyItemToInput(row) {
+  return {itemType:row.item_type,valueType:row.value_type,sourceValueText:row.source_value_text||null,
+    textValue:row.text_value||null,numericValue:row.numeric_value===null||row.numeric_value===undefined?null:Number(row.numeric_value),
+    booleanValue:row.boolean_value===null||row.boolean_value===undefined?null:Boolean(row.boolean_value),sourceUnit:row.source_unit||null};
+}
+
+function linkedVitalsToInput(rows, fallbackAt) {
+  const observations=(rows||[]).flatMap((set)=>(set.observations||[]).map((row)=>({
+    measurementType:row.measurement_type,sourceValueText:row.source_value_text,
+    numericValue:Number(row.numeric_value),sourceUnit:row.source_unit,context:row.measurement_context||undefined,
+  })));
+  return observations.length?{occurredAt:rows[0]?.occurred_at||fallbackAt,observations}:null;
 }
 
 function encodeCursor(row) {
@@ -202,17 +219,19 @@ function createDailyCareService(overrides={}) {
       const eventType=lifecycleStatus==='finalized'?'finalized':(versionNo>1?'correction_submitted':'submitted');
       await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId,eventType,
         actorType,actorReference:actor,metadata:{itemTypes:normalized.map((item)=>item.itemType),
-          hasVitalSigns:storedVitals.length>0,sourceType,versionNo}});
+          hasVitalSigns:storedVitals.length>0,sourceType,versionNo,
+          ...(versionNo>1&&provenance?.correctionReason?{correctionReason:provenance.correctionReason}:{})}});
       return {duplicate:false,item:{...projectReport(row,stored,[]),vitalSigns:storedVitals}};
     });
   }
 
   async function enqueueFinalizedNotificationByReport({dailyReportId,expectedLineGroupId=null}) {
     const reportId=requiredId(dailyReportId,'Daily Report ID');
-    const row=await repository.getReportDetail(reportId);
-    if(!row||row.status!=='finalized') {
+    const authoritative=await repository.findAuthoritativeFinalized(reportId);
+    if(!authoritative) {
       throw new DailyCareError('FINALIZED_REPORT_NOT_FOUND','ไม่พบรายงานที่ยืนยันแล้ว',404);
     }
+    const row=await repository.getReportDetail(reportId);
     const resident=await residents.findOne((item)=>item.resident_id===row.resident_id
       && item.center_id===row.center_id&&item.care_profile_id===row.care_profile_id&&item.status==='active');
     const center=await centers.findOne((item)=>item.center_id===row.center_id&&item.status==='active');
@@ -287,26 +306,29 @@ function createDailyCareService(overrides={}) {
       throw new DailyCareError('CAPABILITY_DISABLED','ศูนย์ยังไม่ได้เปิดใช้การดูแลประจำวัน',403);
     }
     const requested=String(status||'submitted');
-    if(!['submitted','changes_requested'].includes(requested)) {
+    if(!['submitted','changes_requested','finalized','voided'].includes(requested)) {
       throw new DailyCareError('INVALID_REVIEW_STATUS','สถานะรายการตรวจไม่ถูกต้อง',400);
     }
     if(requested==='submitted'&&!['owner','manager'].includes(staff.role)) {
       const rows=await repository.listCenterWorkflow({centerId:centerKey,statuses:['submitted'],
         actorReference:`center_staff:${staff.staff_id}`,limit:Math.min(100,Math.max(1,Number(limit)||50))});
-      return {items:await attachSubjects(rows),role:staff.role};
+      return {items:await attachSubjects(rows,staff.role),role:staff.role};
     }
     const rows=await repository.listCenterWorkflow({centerId:centerKey,statuses:[requested],
       actorReference:staff.role==='staff'?`center_staff:${staff.staff_id}`:null,
       limit:Math.min(100,Math.max(1,Number(limit)||50))});
-    return {items:await attachSubjects(rows),role:staff.role};
+    return {items:await attachSubjects(rows,staff.role),role:staff.role};
   }
 
-  async function attachSubjects(rows) {
+  async function attachSubjects(rows,staffRole) {
     const items=[];
     for(const row of rows) {
       const resident=await residents.findOne((item)=>item.resident_id===row.resident_id&&item.center_id===row.center_id);
+      const canMutate=['owner','manager'].includes(staffRole)&&row.source_type==='native_phimor'
+        &&row.status==='finalized'&&row.is_authoritative===true;
       items.push(projectReport(row,row.items||[],row.vital_signs||[],{
         residentId:resident?.resident_id||null,careRecipientName:resident?.full_name||null,room:resident?.room||null,
+        mutationCapabilities:{canCreateCorrection:canMutate,canVoid:canMutate},
       }));
     }
     return items;
@@ -384,26 +406,72 @@ function createDailyCareService(overrides={}) {
     return {duplicate:finalized.duplicate,item:projectReport(detail),notification};
   }
 
+  async function createCorrectionVersion({lineUserId,centerId,dailyReportId,reason}) {
+    const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');
+    const cleanReason=optionalText(reason,500);
+    if(!cleanReason)throw new DailyCareError('CORRECTION_REASON_REQUIRED','กรุณาระบุเหตุผลที่สร้างฉบับแก้ไข',400);
+    const staff=await requireStaff({lineUserId,centerId:centerKey,roles:['owner','manager']});
+    const prior=await repository.findReport(reportId);
+    if(!prior||prior.center_id!==centerKey)throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายการ',404);
+    if(prior.source_type==='external_integration') {
+      throw new DailyCareError('EXTERNAL_RECORD_LOCAL_MUTATION_DENIED','รายการจากระบบภายนอกต้องแก้ไขที่ระบบต้นทาง',409);
+    }
+    if(prior.status!=='finalized')throw new DailyCareError('DAILY_REPORT_NOT_FINALIZED','สร้างฉบับแก้ไขได้เฉพาะรายงานที่ยืนยันแล้ว',409);
+    return transact(`daily-report-group:${prior.report_group_id}`,async()=>{
+      const latest=await repository.findLatestVersionForUpdate(prior.report_group_id);
+      if(!latest)throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายการ',404);
+      if(latest.daily_report_id!==reportId) {
+        if(latest.supersedes_report_id===reportId&&latest.status==='submitted') {
+          return {duplicate:true,item:projectReport(await repository.getReportDetail(latest.daily_report_id))};
+        }
+        throw new DailyCareError('VERSION_CONFLICT','ข้อมูลรายการนี้มีการเปลี่ยนแปลง กรุณารีเฟรชแล้วลองอีกครั้ง',409);
+      }
+      const detail=await repository.getReportDetail(reportId);
+      const organization=await platform.getOrganizationForCenter(centerKey);
+      if(!organization)throw new DailyCareError('CENTER_TENANT_UNAVAILABLE','ไม่พบ tenant ของศูนย์',409);
+      return createCanonicalReport({tenant:{organizationId:organization.organizationId},
+        subject:{centerId:centerKey,residentId:detail.resident_id,careProfileId:detail.care_profile_id},
+        occurredAt:detail.occurred_at,careDate:detail.care_date,
+        shift:detail.shift_code||detail.shift_source_label?{code:detail.shift_code||null,sourceLabel:detail.shift_source_label||null}:null,
+        items:(detail.items||[]).map(dailyItemToInput),vitalSigns:linkedVitalsToInput(detail.vital_signs,detail.occurred_at),
+        lifecycleStatus:'submitted',reportGroupId:detail.report_group_id,
+        versionNo:Number(detail.version_no)+1,supersedesReportId:reportId,
+        provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',
+          actorReference:`center_staff:${staff.staff_id}`,
+          recorderDisplayName:staff.display_name||staff.full_name||staff.name||null,
+          correctionReason:cleanReason}});
+    });
+  }
+
   async function voidReport({lineUserId,centerId,dailyReportId,reason}) {
     const centerKey=requiredId(centerId,'Center ID');const reportId=requiredId(dailyReportId,'Daily Report ID');
     const cleanReason=optionalText(reason,500);
     if(!cleanReason)throw new DailyCareError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผล',400);
     const staff=await requireStaff({lineUserId,centerId:centerKey,roles:['owner','manager']});
-    return transact(`daily-void:${reportId}`,async()=>{
+    return transact(`notification-resource:daily_care:${reportId}`,async()=>{
       const current=await repository.findReportForUpdate(reportId);
       if(!current||current.center_id!==centerKey)throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายการ',404);
+      if(current.source_type==='external_integration') {
+        throw new DailyCareError('EXTERNAL_RECORD_LOCAL_MUTATION_DENIED','รายการจากระบบภายนอกต้องแก้ไขที่ระบบต้นทาง',409);
+      }
       if(current.status==='voided')return projectReport(await repository.getReportDetail(reportId));
+      if(current.status==='finalized'&&!await repository.findAuthoritativeFinalized(reportId)) {
+        throw new DailyCareError('VERSION_CONFLICT','ข้อมูลรายการนี้มีการเปลี่ยนแปลง กรุณารีเฟรชแล้วลองอีกครั้ง',409);
+      }
       const actor=`center_staff:${staff.staff_id}`;
       const updated=await repository.voidReport({dailyReportId:reportId,actorReference:actor,reason:cleanReason});
       await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId:reportId,eventType:'voided',
         actorType:'center_staff',actorReference:actor,metadata:{reasonCode:'human_void'}});
+      if(current.status==='finalized'&&typeof familyNotifications.suppressFinalized==='function') {
+        await familyNotifications.suppressFinalized({kind:'daily_care',resourceId:reportId});
+      }
       return projectReport(updated,await repository.listItems(reportId),[]);
     });
   }
 
   return {recordCanonical,recordNative,listHistory,listCenterWorkflow,returnForCorrection,
-    resubmitReport,finalizeReport,enqueueFinalizedNotificationByReport,voidReport,repository};
+    resubmitReport,finalizeReport,createCorrectionVersion,enqueueFinalizedNotificationByReport,voidReport,repository};
 }
 
 const dailyCareService=createDailyCareService();
-module.exports={createDailyCareService,dailyCareService,projectItem,projectReport,decodeCursor,notificationState};
+module.exports={createDailyCareService,dailyCareService,projectItem,projectReport,dailyItemToInput,linkedVitalsToInput,decodeCursor,notificationState};

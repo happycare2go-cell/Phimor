@@ -36,6 +36,14 @@
   function buildUpdateRequest(careProfileId, recordId, body) { return requestFor(careProfileId, `/${encodeURIComponent(recordId)}/draft`, 'PATCH', body); }
   function buildOrganizeRequest(careProfileId, recordId) { return requestFor(careProfileId, `/${encodeURIComponent(recordId)}/organize`, 'POST', {}); }
   function buildConfirmRequest(careProfileId, recordId) { return requestFor(careProfileId, `/${encodeURIComponent(recordId)}/confirm`, 'POST', {}); }
+  function buildCorrectionRequest(careProfileId, recordId, reason) { return requestFor(careProfileId, `/${encodeURIComponent(recordId)}/corrections`, 'POST', {reason}); }
+  function buildVoidRequest(careProfileId, recordId, reason) { return requestFor(careProfileId, `/${encodeURIComponent(recordId)}/void`, 'POST', {reason}); }
+
+  function versionLabel(record={}) {
+    if(record.status==='voided')return 'ยกเลิกแล้ว';
+    if(record.status==='draft')return 'ฉบับรอตรวจ';
+    return record.isCurrent===false?'ฉบับก่อนหน้า':'ฉบับปัจจุบัน';
+  }
 
   function cleanItem(item = {}, index = 0) {
     const kind = ITEM_KINDS.some(([value]) => value === item.kind) ? item.kind : 'other';
@@ -155,6 +163,24 @@
           notify(); return selected;
         });
       },
+      async createCorrection(recordId, reason) {
+        return guarded(async(id,isCurrent)=>{
+          const draft=await send(buildCorrectionRequest(id,recordId,reason));
+          if(!isCurrent())return{ignored:true,stale:true};
+          selected=draft;reviewNotice='สร้างฉบับแก้ไขแล้ว กรุณาตรวจข้อมูลก่อนยืนยัน';
+          const result=await send(buildListRequest(id));if(!isCurrent())return{ignored:true,stale:true};
+          records=result.items||[];notify();return draft;
+        });
+      },
+      async voidRecord(recordId, reason) {
+        return guarded(async(id,isCurrent)=>{
+          const voided=await send(buildVoidRequest(id,recordId,reason));
+          if(!isCurrent())return{ignored:true,stale:true};
+          selected=voided;
+          const result=await send(buildListRequest(id));if(!isCurrent())return{ignored:true,stale:true};
+          records=result.items||[];notify();return voided;
+        });
+      },
       refresh,
     };
   }
@@ -176,7 +202,7 @@
       : parsed.toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
   }
 
-  function createController({ doc, session, getCurrentProfile, onUpgradeRequired = null }) {
+  function createController({ doc, session, getCurrentProfile, onUpgradeRequired = null, actionDialog = null }) {
     const panel = doc.getElementById('doctorVisitPanel');
     const list = doc.getElementById('doctorVisitList');
     const editor = doc.getElementById('doctorVisitEditor');
@@ -194,6 +220,7 @@
     const confirmButton = doc.getElementById('doctorVisitConfirm');
     const notice = doc.getElementById('doctorVisitReviewNotice');
     const suggestions = doc.getElementById('doctorVisitSuggestions');
+    const mutationActions = doc.getElementById('doctorVisitMutationActions');
     let itemDrafts = [];
 
     function inputValue() {
@@ -242,8 +269,7 @@
         const button = doc.createElement('button'); button.type = 'button'; button.className = 'doctor-visit-list-item';
         const top = doc.createElement('div'); top.className = 'doctor-visit-list-item__top';
         appendText(doc, top, 'span', '', formatDate(record.visitAt));
-        appendText(doc, top, 'span', `doctor-visit-status doctor-visit-status--${record.status}`,
-          record.status === 'draft' ? 'รอตรวจสอบ' : record.status === 'confirmed' ? 'ยืนยันแล้ว' : 'ยกเลิกแล้ว');
+        appendText(doc, top, 'span', `doctor-visit-status doctor-visit-status--${record.status}`,versionLabel(record));
         button.appendChild(top);
         appendText(doc, button, 'div', 'doctor-visit-list-item__summary', safeText(record.structuredSummary, record.hospitalName || 'เปิดดูรายละเอียด'));
         button.addEventListener('click', () => session.open(record.visitRecordId)); list.appendChild(button);
@@ -253,7 +279,7 @@
       editor.hidden = !record;
       if (!record) return;
       const readOnly = record.status !== 'draft';
-      status.textContent = readOnly ? 'ยืนยันแล้ว' : 'รอตรวจสอบ';
+      status.textContent = versionLabel(record);
       status.className = `doctor-visit-status doctor-visit-status--${record.status}`;
       source.value = safeText(record.sourceText); summary.value = safeText(record.structuredSummary);
       visitAt.value = record.visitAt ? new Date(record.visitAt).toISOString().slice(0, 16) : '';
@@ -281,6 +307,22 @@
         record.followUpSuggestions.forEach((item) => appendText(doc, ul, 'li', '', item.label));
         suggestions.appendChild(ul); suggestions.hidden = false;
       } else suggestions.hidden = true;
+      clear(mutationActions);mutationActions.hidden=true;
+      if(readOnly&&record.status==='confirmed'&&(record.mutationCapabilities?.canCreateCorrection||record.mutationCapabilities?.canVoid)){
+        mutationActions.hidden=false;
+        if(record.mutationCapabilities.canCreateCorrection){const correct=appendText(doc,mutationActions,'button','btn btn-outline','สร้างฉบับแก้ไข');correct.type='button';correct.disabled=state.busy;correct.addEventListener('click',()=>runMutation('correction',record));}
+        if(record.mutationCapabilities.canVoid){const voidButton=appendText(doc,mutationActions,'button','btn doctor-visit-void','ยกเลิกรายการ');voidButton.type='button';voidButton.disabled=state.busy;voidButton.addEventListener('click',()=>runMutation('void',record));}
+      }
+    }
+
+    async function runMutation(kind,record){
+      if(!actionDialog)return;
+      const correction=kind==='correction';
+      return actionDialog.open({title:correction?'สร้างฉบับแก้ไข':'ยกเลิกบันทึกนี้?',
+        explanation:correction?'ระบบจะสร้างฉบับใหม่ให้ตรวจและแก้ไข โดยเก็บฉบับเดิมไว้ในประวัติ':'รายการจะไม่ถูกใช้เป็นข้อมูลปัจจุบันอีกต่อไป แต่ประวัติเดิมจะยังถูกเก็บไว้',
+        confirmLabel:correction?'สร้างฉบับแก้ไข':'ยืนยันยกเลิกรายการ',danger:!correction,
+        reasonRequired:correction?'กรุณาระบุเหตุผลที่สร้างฉบับแก้ไข':'กรุณาระบุเหตุผลที่ยกเลิกรายการ',
+        onConfirm:async(reason)=>{const result=correction?await session.createCorrection(record.visitRecordId,reason):await session.voidRecord(record.visitRecordId,reason);if(result?.status==='unavailable'){const error=new Error('action failed');error.errorCode=result.errorCode;throw error;}return result;}});
     }
 
     doc.getElementById('doctorVisitNew').addEventListener('click', () => session.newDraft());
@@ -307,6 +349,7 @@
   return {
     ITEM_KINDS, requestFor, buildListRequest, buildCreateRequest, buildDetailRequest,
     buildUpdateRequest, buildOrganizeRequest, buildConfirmRequest, cleanItem,
+    buildCorrectionRequest, buildVoidRequest, versionLabel,
     createSession, createController,
   };
 }));

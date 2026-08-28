@@ -1,5 +1,6 @@
 const { CareProfiles, GroupBindings } = require('../db');
 const notificationService = require('./notificationService');
+const { findActiveFamilyBinding } = require('./groupBindingRepository');
 
 const PROJECTION_VERSION = 'family-care-v3-finalized';
 const KINDS = Object.freeze({
@@ -153,14 +154,13 @@ function createFamilyCareNotificationService(overrides = {}) {
   const profiles = overrides.CareProfiles || CareProfiles;
   const bindings = overrides.GroupBindings || GroupBindings;
   const enqueue = overrides.enqueue || notificationService.enqueue;
+  const suppressByResource = overrides.suppressByResource || notificationService.suppressByResource;
 
   async function resolveRecipient(careProfileId, { expectedLineGroupId = null } = {}) {
     const profileId = validId(careProfileId);
     if (!profileId) return null;
     const expected = cleanText(expectedLineGroupId, 255, true);
-    const binding = await bindings.findOne((row) => row.kind === 'family'
-      && row.care_profile_id === profileId && row.status === 'active'
-      && typeof row.line_group_id === 'string' && row.line_group_id.trim());
+    const binding = await findActiveFamilyBinding(profileId, bindings);
     const verified = binding?.line_group_id?.trim() || null;
     if (expected) {
       if (!verified) return { recipient:null, status:'group_binding_missing', expectedLineGroupId:expected, verifiedLineGroupId:null };
@@ -208,9 +208,15 @@ function createFamilyCareNotificationService(overrides = {}) {
       verifiedLineGroupId:reconciliation.verifiedLineGroupId };
   }
 
+  async function suppressFinalized({ kind, resourceId }) {
+    if (kind !== 'daily_care' || !validId(resourceId)) return { suppressed:0 };
+    return suppressByResource({ resourceType:'daily_care', resourceId,
+      reason:'AUTHORITATIVE_RESOURCE_VOIDED' });
+  }
+
   // Compatibility alias for internal callers while all new Daily Care paths use finalized semantics.
   const enqueueRecorded = enqueueFinalized;
-  return { resolveRecipient, enqueueFinalized, enqueueRecorded };
+  return { resolveRecipient, enqueueFinalized, enqueueRecorded, suppressFinalized };
 }
 
 const familyCareNotificationService = createFamilyCareNotificationService();

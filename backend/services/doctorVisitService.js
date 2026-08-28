@@ -1,6 +1,7 @@
 const { Appointments, id, withTransaction } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { createDoctorVisitRepository } = require('./doctorVisitRepository');
+const { createClinicalRecordMutationAuthority } = require('./clinicalRecordMutationAuthority');
 const {
   IDENTIFIER_PATTERN, DoctorVisitDomainError, fail, normalizeText,
   normalizeVisitInput, normalizeGuidanceItems, validateItemsAgainstSource,
@@ -91,6 +92,7 @@ function projectRecord(row, { items = null, events = null, includeSourceText = t
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
+  if (typeof row.is_authoritative === 'boolean') projected.isCurrent = row.is_authoritative;
   if (includeSourceText) projected.sourceText = row.source_text;
   if (items) {
     projected.items = items.map(projectItem);
@@ -154,6 +156,8 @@ function createDoctorVisitService(overrides = {}) {
   const repository = overrides.repository || createDoctorVisitRepository(overrides.repositoryOptions);
   const authorize = overrides.authorizeCareProfileAccess || authorizeCareProfileAccess;
   const transaction = overrides.withTransaction || withTransaction;
+  const mutationAuthority = overrides.mutationAuthority
+    || createClinicalRecordMutationAuthority(overrides.mutationAuthorityOptions);
   const idFactory = overrides.idFactory || id;
   const findAppointment = overrides.findAppointment || (async ({ appointmentId, careProfileId }) => (
     Appointments.findOne((item) => item.appointment_id === appointmentId
@@ -181,6 +185,26 @@ function createDoctorVisitService(overrides = {}) {
       repository.listEvents(row.visit_record_id),
     ]);
     return projectRecord(row, { items, events });
+  }
+
+  async function mutationCapabilities({ record, access, careProfileId, centerId }) {
+    const denied = Object.freeze({ canCreateCorrection:false, canVoid:false });
+    if (!record || record.status !== 'confirmed' || record.is_authoritative === false) return denied;
+    const latest = typeof repository.findLatestVersion === 'function'
+      ? await repository.findLatestVersion(record.record_group_id) : record;
+    if (!latest || latest.visit_record_id !== record.visit_record_id || latest.status !== 'confirmed') return denied;
+    try {
+      requireConfirmation(access);
+      await mutationAuthority.assertMutationAllowed({
+        record, access, careProfileId, requestedCenterId:centerId, fail,
+      });
+      return Object.freeze({ canCreateCorrection:true, canVoid:true });
+    } catch (_) { return denied; }
+  }
+
+  async function projectWithCapabilities(record, access, careProfileId, centerId, detail = false) {
+    const projected = detail ? await loadDetail(record) : projectRecord(record, { includeSourceText:false });
+    return Object.freeze({ ...projected, mutationCapabilities:await mutationCapabilities({ record, access, careProfileId, centerId }) });
   }
 
   async function createDraft({ careProfileId, lineUserId, centerId = null, input = {} } = {}) {
@@ -287,7 +311,7 @@ function createDoctorVisitService(overrides = {}) {
     const record = await repository.findRecord(visitRecordId);
     if (!record || record.care_profile_id !== careProfileId) fail('RECORD_NOT_FOUND');
     if (record.status === 'draft' && !canEditDraft(access)) fail('RECORD_NOT_FOUND');
-    return loadDetail(record);
+    return projectWithCapabilities(record, access, careProfileId, centerId, true);
   }
 
   async function listRecords({
@@ -305,7 +329,7 @@ function createDoctorVisitService(overrides = {}) {
     const hasMore = rows.length > parsedLimit;
     const visible = rows.slice(0, parsedLimit);
     return Object.freeze({
-      items: Object.freeze(visible.map((row) => projectRecord(row, { includeSourceText: false }))),
+      items: Object.freeze(await Promise.all(visible.map((row) => projectWithCapabilities(row, access, careProfileId, centerId)))),
       nextCursor: hasMore ? encodeCursor(visible[visible.length - 1]) : null,
     });
   }
@@ -322,6 +346,11 @@ function createDoctorVisitService(overrides = {}) {
       if (!current || current.care_profile_id !== careProfileId) fail('RECORD_NOT_FOUND');
       if (current.status === 'confirmed') return loadDetail(current);
       if (current.status === 'voided') fail('RECORD_ALREADY_VOIDED');
+      if (current.supersedes_visit_record_id) {
+        await mutationAuthority.assertMutationAllowed({
+          record:current, access, careProfileId, requestedCenterId:centerId, fail,
+        });
+      }
       const items = await repository.listItems(visitRecordId);
       requireConfirmableRecord(current, items);
       const record = await repository.confirmRecord(visitRecordId, actor);
@@ -353,6 +382,9 @@ function createDoctorVisitService(overrides = {}) {
       const actor = { ...deriveDoctorVisitActor(access), actorId: lineUserId };
       const latest = await repository.findLatestVersionForUpdate(prior.record_group_id);
       if (!latest || latest.visit_record_id !== visitRecordId || latest.status !== 'confirmed') fail('VERSION_CONFLICT');
+      await mutationAuthority.assertMutationAllowed({
+        record:latest, access, careProfileId, requestedCenterId:centerId, fail,
+      });
       const oldItems = await repository.listItems(visitRecordId);
       const nextRecordId = idFactory('DVR');
       const record = await repository.createRecord({
@@ -396,7 +428,10 @@ function createDoctorVisitService(overrides = {}) {
       const actor = { ...deriveDoctorVisitActor(access), actorId: lineUserId };
       const current = await repository.findRecordForUpdate(visitRecordId);
       if (!current || current.care_profile_id !== careProfileId) fail('RECORD_NOT_FOUND');
-      if (current.status === 'voided') fail('RECORD_ALREADY_VOIDED');
+      await mutationAuthority.assertMutationAllowed({
+        record:current, access, careProfileId, requestedCenterId:centerId, fail,
+      });
+      if (current.status === 'voided') return loadDetail(current);
       if (current.status !== 'confirmed') fail('RECORD_NOT_CONFIRMED');
       const record = await repository.voidRecord(visitRecordId, voidReason);
       if (!record) fail('RECORD_NOT_CONFIRMED');

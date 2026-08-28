@@ -34,6 +34,29 @@ test('FR-L1, L2: ครอบครัวเลือก "เราไปเอ�
   assert.strictEqual(updated.family_decided_by, 'U_FAMILY');
 });
 
+test('Care Profile อิสระเลือกไปเองได้ และ concurrent confirm สร้าง transition/audit ครั้งเดียว', async () => {
+  const profile = await db.CareProfiles.insert({
+    care_profile_id:'CP-INDEPENDENT', owner_line_id:'U_FAMILY', patient_name:'คุณยายอิสระ', center_id:null, status:'independent',
+  });
+  const plan = await transportService.createTransportPlan({ appointmentId:'A-INDEPENDENT', careProfileId:profile.care_profile_id, centerId:null });
+
+  const [first, second] = await Promise.all([
+    transportService.familyChooseSelf(plan.plan_id, 'U_FAMILY'),
+    transportService.familyChooseSelf(plan.plan_id, 'U_FAMILY'),
+  ]);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal([first, second].filter((result) => result.duplicate).length, 1);
+  const updated = await db.TransportPlans.findOne((item) => item.plan_id === plan.plan_id);
+  assert.equal(updated.center_id, null);
+  assert.equal(updated.family_choice, 'self');
+  assert.equal(updated.status, 'family_handled');
+  assert.equal(updated.history.filter((item) => item.event === 'family_choice=self').length, 1);
+  const audits = await db.AuditLog.findWhere((item) => item.action === 'transport.family_self' && item.meta?.planId === plan.plan_id);
+  assert.equal(audits.length, 1);
+});
+
 test('เกณฑ์ยอมรับข้อ 8: กดให้ศูนย์จัดการ → การ์ดคำขอส่งไปกลุ่มงานศูนย์เท่านั้น', async () => {
   const { center, profile } = await setupLinkedProfile();
   const plan = await transportService.createTransportPlan({ appointmentId: 'A1', careProfileId: profile.care_profile_id, centerId: center.center_id });

@@ -167,22 +167,28 @@ router.post('/care-profile/:careProfileId/leave', requireFamilyAccess(), asyncHa
   res.json(result);
 }));
 
-// POST /api/care-profile/:id/bind-group — ผูกกลุ่มไลน์ครอบครัวด้วยตนเอง (ข้อ N1)
+// Legacy endpoint intentionally cannot bind a caller-supplied group ID. A
+// Family binding must be proven by sending its short-lived code in that group.
 router.post('/care-profile/:careProfileId/bind-group', requireFamilyAccess(), asyncHandler(async (req, res) => {
-  const { groupId } = req.body;
-  const result = await familyService.bindFamilyGroup({ careProfileId: req.params.careProfileId, groupId, requesterLineId: req.user.lineUserId });
-  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.json({ ok: true });
+  res.status(410).json({
+    error:'group_binding_code_required',
+    message:'กรุณาสร้างรหัสผูกกลุ่ม แล้วส่งรหัสด้วยบัญชีเดิมภายในกลุ่ม LINE ที่ต้องการเชื่อม',
+  });
 }));
 
 // GET /api/init-dashboard — ข้อมูลหน้าหลักทั้งหมดในการเรียกครั้งเดียว
 router.get('/init-dashboard', asyncHandler(async (req, res) => {
   const memberships = await CareProfileMembers.findWhere((m) => m.line_user_id === req.user.lineUserId && m.status === 'active');
   const memberIds = new Set(memberships.map((m) => m.care_profile_id));
-  const profiles = await CareProfiles.findWhere((p) => p.owner_line_id === req.user.lineUserId || memberIds.has(p.care_profile_id));
+  const profiles = (await CareProfiles.findWhere((p) => p.owner_line_id === req.user.lineUserId || memberIds.has(p.care_profile_id)))
+    .sort((a, b) => String(a.created_at || a._createdAt || '').localeCompare(String(b.created_at || b._createdAt || ''))
+      || String(a.care_profile_id).localeCompare(String(b.care_profile_id)));
+  const { findActiveFamilyBinding } = require('../services/groupBindingRepository');
   const data = await Promise.all(profiles.map(async (p) => ({
     profile: p,
     familyRole: p.owner_line_id === req.user.lineUserId ? 'owner' : 'caregiver',
+    familyGroup:await findActiveFamilyBinding(p.care_profile_id)
+      ? { active:true, status:'active' } : { active:false, status:'unbound' },
     upcomingAppointments: await familyService.getUpcomingAppointments(p.care_profile_id),
     canUseAi: familyService.canUseAiFeatures(p),
   })));
@@ -230,18 +236,19 @@ router.get('/appointments', requireFamilyAccess(), asyncHandler(async (req, res)
   res.json({ appointments: upcoming });
 }));
 router.post('/appointments', asyncHandler(async (req, res) => {
-  const { careProfileId, hospital, datetime, note } = req.body;
+  const { careProfileId, hospital, datetime, note, idempotencyKey } = req.body;
   if (!await familyService.hasPermission(careProfileId, req.user.lineUserId, 'manage_appointments')) return res.status(403).json({ error: 'forbidden' });
-  const result = await familyService.addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy: req.user.lineUserId });
+  const result = await familyService.addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy: req.user.lineUserId, idempotencyKey });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason }); // ข้อ G2
-  res.status(201).json(result.appointment);
+  const { creation_idempotency_hash: _keyHash, creation_payload_hash: _payloadHash, ...appointment } = result.appointment;
+  res.status(result.duplicate ? 200 : 201).json({ ...appointment, notificationState:result.notificationState, duplicate:result.duplicate === true });
 }));
 
 router.patch('/care-profile/:careProfileId/appointments/:appointmentId', requireFamilyAccess(), asyncHandler(async (req, res) => {
   if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_appointments')) return res.status(403).json({ error:'forbidden' });
   const result = await familyService.updateFamilyAppointment({ careProfileId: req.params.careProfileId, appointmentId: req.params.appointmentId, patch: req.body, requesterLineId: req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.json(result.appointment);
+  res.json({ ...result.appointment, notificationState:result.notificationState, noChange:result.noChange === true });
 }));
 
 router.post('/care-profile/:careProfileId/appointments/:appointmentId/cancel', requireFamilyAccess(), asyncHandler(async (req, res) => {

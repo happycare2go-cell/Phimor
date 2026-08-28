@@ -175,6 +175,22 @@ test('detail request is profile and report scoped without actor metadata', () =>
   assert.doesNotMatch(JSON.stringify(request), /lineUser|actor|pendingCard|sourceReference/);
 });
 
+test('Lab correction and void requests are explicit profile-scoped actions with no actor metadata', () => {
+  const correction=ui.buildCorrectionRequest('CP-1','LABR-1','แก้ผลตรวจ');
+  const voidRequest=ui.buildVoidRequest('CP-1','LABR-1','เอกสารผิดคน');
+  const update=ui.buildDraftUpdateRequest('CP-1','LABR-V2',{hospitalName:'โรงพยาบาลตัวอย่าง',observations:[]});
+  const confirm=ui.buildDraftConfirmRequest('CP-1','LABR-V2');
+  assert.equal(correction.path,'/api/care-profile/CP-1/lab-reports/LABR-1/corrections');
+  assert.deepEqual(JSON.parse(correction.options.body),{reason:'แก้ผลตรวจ'});
+  assert.equal(voidRequest.path,'/api/care-profile/CP-1/lab-reports/LABR-1/void');
+  assert.deepEqual(JSON.parse(voidRequest.options.body),{reason:'เอกสารผิดคน'});
+  assert.equal(update.options.method,'PATCH');assert.match(update.path,/LABR-V2\/draft$/);
+  assert.equal(confirm.options.method,'POST');assert.deepEqual(JSON.parse(confirm.options.body),{});
+  assert.doesNotMatch(JSON.stringify([correction,voidRequest,update,confirm]),/lineUser|actor|centerId|groupId/);
+  const draftPatch=ui.correctionDraftPatch({observations:[observation({sourceValueText:'6.5'})]});
+  assert.deepEqual({valueType:draftPatch.observations[0].valueType,numericValue:draftPatch.observations[0].numericValue,textValue:draftPatch.observations[0].textValue},{valueType:'numeric',numericValue:6.5,textValue:null});
+});
+
 test('detail accepts confirmed canonical observations only', async () => {
   const detail = report({ observations: [observation()] });
   const session = ui.createSession({ request: async () => detail });
@@ -348,8 +364,8 @@ test('explanation generation loading state and double-submit protection are dete
 });
 
 test('explanation state never mutates Lab through any write endpoint', () => {
-  assert.doesNotMatch(source, /lab-reports\/(?:drafts|[^'`]+\/(?:draft|confirm|void|corrections))/);
-  assert.doesNotMatch(source, /PATCH|DELETE/);
+  const request=ui.buildExplanationRequest('CP-1',{comparisonKey:'hba1c'});
+  assert.match(request.path,/lab-explanations$/);assert.doesNotMatch(JSON.stringify(request),/draft|confirm|void|corrections|PATCH|DELETE/);
 });
 
 test('switching Care Profile clears all Lab clinical and transient state immediately', async () => {
@@ -379,6 +395,57 @@ test('stale report detail from profile A cannot render in profile B', async () =
   session.setProfile('CP-1'); const first = session.selectReport('LABR-A');
   session.setProfile('CP-2'); wait.resolve(report({ reportId: 'LABR-A', observations: [observation()] })); await first;
   assert.equal(session.snapshot().selectedReport, null);
+});
+
+test('stale Lab mutation cannot change newly selected Care Profile and double submit is ignored', async () => {
+  const wait=deferred();let mutationCalls=0;
+  const session=ui.createSession({request:async(requestPath)=>{
+    if(requestPath.includes('/corrections')){mutationCalls+=1;return wait.promise;}
+    return requestPath.includes('/lab-reports/')?report({observations:[observation()] }):{items:[],nextCursor:null};
+  }});
+  session.setProfile('CP-1');await session.selectReport('LABR-1');
+  const pending=session.createCorrection('LABR-1','แก้ไข');
+  assert.deepEqual(await session.createCorrection('LABR-1','ซ้ำ'),{ignored:true});
+  session.setProfile('CP-2');wait.resolve({reportId:'LABR-V2',status:'draft',privateValue:'PRIVATE-P1'});
+  assert.deepEqual(await pending,{ignored:true,stale:true});
+  assert.equal(mutationCalls,1);assert.equal(session.snapshot().profileId,'CP-2');
+  assert.doesNotMatch(JSON.stringify(session.snapshot()),/PRIVATE-P1/);
+});
+
+test('Family correction V2 can be reviewed, saved and confirmed through the Lab workspace', async () => {
+  const calls=[];
+  const v2=report({reportId:'LABR-V2',status:'draft',hospitalName:'โรงพยาบาลเดิม',observations:[observation()]});
+  const session=ui.createSession({request:async(requestPath,options)=>{
+    calls.push({requestPath,options});
+    if(requestPath.endsWith('/corrections'))return v2;
+    if(requestPath.endsWith('/draft'))return {...v2,hospitalName:'โรงพยาบาลแก้ไข'};
+    if(requestPath.endsWith('/confirm'))return report({reportId:'LABR-V2',status:'confirmed',versionNo:2,isCurrent:true,observations:[observation()]});
+    if(requestPath.includes('?'))return{items:[],nextCursor:null};
+    return report({observations:[observation()]});
+  }});
+  session.setProfile('CP-1');await session.selectReport('LABR-1');await session.createCorrection('LABR-1','แก้ข้อมูลต้นฉบับ');
+  assert.equal(session.snapshot().correctionDraft.reportId,'LABR-V2');
+  const draft={...session.snapshot().correctionDraft,hospitalName:'โรงพยาบาลแก้ไข'};
+  await session.saveCorrection(draft);assert.equal(session.snapshot().correctionDraft.hospitalName,'โรงพยาบาลแก้ไข');
+  await session.confirmCorrection(draft);assert.equal(session.snapshot().correctionDraft,null);
+  assert.match(session.snapshot().actionNotice,/ยืนยันผลตรวจฉบับแก้ไขแล้ว/);
+  assert.deepEqual(calls.filter((item)=>/\/(?:draft|confirm)$/.test(item.requestPath)).map((item)=>item.options.method),['PATCH','PATCH','POST']);
+});
+
+test('profile switch clears Family Lab correction draft and stale confirmation cannot cross profiles', async () => {
+  const wait=deferred();let confirms=0;
+  const v2=report({reportId:'LABR-V2',status:'draft',observations:[observation()]});
+  const session=ui.createSession({request:async(requestPath)=>{
+    if(requestPath.endsWith('/corrections'))return v2;
+    if(requestPath.endsWith('/draft'))return v2;
+    if(requestPath.endsWith('/confirm')){confirms+=1;return wait.promise;}
+    if(requestPath.includes('?'))return{items:[],nextCursor:null};
+    return report({observations:[observation()]});
+  }});
+  session.setProfile('CP-1');await session.selectReport('LABR-1');await session.createCorrection('LABR-1','แก้ไข');
+  const pending=session.confirmCorrection(v2);session.setProfile('CP-2');wait.resolve(report({reportId:'LABR-V2',status:'confirmed'}));
+  assert.deepEqual(await pending,{ignored:true,stale:true});assert.equal(confirms,0);
+  assert.equal(session.snapshot().profileId,'CP-2');assert.equal(session.snapshot().correctionDraft,null);
 });
 
 test('latest report selection wins when an earlier detail request is still in flight', async () => {
@@ -463,8 +530,10 @@ test('Lab detail connects to existing ถามหมออะไรดี flow 
   assert.equal((source.match(/doctor-questions/g) || []).length, 0);
 });
 
-test('Lab UI does not expose draft editing, confirmation, source document, or canonical write controls', () => {
+test('Lab UI keeps source-document creation out while exposing bounded correction review actions', () => {
   const combined = `${html.match(/<section class="card lab-results-panel"[\s\S]*?<section class="card consultation-panel"/)?.[0] || ''}\n${source}`;
-  assert.doesNotMatch(combined, /แก้ไขร่าง|ยืนยันร่าง|เอกสารต้นฉบับ|imageBase64|pendingCardId/);
-  assert.doesNotMatch(source, /createDraft|updateDraft|confirmDraft|voidReport|MedicationSnapshot|Appointment.*create/);
+  assert.doesNotMatch(combined, /เอกสารต้นฉบับ|imageBase64|pendingCardId|สร้างผลตรวจใหม่/);
+  assert.doesNotMatch(source, /MedicationSnapshot|Appointment.*create/);
+  assert.match(source,/สร้างฉบับแก้ไข/);assert.match(source,/ยกเลิกรายการ/);
+  assert.match(source,/ตรวจฉบับแก้ไข/);assert.match(source,/ยืนยันฉบับแก้ไข/);
 });

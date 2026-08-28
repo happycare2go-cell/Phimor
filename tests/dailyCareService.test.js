@@ -164,3 +164,89 @@ test('Family history is authorized, paginated and exposes finalized records only
   assert.equal((await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A',limit:2,cursor:first.nextCursor})).items.length,1);
   await assert.rejects(service.listHistory({lineUserId:'U-X',careProfileId:'CP-A'}),{code:'FORBIDDEN'});
 });
+
+test('only the latest finalized Daily version is authoritative and void never resurrects an older version', async () => {
+  const suppressed=[]; const family={
+    async enqueueFinalized(){return {ok:true,groupReconciliationStatus:'no_expected_group'};},
+    async suppressFinalized(input){suppressed.push(input);return {suppressed:1};},
+  };
+  const { service, repository } = fixture({ familyNotifications:family }); await seed();
+  const first = await service.recordNative({
+    lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',items,
+  });
+  await service.returnForCorrection({
+    lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'แก้ไข',
+  });
+  const second = await service.resubmitReport({
+    lineUserId:'U-STAFF',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,
+    occurredAt:'2026-08-27T02:00:00Z',items,
+  });
+  await service.finalizeReport({
+    lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:second.item.dailyReportId,
+  });
+  let history=await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'});
+  assert.deepEqual(history.items.map((item)=>item.versionNo),[2]);
+  await service.voidReport({
+    lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:second.item.dailyReportId,reason:'ยกเลิกฉบับแก้ไข',
+  });
+  await service.voidReport({
+    lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:second.item.dailyReportId,reason:'retry',
+  });
+  history=await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'});
+  assert.equal(history.items.length,0); assert.equal(suppressed.length,1);
+  assert.equal(repository.state.events.filter((event)=>event.daily_report_id===second.item.dailyReportId
+    &&event.event_type==='voided').length,1);
+  assert.equal(repository.state.events.some((event)=>/notification/i.test(event.event_type)),false);
+});
+
+test('finalized Daily correction creates one submitted V2 and preserves linked authority until finalization', async () => {
+  let vitalSequence=0;
+  const vitalService={async recordCanonical(input){vitalSequence+=1;return{duplicate:false,item:{vitalSetId:`VSET-${vitalSequence}`,
+    status:'recorded',occurredAt:input.occurredAt,recordedAt:'2026-08-27T01:00:01Z',sourceType:input.provenance.sourceType,
+    observations:input.observations.map((item)=>({...item,canonicalUnit:item.sourceUnit}))}};}};
+  const {service,repository}=fixture({vitalService});await seed();
+  const first=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',
+    occurredAt:'2026-08-27T01:00:00Z',items,vitalSigns:{occurredAt:'2026-08-27T01:00:00Z',observations:[
+      {measurementType:'pulse',numericValue:72,sourceValueText:'72',sourceUnit:'/min'},
+    ]}});
+  await service.finalizeReport({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId});
+  await assert.rejects(service.createCorrectionVersion({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'   '}),{code:'CORRECTION_REASON_REQUIRED'});
+  await assert.rejects(service.createCorrectionVersion({lineUserId:'U-STAFF',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'แก้ไข'}),{code:'CENTER_ACCESS_DENIED'});
+  const second=await service.createCorrectionVersion({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'แก้ค่าที่ตรวจพบ'});
+  const replay=await service.createCorrectionVersion({lineUserId:'U-OWNER-CENTER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'retry'});
+  assert.equal(second.item.status,'submitted');assert.equal(second.item.versionNo,2);assert.equal(second.item.vitalSigns.length,1);
+  assert.equal(replay.duplicate,true);assert.equal(repository.state.reports.length,2);
+  let history=await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'});
+  assert.deepEqual(history.items.map((item)=>[item.versionNo,item.vitalSigns[0].vitalSetId]),[[1,'VSET-1']]);
+  const workflow=await service.listCenterWorkflow({lineUserId:'U-MANAGER',centerId:'CTR-A',status:'submitted'});
+  assert.equal(workflow.items[0].mutationCapabilities.canVoid,false);
+  await service.finalizeReport({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:second.item.dailyReportId});
+  history=await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'});
+  assert.deepEqual(history.items.map((item)=>[item.versionNo,item.vitalSigns[0].vitalSetId]),[[2,'VSET-2']]);
+  const finalized=await service.listCenterWorkflow({lineUserId:'U-OWNER-CENTER',centerId:'CTR-A',status:'finalized'});
+  assert.equal(finalized.items.find((item)=>item.versionNo===2).mutationCapabilities.canCreateCorrection,true);
+  assert.equal(finalized.items.find((item)=>item.versionNo===1).mutationCapabilities.canCreateCorrection,false);
+  await service.voidReport({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:second.item.dailyReportId,reason:'ยกเลิกฉบับแก้ไข'});
+  assert.equal((await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'})).items.length,0);
+});
+
+test('Daily correction authority fails closed across Center and external provenance', async () => {
+  const {service}=fixture();await seed();
+  const local=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',items});
+  await service.finalizeReport({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:local.item.dailyReportId});
+  await assert.rejects(service.createCorrectionVersion({lineUserId:'U-MANAGER-B',centerId:'CTR-B',dailyReportId:local.item.dailyReportId,reason:'ข้ามศูนย์'}),{code:'DAILY_REPORT_NOT_FOUND'});
+  const external=await service.recordCanonical(externalInput());
+  await assert.rejects(service.createCorrectionVersion({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:external.item.dailyReportId,reason:'local'}),{code:'EXTERNAL_RECORD_LOCAL_MUTATION_DENIED'});
+  const projected=await service.listCenterWorkflow({lineUserId:'U-MANAGER',centerId:'CTR-A',status:'finalized'});
+  assert.equal(projected.items.find((item)=>item.sourceType==='external_integration').mutationCapabilities.canVoid,false);
+});
+
+test('local mutation rejects external Daily Care while duplicate integration ingestion remains idempotent', async () => {
+  const { service, repository }=fixture(); await seed();
+  const first=await service.recordCanonical(externalInput());
+  const duplicate=await service.recordCanonical(externalInput());
+  await assert.rejects(service.voidReport({
+    lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'local',
+  }),{code:'EXTERNAL_RECORD_LOCAL_MUTATION_DENIED'});
+  assert.equal(duplicate.duplicate,true);assert.equal(repository.state.reports[0].status,'finalized');
+});

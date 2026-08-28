@@ -1,4 +1,4 @@
-function createVitalSignMemoryRepository() {
+function createVitalSignMemoryRepository({ dailyCareState = null } = {}) {
   const state = { sets:[], observations:[], events:[] };
   let tick = 0;
   const stamp = () => new Date(Date.UTC(2026, 7, 27, 1, 0, tick++)).toISOString();
@@ -66,6 +66,18 @@ function createVitalSignMemoryRepository() {
     async listHistory({ careProfileId, centerId, from, to, cursor, limit }) {
       return state.sets.filter((row) => row.status === 'recorded'
         && row.care_profile_id === careProfileId
+        && (!dailyCareState || (() => {
+          const links = dailyCareState.links.filter((link) => link.vital_set_id === row.vital_set_id);
+          if (links.length === 0) return true;
+          return links.some((link) => {
+            const report = dailyCareState.reports.find((item) => item.daily_report_id === link.daily_report_id);
+            if (!report || report.status !== 'finalized') return false;
+            const latest = Math.max(...dailyCareState.reports.filter((item) => item.report_group_id === report.report_group_id
+              && (item.status === 'finalized' || (item.status === 'voided' && item.finalized_at)))
+              .map((item) => Number(item.version_no)));
+            return Number(report.version_no) === latest;
+          });
+        })())
         && (!centerId || row.center_id === centerId)
         && (!from || row.occurred_at >= from) && (!to || row.occurred_at <= to)
         && (!cursor || row.occurred_at < cursor.occurredAt
@@ -76,6 +88,15 @@ function createVitalSignMemoryRepository() {
         .map((row) => ({ ...clone(row), observations:state.observations
           .filter((item) => item.vital_set_id === row.vital_set_id)
           .sort((a, b) => a.source_ordinal - b.source_ordinal).map(clone) }));
+    },
+    async listCenterHistory({ centerId, limit }) {
+      return state.sets.filter((row) => row.center_id === centerId)
+        .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)
+          || b.vital_set_id.localeCompare(a.vital_set_id))
+        .slice(0, limit)
+        .map((row) => ({ ...clone(row), care_recipient_name:'คุณตัวอย่าง', room:'A101',
+          observations:state.observations.filter((item) => item.vital_set_id === row.vital_set_id)
+            .sort((a, b) => a.source_ordinal - b.source_ordinal).map(clone) }));
     },
   };
 }

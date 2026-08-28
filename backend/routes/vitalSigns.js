@@ -43,6 +43,11 @@ function createVitalSignsRouter() {
     res.status(result.duplicate ? 200 : 201).json(result);
   }));
 
+  router.get('/center/:centerId/vital-signs/history', requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
+    res.json(await service.listCenterHistory({lineUserId:req.user.lineUserId,centerId:req.params.centerId,
+      residentId:req.query.residentId || null,limit:req.query.limit}));
+  }));
+
   router.post('/center/:centerId/vital-signs/:vitalSetId/void', requireCenterStaff(['owner','manager']), action(async (req, res, service) => {
     res.json({ item:await service.voidVitalSet({
       lineUserId:req.user.lineUserId, centerId:req.params.centerId,

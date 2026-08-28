@@ -1,6 +1,7 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
 const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, audit, id, now, withTransaction } = require('../db');
+const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenterBinding, listActiveBindingsForGroup, isActiveGroupBinding } = require('./groupBindingRepository');
 const richMenuService = require('./richMenuService');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
@@ -62,7 +63,7 @@ async function updateCenterSettings({ centerId, requesterLineId, address, contac
 }
 
 // ── FR-A2, A3: ผูกกลุ่มไลน์งานศูนย์ (ต้องเป็นเจ้าของ/ผู้จัดการเป็นผู้เชิญ) ──
-async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
+async function bindGroupToCenterInCurrentTransaction({ centerId, groupId, requesterLineId }) {
   const staff = await CenterStaff.findOne(
     (s) => s.center_id === centerId && s.line_user_id === requesterLineId && ['owner', 'manager'].includes(s.role)
   );
@@ -70,11 +71,10 @@ async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
     return { ok: false, reason: 'ผู้เชิญไม่มีสิทธิ์เจ้าของหรือผู้จัดการของศูนย์นี้' };
   }
   const previous = await GroupBindings.findOne(
-    (g) => g.kind === 'center_staff' && g.center_id === centerId && g.status !== 'inactive'
+    (g) => isActiveGroupBinding(g, 'center_staff') && g.center_id === centerId
   );
-  const groupUsedElsewhere = await GroupBindings.findOne(
-    (g) => g.line_group_id === groupId && g.status !== 'inactive'
-      && !(g.kind === 'center_staff' && g.center_id === centerId)
+  const groupUsedElsewhere = (await listActiveBindingsForGroup(groupId)).find(
+    (g) => !(g.kind === 'center_staff' && g.center_id === centerId)
   );
   if (groupUsedElsewhere) return { ok: false, reason: 'กลุ่มนี้ถูกผูกกับศูนย์หรือ Care Profile อื่นแล้ว' };
 
@@ -98,13 +98,17 @@ async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
   return { ok: true, replacedPrevious: alreadyBound };
 }
 
+async function bindGroupToCenter(input) {
+  return withTransaction(GROUP_BINDING_TRANSACTION_KEY, () => bindGroupToCenterInCurrentTransaction(input));
+}
+
 async function findCenterByGroup(groupId) {
-  const binding = await GroupBindings.findOne((g) => g.line_group_id === groupId);
+  const binding = await findActiveCenterBinding(groupId);
   if (binding) {
-    if (binding.kind !== 'center_staff' || binding.status === 'inactive') return null;
     const center = await Centers.findOne((c) => c.center_id === binding.center_id && c.status === 'active');
     return require('./subscriptionService').entitlement(center).allowed ? center : null;
   }
+  if ((await listActiveBindingsForGroup(groupId)).length) return null;
   const center = await Centers.findOne((c) => c.group_id === groupId && c.status === 'active');
   return require('./subscriptionService').entitlement(center).allowed ? center : null;
 }
@@ -446,7 +450,7 @@ async function dischargeResident(centerId, residentId, requesterLineId) {
   let familyNotice = null;
   let familyNotified = false;
   if (resident.care_profile_id) {
-    const { CareProfiles, GroupBindings } = require('../db');
+    const { CareProfiles } = require('../db');
     const lineClient = require('../providers/lineClient');
     await CareProfiles.update(
       (p) => p.care_profile_id === resident.care_profile_id,
@@ -456,11 +460,11 @@ async function dischargeResident(centerId, residentId, requesterLineId) {
       + 'ยังบันทึกนัด รับการเตือน และเรียกใช้บริการผู้ดูแลจาก Care2Go ได้ตามปกติ'; // ข้อความตามที่ตกลงไว้
 
     // ⚠️ ข้อ B6 ระบุว่า "ระบบส่งข้อความแจ้งครอบครัว" — ต้อง Push จริง ไม่ใช่แค่คืนค่าไปให้ศูนย์เห็น
-    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family' && g.status !== 'inactive');
+    const groupBinding = await findActiveFamilyBinding(resident.care_profile_id);
     const careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
     if (target) {
-      await lineClient.pushMessage(target, [{ type: 'text', text: familyNotice }]);
+      await lineClient.pushMessage(target, [{ type: 'text', text: `${careProfile?.patient_name || resident.full_name} — ${familyNotice}` }]);
       familyNotified = true;
     }
   }
@@ -534,50 +538,64 @@ async function getCenterAppointments(centerId) {
 }
 
 async function updateAppointment({ centerId, appointmentId, patch, requesterLineId }) {
-  const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
-  const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
-  const appointment = await require('../db').Appointments.findOne(
-    (a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id) && a.status !== 'cancelled'
-  );
-  if (!appointment) return { ok: false, reason: 'ไม่พบนัดที่ใช้งานอยู่ในสาขานี้' };
   if (patch.datetime && new Date(patch.datetime).getTime() <= Date.now()) return { ok: false, reason: 'วันเวลานัดต้องเป็นเวลาในอนาคต' };
-  const clean = {};
-  for (const [input, stored] of Object.entries({ hospital:'hospital', datetime:'datetime', note:'note', clinicOrDepartment:'clinic_or_department', reasonForVisit:'reason_for_visit', relatedCondition:'related_condition', doctorName:'doctor_name' })) {
-    if (input in patch) clean[stored] = patch[input];
+  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+    const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
+    const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
+    const appointment = await require('../db').Appointments.findOne(
+      (a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id) && a.status !== 'cancelled'
+    );
+    if (!appointment) return { missing:true };
+    const { patch:clean, changedFields } = require('./appointmentNotificationService').materialPatch(appointment, patch);
+    if (changedFields.length === 0) return { appointment, changedFields, noChange:true };
+    const update = { ...clean, updated_by:requesterLineId, updated_at:now(), version:Number(appointment.version || 1) + 1,
+      last_material_changed_fields:changedFields };
+    // เมื่อแก้วันนัด ให้สิทธิ์ระบบส่งการเตือนตามวันใหม่อีกครั้ง
+    if (changedFields.includes('datetime')) { update.day_before_reminded = false; update.same_day_reminded = false; }
+    const updated = await require('../db').Appointments.update((a) => a.appointment_id === appointmentId, update);
+    return { appointment:updated, changedFields };
+  });
+  if (mutation.missing) return { ok: false, reason: 'ไม่พบนัดที่ใช้งานอยู่ในสาขานี้' };
+  if (mutation.noChange) {
+    const notificationState = Array.isArray(mutation.appointment.last_material_changed_fields)
+      ? await require('./appointmentNotificationService').notifyLifecycle({
+        eventType:'updated', appointment:mutation.appointment,
+        changedFields:mutation.appointment.last_material_changed_fields,
+      })
+      : { status:'not_needed' };
+    return { ok:true, appointment:mutation.appointment, noChange:true, notificationState };
   }
-  clean.updated_by = requesterLineId; clean.updated_at = now(); clean.version = Number(appointment.version || 1) + 1;
-  // เมื่อแก้วันนัด ให้สิทธิ์ระบบส่งการเตือนตามวันใหม่อีกครั้ง
-  if ('datetime' in patch) { clean.day_before_reminded = false; clean.same_day_reminded = false; }
-  const updated = await require('../db').Appointments.update((a) => a.appointment_id === appointmentId, clean);
   await require('./transportService').notifyAppointmentChanged(appointmentId, 'updated', requesterLineId);
-  await notifyFamilyAppointmentEvent(updated.care_profile_id, `⚠️ ศูนย์แก้ไขข้อมูลนัด\n${updated.hospital} · ${updated.datetime}`, `appointment-updated:${appointmentId}:${clean.version}`);
-  await audit('appointment.updated', requesterLineId, { centerId, appointmentId, changedFields: Object.keys(clean) });
-  return { ok: true, appointment: updated };
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({
+    eventType:'updated', appointment:mutation.appointment, changedFields:mutation.changedFields,
+  });
+  await audit('appointment.updated', requesterLineId, { centerId, appointmentId, changedFields:mutation.changedFields, version:mutation.appointment.version });
+  return { ok: true, appointment: mutation.appointment, notificationState };
 }
 
 async function cancelAppointment({ centerId, appointmentId, requesterLineId, reason = '' }) {
   const { Appointments, TransportPlans } = require('../db');
-  const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
-  const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
-  const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id));
-  if (!appointment) return { ok: false, reason: 'ไม่พบนัดในสาขานี้' };
-  if (appointment.status === 'cancelled') return { ok: true, appointment, alreadyCancelled: true };
-  const cancelled = await Appointments.update((a) => a.appointment_id === appointmentId, {
-    status: 'cancelled', cancelled_at: now(), cancelled_by: requesterLineId, cancellation_reason: reason || '',
+  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+    const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
+    const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
+    const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id));
+    if (!appointment) return { missing:true };
+    if (appointment.status === 'cancelled') return { appointment, alreadyCancelled:true };
+    const cancelled = await Appointments.update((a) => a.appointment_id === appointmentId, {
+      status:'cancelled', cancelled_at:now(), cancelled_by:requesterLineId, cancellation_reason:String(reason || '').trim(),
+    });
+    await TransportPlans.updateAll((p) => p.appointment_id === appointmentId, { status:'cancelled', cancelled_at:now() });
+    return { appointment:cancelled, alreadyCancelled:false };
   });
-  await TransportPlans.updateAll((p) => p.appointment_id === appointmentId, { status: 'cancelled', cancelled_at: now() });
+  if (mutation.missing) return { ok: false, reason: 'ไม่พบนัดในสาขานี้' };
+  if (mutation.alreadyCancelled) {
+    const notificationState = await require('./appointmentNotificationService').notifyLifecycle({ eventType:'cancelled', appointment:mutation.appointment });
+    return { ok:true, appointment:mutation.appointment, alreadyCancelled:true, notificationState };
+  }
   await require('./transportService').notifyAppointmentChanged(appointmentId, 'cancelled', requesterLineId);
-  await notifyFamilyAppointmentEvent(cancelled.care_profile_id, `❌ ศูนย์ยกเลิกนัด ${cancelled.hospital || ''}\nเหตุผล: ${reason || 'ไม่ระบุ'}`, `appointment-cancelled:${appointmentId}`);
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({ eventType:'cancelled', appointment:mutation.appointment });
   await audit('appointment.cancelled', requesterLineId, { centerId, appointmentId, reason: reason || '' });
-  return { ok: true, appointment: cancelled };
-}
-
-async function notifyFamilyAppointmentEvent(careProfileId, text, dedupeKey) {
-  const profile = await require('../db').CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  const binding = await GroupBindings.findOne((g) => g.kind === 'family' && g.care_profile_id === careProfileId && g.status !== 'inactive');
-  const target = binding?.line_group_id || profile?.owner_line_id;
-  if (!target) return { ok:false, reason:'no_family_target' };
-  return require('./notificationService').enqueueAndDeliver({ dedupeKey, to:target, kind:'appointment_changed', meta:{careProfileId}, messages:[{type:'text',text}] });
+  return { ok:true, appointment:mutation.appointment, notificationState };
 }
 
 // ── ข้อ J4/หมวดความปลอดภัย: หมุน API Key ของศูนย์ใหม่ (เพิกถอนของเดิมทันที) ──
@@ -595,7 +613,7 @@ async function findCenterByApiKey(apiKey) {
 }
 
 module.exports = {
-  createCenter, updateCenterSettings, bindGroupToCenter, findCenterByGroup, appointManager, removeManager, listStaff,
+  createCenter, updateCenterSettings, bindGroupToCenter, bindGroupToCenterInCurrentTransaction, findCenterByGroup, appointManager, removeManager, listStaff,
   addResident, updateResident, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
   updateAppointment, cancelAppointment,
   rotateExternalApiKey, findCenterByApiKey,

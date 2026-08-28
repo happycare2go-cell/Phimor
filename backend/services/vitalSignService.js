@@ -39,7 +39,7 @@ function projectObservation(row) {
 }
 
 function projectSet(row, observations = row.observations || []) {
-  return {
+  const projected = {
     vitalSetId: row.vital_set_id,
     status: row.status,
     occurredAt: row.occurred_at,
@@ -48,6 +48,12 @@ function projectSet(row, observations = row.observations || []) {
     centerName: row.center_name || null,
     observations: observations.map(projectObservation),
   };
+  if(row.resident_id!==undefined)projected.residentId=row.resident_id||null;
+  if(row.care_recipient_name!==undefined)projected.careRecipientName=row.care_recipient_name||null;
+  if(row.room!==undefined)projected.room=row.room||null;
+  if(row.voided_at!==undefined)projected.voidedAt=row.voided_at||null;
+  if(row.mutation_capabilities)projected.mutationCapabilities=row.mutation_capabilities;
+  return projected;
 }
 
 function createVitalSignService(overrides = {}) {
@@ -194,6 +200,9 @@ function createVitalSignService(overrides = {}) {
     return transact(`vital-void:${setId}`, async () => {
       const current = await repository.findSet(setId);
       if (!current || current.center_id !== centerKey) throw new VitalSignsError('VITAL_SET_NOT_FOUND', 'ไม่พบรายการ', 404);
+      if (current.source_type === 'external_integration') {
+        throw new VitalSignsError('EXTERNAL_RECORD_LOCAL_MUTATION_DENIED', 'รายการจากระบบภายนอกต้องแก้ไขที่ระบบต้นทาง', 409);
+      }
       if (current.status === 'voided') return projectSet(current, await repository.listObservations(setId));
       const actor = `center_staff:${staff.staff_id}`;
       const updated = await repository.voidSet({ vitalSetId:setId, actorReference:actor, reason:cleanReason });
@@ -202,7 +211,29 @@ function createVitalSignService(overrides = {}) {
     });
   }
 
-  return { recordCanonical, recordNative, listHistory, voidVitalSet, repository };
+  async function listCenterHistory({ lineUserId, centerId, residentId = null, limit = 20 }) {
+    const centerKey=requiredId(centerId,'Center ID');
+    const staff=await staffTable.findOne((row)=>row.center_id===centerKey&&row.line_user_id===lineUserId
+      &&row.status==='active'&&['owner','manager','staff'].includes(row.role));
+    if(!staff)throw new VitalSignsError('CENTER_ACCESS_DENIED','ไม่มีสิทธิ์ดูข้อมูลศูนย์นี้',403);
+    const residentKey=residentId?requiredId(residentId,'Resident ID'):null;
+    if(residentKey&&!await residents.findOne((row)=>row.resident_id===residentKey&&row.center_id===centerKey&&row.status==='active')) {
+      throw new VitalSignsError('VITAL_SET_NOT_FOUND','ไม่พบรายการ',404);
+    }
+    const rows=await repository.listCenterHistory({centerId:centerKey,residentId:residentKey,
+      limit:Math.min(50,Math.max(1,Number(limit)||20))});
+    const residentCache=new Map();
+    const items=[];
+    for(const row of rows) {
+      let resident=residentCache.get(row.resident_id);
+      if(!resident){resident=await residents.findOne((item)=>item.resident_id===row.resident_id&&item.center_id===centerKey);residentCache.set(row.resident_id,resident||null);}
+      items.push(projectSet({...row,care_recipient_name:resident?.full_name||null,room:resident?.room||null,
+        mutation_capabilities:{canVoid:['owner','manager'].includes(staff.role)&&row.status==='recorded'&&row.source_type==='native_phimor'}},row.observations||[]));
+    }
+    return {items,role:staff.role};
+  }
+
+  return { recordCanonical, recordNative, listHistory, listCenterHistory, voidVitalSet, repository };
 }
 
 const vitalSignService = createVitalSignService();

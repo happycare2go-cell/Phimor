@@ -92,6 +92,18 @@ function createDoctorVisitRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async findLatestVersion(recordGroupId) {
+      const result = await queryFn(
+        `SELECT *, CURRENT_TIMESTAMP AS database_now
+         FROM doctor_visit_records
+         WHERE record_group_id = $1
+         ORDER BY version_no DESC, visit_record_id DESC
+         LIMIT 1`,
+        [recordGroupId]
+      );
+      return result.rows[0] || null;
+    },
+
     async listItems(visitRecordId) {
       const result = await queryFn(
         `SELECT * FROM doctor_visit_guidance_items WHERE visit_record_id = $1
@@ -163,16 +175,19 @@ function createDoctorVisitRepository({ queryFn = databaseQuery } = {}) {
       const result = await queryFn(
         `WITH ranked AS (
           SELECT *, COALESCE(visit_at, created_at) AS sort_time,
-            MAX(version_no) FILTER (WHERE status = 'confirmed')
-              OVER (PARTITION BY record_group_id) AS latest_confirmed_version
+            MAX(version_no) FILTER (WHERE status IN ('confirmed', 'voided'))
+              OVER (PARTITION BY record_group_id) AS latest_authoritative_version
           FROM doctor_visit_records WHERE care_profile_id = $1
         ), visible AS (
           SELECT * FROM ranked WHERE
             ($3::boolean = TRUE AND status IN ('confirmed', 'voided'))
-            OR ($3::boolean = FALSE AND status = 'confirmed' AND version_no = latest_confirmed_version)
+            OR ($3::boolean = FALSE AND status = 'confirmed' AND version_no = latest_authoritative_version)
             OR ($2::boolean = TRUE AND status = 'draft')
         )
-        SELECT *, CURRENT_TIMESTAMP AS database_now FROM visible
+        SELECT *,
+          (status = 'confirmed' AND version_no = latest_authoritative_version) AS is_authoritative,
+          CURRENT_TIMESTAMP AS database_now
+        FROM visible
         WHERE TRUE ${cursorClause}
         ORDER BY sort_time DESC, visit_record_id DESC
         LIMIT $${params.length}`,

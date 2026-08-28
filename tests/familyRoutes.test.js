@@ -104,3 +104,50 @@ test('POST /api/care-profile/independent ต้องมีความยิน
   const withConsent = await api('/api/care-profile/independent', { method: 'POST', body: JSON.stringify({ patientName: 'ทดสอบ' }) });
   assert.strictEqual(withConsent.status, 201);
 });
+
+test('dashboard returns owned and caregiver profiles once in deterministic order with safe Family group status', async () => {
+  await db.CareProfiles.insert({ care_profile_id:'CP-2', owner_line_id:'U_FAMILY', patient_name:'คุณแม่', status:'independent', created_at:'2026-08-02T00:00:00Z' });
+  await db.CareProfiles.insert({ care_profile_id:'CP-1', owner_line_id:'U_FAMILY', patient_name:'คุณพ่อ', status:'independent', created_at:'2026-08-01T00:00:00Z' });
+  await db.CareProfiles.insert({ care_profile_id:'CP-3', owner_line_id:'U_OTHER', patient_name:'คุณตา', status:'independent', created_at:'2026-08-03T00:00:00Z' });
+  await db.CareProfileMembers.insert({ member_id:'M-3', care_profile_id:'CP-3', line_user_id:'U_FAMILY', role:'caregiver', status:'active' });
+  await db.CareProfileMembers.insert({ member_id:'M-3-DUP', care_profile_id:'CP-3', line_user_id:'U_FAMILY', role:'caregiver', status:'active' });
+  await db.GroupBindings.insert({ binding_id:'GB-1', kind:'family', care_profile_id:'CP-1', line_group_id:'G-SECRET', status:'active' });
+
+  const response = await api('/api/init-dashboard');
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.profiles.map((entry) => entry.profile.care_profile_id), ['CP-1','CP-2','CP-3']);
+  assert.equal(new Set(body.profiles.map((entry) => entry.profile.care_profile_id)).size, 3);
+  assert.deepEqual(body.profiles[0].familyGroup, { active:true, status:'active' });
+  assert.deepEqual(body.profiles[1].familyGroup, { active:false, status:'unbound' });
+  assert.equal(body.profiles[2].familyRole, 'caregiver');
+  assert.doesNotMatch(JSON.stringify(body), /G-SECRET|line_group_id|groupId/);
+});
+
+test('arbitrary request-body groupId cannot create a Family GroupBinding', async () => {
+  const profile = await familyService.createIndependentProfile({ ownerLineId:'U_FAMILY', patientName:'คุณแม่' });
+  const response = await api(`/api/care-profile/${profile.care_profile_id}/bind-group`, {
+    method:'POST', body:JSON.stringify({ groupId:'G-ATTACKER' }),
+  });
+  assert.equal(response.status, 410);
+  assert.equal((await response.json()).error, 'group_binding_code_required');
+  assert.equal((await db.GroupBindings.findAll()).length, 0);
+
+  const stranger = await api(`/api/care-profile/${profile.care_profile_id}/bind-group`, {
+    method:'POST', body:JSON.stringify({ groupId:'G-ATTACKER' }),
+  }, 'U_STRANGER');
+  assert.equal(stranger.status, 403);
+});
+
+test('only owner can issue a Family binding code and active binding blocks another code', async () => {
+  const profile = await familyService.createIndependentProfile({ ownerLineId:'U_OWNER', patientName:'คุณแม่' });
+  await db.CareProfileMembers.insert({ member_id:'M-1', care_profile_id:profile.care_profile_id,
+    line_user_id:'U_CAREGIVER', role:'caregiver', status:'active' });
+  const caregiver = await api(`/api/care-profile/${profile.care_profile_id}/group-binding-token`, { method:'POST', body:'{}' }, 'U_CAREGIVER');
+  assert.equal(caregiver.status, 403);
+
+  await familyService.bindFamilyGroup({ careProfileId:profile.care_profile_id, groupId:'G-1', requesterLineId:'U_OWNER' });
+  const owner = await api(`/api/care-profile/${profile.care_profile_id}/group-binding-token`, { method:'POST', body:'{}' }, 'U_OWNER');
+  assert.equal(owner.status, 409);
+  assert.equal((await owner.json()).error, 'already_bound');
+});

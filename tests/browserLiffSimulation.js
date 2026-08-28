@@ -37,7 +37,12 @@ const FAMILY_DOCTOR_VISIT_SOURCE = fs.readFileSync(path.resolve(__dirname, '..',
 const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.js'), 'utf8');
 const FAMILY_CARE_HISTORY_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'care-history-ui.js'), 'utf8');
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
+const FAMILY_MEDICATION_OPERATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'medication-operation.js'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
+const CLINICAL_ACTION_DIALOG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.js'), 'utf8');
+const CLINICAL_ACTION_DIALOG_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.css'), 'utf8');
+const FAMILY_LAB_RESULTS_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.css'), 'utf8');
+const CENTER_CARE_RECORDING_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'care-recording-ui.css'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
@@ -53,7 +58,12 @@ function localHtml(name) {
     .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
     .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
-    .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`);
+    .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
+    .replace('<script src="./medication-operation.js"></script>', `<script>${FAMILY_MEDICATION_OPERATION_SOURCE}</script>`)
+    .replace('<script src="../shared/clinical-action-dialog.js"></script>', `<script>${CLINICAL_ACTION_DIALOG_SOURCE}</script>`)
+    .replace('<link rel="stylesheet" href="../shared/clinical-action-dialog.css">', `<style>${CLINICAL_ACTION_DIALOG_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./lab-results-ui.css">', `<style>${FAMILY_LAB_RESULTS_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`);
 }
 
 async function mockBackend(page, handler) {
@@ -61,7 +71,8 @@ async function mockBackend(page, handler) {
     const request = route.request();
     if (!request.url().startsWith(SIMULATED_BACKEND_URL)) return route.abort();
     const result = await handler(new URL(request.url()), request);
-    return route.fulfill({ status: result?.status || 200, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
+    const responseStatus = Number.isInteger(result?.status) ? result.status : 200;
+    return route.fulfill({ status: responseStatus, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
   });
 }
 
@@ -131,6 +142,53 @@ async function familyHealthProfileSwitchJourney(browser) {
   await page.close();
 }
 
+async function familyMultiProfileGroupJourney(browser) {
+  const page = await browser.newPage({ viewport:{width:390,height:844} });
+  const profiles = [
+    {profile:{care_profile_id:'CP1',patient_name:'คุณพ่อ',created_at:'2026-08-01T00:00:00Z'},familyRole:'owner',familyGroup:{active:true,status:'active'},canUseAi:false,upcomingAppointments:[]},
+    {profile:{care_profile_id:'CP2',patient_name:'คุณแม่',created_at:'2026-08-02T00:00:00Z'},familyRole:'owner',familyGroup:{active:false,status:'unbound'},canUseAi:false,upcomingAppointments:[]},
+    {profile:{care_profile_id:'CP3',patient_name:'คุณตา',created_at:'2026-08-03T00:00:00Z'},familyRole:'caregiver',familyGroup:{active:false,status:'unbound'},canUseAi:false,upcomingAppointments:[]},
+  ];
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if (url.pathname === '/api/consent/check') return {hasConsent:true};
+    if (url.pathname === '/api/init-dashboard') return {profiles};
+    if (url.pathname === '/api/access-requests') return {requests:[]};
+    if (url.pathname === '/api/transport/family/pending') return {pending:[]};
+    if (/^\/api\/care-profile\/CP\d\/caregivers$/.test(url.pathname)) return {members:[]};
+    if (url.pathname === '/api/plus/entitlement') return {status:'basic',plus:false};
+    if (url.pathname === '/api/care-profile/independent' && request.method() === 'POST') {
+      const input=request.postDataJSON();
+      const created={care_profile_id:'CP4',patient_name:input.patientName,status:'independent',created_at:'2026-08-04T00:00:00Z'};
+      profiles.push({profile:created,familyRole:'owner',familyGroup:{active:false,status:'unbound'},canUseAi:false,upcomingAppointments:[]});
+      return {status:201,body:created};
+    }
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'), {waitUntil:'domcontentloaded'});
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.waitForFunction(() => document.querySelector('#familyBindingStatus').textContent === 'เชื่อมกลุ่มครอบครัวแล้ว');
+  assert.equal(await page.locator('#familyBindingStatus').textContent(),'เชื่อมกลุ่มครอบครัวแล้ว');
+  assert.equal(await page.locator('#familyBindingAction').evaluate((button) => button.hidden),true);
+
+  await page.locator('#profileSelector').selectOption('CP2');
+  await page.waitForFunction(() => document.querySelector('#profileSummary').textContent.includes('คุณแม่')
+    && document.querySelector('#familyBindingStatus').textContent === 'ยังไม่ได้เชื่อมกลุ่มครอบครัว');
+  assert.equal(await page.locator('#familyBindingStatus').textContent(),'ยังไม่ได้เชื่อมกลุ่มครอบครัว');
+  assert.equal(await page.locator('#familyBindingAction').evaluate((button) => button.hidden),false);
+  await page.locator('#profileSelector').selectOption('CP3');
+  await page.waitForFunction(() => document.querySelector('#profileSummary').textContent.includes('คุณตา'));
+  assert.equal(await page.locator('#familyBindingAction').evaluate((button) => button.hidden),true);
+
+  await page.locator('#addCareProfileButton').click();
+  await page.locator('#newProfileName').fill('คุณยาย');
+  await page.locator('#createProfileButton').click();
+  await page.waitForFunction(() => document.querySelector('#profileSelector').value === 'CP4');
+  assert.match(await page.locator('#profileSummary').textContent(),/คุณยาย/);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),true);
+  await page.close();
+}
+
 async function familyConsultationJourney(browser) {
   const page=await browser.newPage({viewport:{width:390,height:844}});
   const profile={profile:{care_profile_id:'CP-CONSULT',patient_name:'คุณแม่จำลอง'},familyRole:'owner',canUseAi:false,upcomingAppointments:[]};
@@ -172,6 +230,8 @@ async function familyConsultationJourney(browser) {
 async function familyLabResultsJourney(browser) {
   const page=await browser.newPage({viewport:{width:390,height:844}});
   const profile={profile:{care_profile_id:'CP-LAB',patient_name:'คุณแม่ผลตรวจ'},familyRole:'owner',canUseAi:false,upcomingAppointments:[]};
+  const correctionDraft={reportId:'LABR-SIM-V2',status:'draft',hospitalName:'โรงพยาบาลจำลอง',laboratoryName:'ห้องตรวจตัวอย่าง',specimenCollectedAt:'2026-08-20T08:00:00Z',reportedAt:'2026-08-20T09:00:00Z',observations:[{observationId:'LABO-SIM-V2',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC'}]};
+  let correctionConfirmed=false;
   await mockBackend(page,async(url,request)=>{
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
     if(url.pathname==='/api/consent/check')return {hasConsent:true};
@@ -180,8 +240,11 @@ async function familyLabResultsJourney(browser) {
     if(url.pathname==='/api/transport/family/pending')return {pending:[]};
     if(url.pathname==='/api/care-profile/CP-LAB/caregivers')return {members:[]};
     if(url.pathname==='/api/plus/entitlement')return {status:'basic',plus:false};
-    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports'&&request.method()==='GET')return {items:[{reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z'}],nextCursor:null};
-    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM')return {reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',observations:[{observationId:'LABO-SIM',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC',comparisonKey:'hba1c'}]};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports'&&request.method()==='GET')return {items:[{reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',mutationCapabilities:{canCreateCorrection:true,canVoid:true}}],nextCursor:null};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM/corrections'&&request.method()==='POST')return correctionDraft;
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM-V2/draft'&&request.method()==='PATCH')return correctionDraft;
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM-V2/confirm'&&request.method()==='POST'){correctionConfirmed=true;return {...correctionDraft,status:'confirmed',versionNo:2,isCurrent:true};}
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM')return {reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',mutationCapabilities:{canCreateCorrection:true,canVoid:true},observations:[{observationId:'LABO-SIM',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC',comparisonKey:'hba1c'}]};
     if(url.pathname==='/api/care-profile/CP-LAB/lab-trends')return {status:'available',sourceDisplayName:'HbA1c',direction:'increased',rangesDiffer:false,observations:[{specimenCollectedAt:'2026-01-20T08:00:00Z',sourceValueText:'6.1',sourceUnit:'%',referenceRangeText:'4.0-6.0'},{specimenCollectedAt:'2026-08-20T08:00:00Z',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0'}]};
     if(url.pathname==='/api/care-profile/CP-LAB/lab-explanations'&&request.method()==='POST')return {status:'answer',summary:'สรุปค่าที่ได้รับการยืนยัน',testExplanation:'การตรวจนี้ใช้ติดตามค่าตามรายงาน',confirmedFacts:[{observedAt:'2026-08-20T08:00:00Z',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%'}],trendExplanation:'ค่าตัวเลขเพิ่มขึ้นตามลำดับเวลา',rangeCaveat:null,questionsForClinician:['ควรติดตามเมื่อใด'],safetyNotice:'ควรพิจารณาร่วมกับข้อมูลอื่น',disclaimer:'ไม่ใช่การวินิจฉัย'};
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
@@ -202,6 +265,18 @@ async function familyLabResultsJourney(browser) {
   await page.getByRole('button',{name:'ให้พี่หมอช่วยอธิบาย'}).click();
   await page.waitForFunction(()=>document.querySelector('#labExplanationResult').textContent.includes('สรุปค่าที่ได้รับการยืนยัน'));
   assert.match(await page.locator('#labExplanationResult').textContent(),/ไม่ใช่การวินิจฉัย/);
+  await page.getByRole('button',{name:'สร้างฉบับแก้ไข'}).click();
+  await page.waitForFunction(()=>document.querySelector('.clinical-action-dialog')?.hidden===false);
+  const target=await page.locator('.clinical-action-dialog__actions button:last-child').evaluate((button)=>{const box=button.getBoundingClientRect();const hit=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);return{hit:hit===button,height:box.height,z:Number(getComputedStyle(document.querySelector('.clinical-action-dialog')).zIndex),toastPointer:getComputedStyle(document.querySelector('#toast')).pointerEvents};});
+  assert.equal(target.hit,true);assert.ok(target.height>=44);assert.ok(target.z>99);assert.equal(target.toastPointer,'none');
+  await page.locator('.clinical-action-dialog__reason').fill('แก้ไขค่าตามรายงานที่ตรวจทานแล้ว');
+  await page.locator('.clinical-action-dialog__actions button:last-child').click();
+  await page.waitForFunction(()=>document.querySelector('.lab-correction-editor'));
+  assert.match(await page.locator('.lab-correction-editor').textContent(),/ตรวจฉบับแก้ไข/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.getByRole('button',{name:'ยืนยันฉบับแก้ไข'}).click();
+  await page.waitForFunction(()=>document.querySelector('#labResultsLive').textContent.includes('ยืนยันผลตรวจฉบับแก้ไขแล้ว'));
+  assert.equal(correctionConfirmed,true);
   await page.close();
 }
 
@@ -283,6 +358,40 @@ async function adminSubscriptionJourney(browser) {
   await page.close();
 }
 
+async function clinicalCorrectionVoidJourney(browser) {
+  const page=await browser.newPage({viewport:{width:390,height:844}});
+  await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{--navy:#17315d;--teal:#237b78;--gray:#667085}*{box-sizing:border-box}body{margin:0;padding:12px;font-family:Arial,sans-serif}.btn{min-height:44px;border-radius:10px;padding:10px 12px}</style><style>${CLINICAL_ACTION_DIALOG_CSS}</style><style>${CENTER_CARE_RECORDING_CSS}</style><div id="centerCareRoot"></div><div id="toast" style="position:fixed;z-index:99;pointer-events:none"></div><script>${CLINICAL_ACTION_DIALOG_SOURCE}</script><script>${CENTER_CARE_RECORDING_SOURCE}</script>`);
+  await page.evaluate(()=>{
+    const nativeVital={vitalSetId:'VS-NATIVE',status:'recorded',careRecipientName:'คุณยายตัวอย่าง',occurredAt:'2026-08-27T07:30:00+07:00',sourceType:'center_native',observations:[{measurementType:'temperature',sourceValueText:'36.7',sourceUnit:'Cel'}],mutationCapabilities:{canVoid:true}};
+    const externalVital={vitalSetId:'VS-EXTERNAL',status:'recorded',careRecipientName:'คุณตาตัวอย่าง',occurredAt:'2026-08-27T08:00:00+07:00',sourceType:'external_integration',observations:[{measurementType:'pulse',sourceValueText:'72',sourceUnit:'/min'}],mutationCapabilities:{canVoid:false}};
+    const lab={reportId:'LAB-NATIVE',status:'confirmed',isCurrent:true,hospitalName:'โรงพยาบาลตัวอย่าง',specimenCollectedAt:'2026-08-26T09:00:00+07:00',mutationCapabilities:{canCreateCorrection:true,canVoid:true}};
+    const daily={dailyReportId:'DAILY-NATIVE',status:'finalized',isCurrent:true,careRecipientName:'คุณยายตัวอย่าง',careDate:'2026-08-27',shift:{code:'day',sourceLabel:'กลางวัน'},sourceType:'center_native',mutationCapabilities:{canCreateCorrection:true,canVoid:true}};
+    const api=async(path)=>{
+      if(path.includes('/lab-reports'))return{items:[lab],nextCursor:null};
+      if(path.includes('/vital-signs/history'))return{items:[nativeVital,externalVital],nextCursor:null};
+      if(path.includes('status=finalized'))return{items:[daily]};
+      if(path.includes('/daily-care/review'))return{items:[]};
+      return{};
+    };
+    const view=window.PhimorCenterCareUI.mount({root:document.querySelector('#centerCareRoot'),api,notify:()=>{},onVisibility:()=>{}});
+    view.setContext({centerId:'CTR-1',role:'manager',residents:[{resident_id:'RES-1',care_profile_id:'CP-1',full_name:'คุณยายตัวอย่าง',room:'A101'}],capabilities:{vital_signs_v1:true,daily_care_v1:true}});
+    const labResident=document.querySelector('#centerLabResident');labResident.value='RES-1';labResident.dispatchEvent(new Event('change'));
+  });
+  await page.waitForFunction(()=>document.querySelector('#centerLabHistory')?.textContent.includes('โรงพยาบาลตัวอย่าง')&&document.querySelector('#centerVitalHistory')?.textContent.includes('คุณยายตัวอย่าง')&&document.querySelector('#centerDailyHistory')?.textContent.includes('ฉบับปัจจุบัน'));
+  assert.equal(await page.locator('[data-clinical-action="void-vital"]').count(),1);
+  assert.match(await page.locator('#centerVitalHistory').textContent(),/ข้อมูลจากระบบศูนย์/);
+  assert.equal(await page.locator('[data-clinical-action="correct-lab"]').count(),1);
+  assert.equal(await page.locator('[data-clinical-action="correct-daily"]').count(),1);
+  const targetButton=page.locator('[data-clinical-action="void-vital"]');
+  assert.ok((await targetButton.boundingBox()).height>=44);
+  await targetButton.click();
+  await page.waitForFunction(()=>document.querySelector('.clinical-action-dialog')?.hidden===false);
+  const targeting=await page.locator('.clinical-action-dialog__actions button:last-child').evaluate((button)=>{const box=button.getBoundingClientRect();return{hit:document.elementFromPoint(box.left+box.width/2,box.top+box.height/2)===button,height:box.height,textarea:document.querySelector('.clinical-action-dialog__reason').getBoundingClientRect().height,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth};});
+  assert.deepEqual(targeting,{hit:true,height:46,textarea:112,overflow:true});
+  await page.locator('.clinical-action-dialog__actions button:first-child').click();
+  await page.close();
+}
+
 async function familyCareHistoryJourney(browser) {
   const page = await browser.newPage({ viewport:{width:390,height:844} });
   const profile = { profile:{care_profile_id:'CP-CARE',patient_name:'คุณแม่ตัวอย่าง'},familyRole:'owner',canUseAi:false,upcomingAppointments:[] };
@@ -310,6 +419,53 @@ async function familyCareHistoryJourney(browser) {
   await page.getByRole('button',{name:'ดูรายละเอียด'}).first().click();
   assert.match(await page.locator('#familyCareHistoryList').textContent(), /ผู้บันทึก: ผู้ดูแลตัวอย่าง/);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+  await page.close();
+}
+
+async function familyTransportChoiceJourney(browser) {
+  const page = await browser.newPage({ viewport:{width:390,height:844} });
+  const profile = { profile:{care_profile_id:'CP-TRANSPORT',patient_name:'คุณยายอิสระ'},familyRole:'owner',canUseAi:false,upcomingAppointments:[] };
+  let unresolved = true; let attempts = 0;
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if (url.pathname === '/api/consent/check') return {hasConsent:true};
+    if (url.pathname === '/api/init-dashboard') return {profiles:[profile]};
+    if (url.pathname === '/api/access-requests') return {requests:[]};
+    if (url.pathname === '/api/care-profile/CP-TRANSPORT/caregivers') return {members:[]};
+    if (url.pathname === '/api/plus/entitlement') return {status:'basic',plus:false};
+    if (url.pathname === '/api/plus/offer') return {priceMinor:5900,durationDays:30,autoRenew:false};
+    if (url.pathname === '/api/plus/orders/current') return {status:'none'};
+    if (url.pathname === '/api/consultations/eligibility') return {availability:'unavailable'};
+    if (url.pathname === '/api/transport/family/pending') return {pending:unresolved?[{plan_id:'TP-INDEPENDENT',care_profile_id:'CP-TRANSPORT',center_id:null,appointment:{hospital:'โรงพยาบาลตัวอย่าง',datetime:'2026-09-02T09:00:00+07:00'}}]:[]};
+    if (url.pathname === '/api/transport/TP-INDEPENDENT/family-choice' && request.method() === 'POST') {
+      attempts += 1;
+      if (attempts === 1) return {status:503,body:{message:'internal provider detail must not surface'}};
+      unresolved = false; return {body:{ok:true,status:'family_handled'}};
+    }
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'), {waitUntil:'domcontentloaded'});
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.waitForFunction(() => document.querySelector('#pendingTransportList').textContent.includes('ยังไม่ได้เชื่อมศูนย์'));
+  assert.match(await page.locator('#pendingTransportList').textContent(), /ยังไม่ได้เชื่อมศูนย์/);
+  await page.getByRole('button',{name:'ไปเอง'}).click();
+  await page.waitForFunction(() => document.querySelector('#confirmActionModal').classList.contains('show'));
+  const targeting = await page.locator('#confirmActionButton').evaluate((button) => {
+    const box=button.getBoundingClientRect();const hit=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);
+    return {hitId:hit?.id,toastPointerEvents:getComputedStyle(document.querySelector('#toast')).pointerEvents,modalZ:Number(getComputedStyle(document.querySelector('#confirmActionModal')).zIndex),toastZ:Number(getComputedStyle(document.querySelector('#toast')).zIndex)};
+  });
+  assert.deepEqual(targeting,{hitId:'confirmActionButton',toastPointerEvents:'none',modalZ:100,toastZ:99});
+  await page.getByRole('button',{name:'ยืนยันตัวเลือก'}).click();
+  await page.waitForFunction(() => document.querySelector('#confirmActionMessage').textContent.includes('บันทึกวิธีเดินทางไม่สำเร็จ'));
+  assert.equal(attempts,1);
+  assert.equal(await page.locator('#confirmActionButton').isEnabled(),true);
+  assert.equal(await page.locator('#confirmActionCancelButton').isEnabled(),true);
+  assert.doesNotMatch(await page.locator('#confirmActionModal').textContent(),/internal provider detail/);
+  await page.getByRole('button',{name:'ยืนยันตัวเลือก'}).click();
+  await page.waitForFunction(() => !document.querySelector('#confirmActionModal').classList.contains('show'));
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#transportDecisionCard')).display === 'none');
+  assert.equal(attempts,2);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),true);
   await page.close();
 }
 
@@ -371,7 +527,9 @@ async function pharmacistConsoleJourney(browser) {
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney })) {
+  const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
+  for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }

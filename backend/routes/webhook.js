@@ -76,8 +76,10 @@ async function handleGroupBindingCode(event) {
   if (event.message?.type !== 'text') return false;
   const raw = String(event.message.text || '').trim();
   if (process.env.CARE2GO_GROUP_BIND_CODE && raw === process.env.CARE2GO_GROUP_BIND_CODE) {
-    await transportService.bindCare2goOperationsGroup(event.source?.groupId, event.source?.userId);
-    await safeReply(event.replyToken,{type:'text',text:'✅ ผูกกลุ่มนี้เป็นกลุ่มปฏิบัติการ Care2Go แล้ว'});
+    const result = await transportService.bindCare2goOperationsGroup(event.source?.groupId, event.source?.userId);
+    await safeReply(event.replyToken,{type:'text',text:result.ok
+      ? '✅ ผูกกลุ่มนี้เป็นกลุ่มปฏิบัติการ Care2Go แล้ว'
+      : `⚠️ ผูกกลุ่มไม่สำเร็จ: ${result.reason}`});
     return true;
   }
   const match = raw.toUpperCase().match(/\b(STAFF|FAMILY)-[A-Z0-9]{6}\b/);

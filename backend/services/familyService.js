@@ -1,8 +1,10 @@
 // services/familyService.js — FR-H (ฝั่งครอบครัว) และ FR-N (Care Profile อิสระ)
 
+const { createHash } = require('crypto');
 const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, AccessRequests, audit, id, now, withTransaction } = require('../db');
 const { isPast } = require('./cardService');
 const pdfService = require('./pdfService');
+const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, listActiveBindingsForGroup } = require('./groupBindingRepository');
 
 const CONSENT_VERSION = '2569-08-1'; // ข้อ H6: ต้องบันทึกเวอร์ชันเอกสารที่ยอมรับ
 
@@ -72,7 +74,8 @@ async function hasPermission(careProfileId, lineUserId, permission) {
   if (!profile) return false;
   if (profile.owner_line_id === lineUserId) return true;
   const member = await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === lineUserId && m.status === 'active');
-  const permissions = member?.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport'];
+  if (!member) return false;
+  const permissions = member.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport'];
   return permissions.includes(permission);
 }
 
@@ -200,26 +203,32 @@ async function createIndependentProfile({ ownerLineId, patientName, familyPhone,
 }
 
 // ── FR-N1: ผูกกลุ่มไลน์ครอบครัวด้วยตนเอง ──
-async function bindFamilyGroup({ careProfileId, groupId, requesterLineId }) {
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  if (!profile) return { ok: false, reason: 'ไม่พบ Care Profile' };
-  if (profile.owner_line_id !== requesterLineId) return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้' };
+async function bindFamilyGroupInCurrentTransaction({ careProfileId, groupId, requesterLineId }) {
+    const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+    if (!profile) return { ok: false, reason: 'ไม่พบ Care Profile', code:'CARE_PROFILE_NOT_FOUND' };
+    if (profile.owner_line_id !== requesterLineId) {
+      return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้', code:'FAMILY_OWNER_REQUIRED' };
+    }
+    if (!groupId) return { ok:false, reason:'ไม่พบข้อมูลกลุ่ม LINE', code:'GROUP_CONTEXT_REQUIRED' };
 
-  const conflict = await GroupBindings.findOne(
-    (g) => g.line_group_id === groupId && g.status !== 'inactive'
-      && !(g.kind === 'family' && g.care_profile_id === careProfileId)
-  );
-  if (conflict) return { ok: false, reason: 'กลุ่มนี้ถูกผูกกับศูนย์หรือ Care Profile อื่นแล้ว' };
-  const previous = await GroupBindings.findOne(
-    (g) => g.kind === 'family' && g.care_profile_id === careProfileId && g.status !== 'inactive'
-  );
-  if (previous && previous.line_group_id === groupId) return { ok: true, existing: true };
-  if (previous) await GroupBindings.update((g) => g.binding_id === previous.binding_id, { status: 'inactive', unbound_at: now() });
-  await GroupBindings.insert({
-    binding_id: id('GB'), care_profile_id: careProfileId, line_group_id: groupId, kind: 'family', bound_at: now(),
-    center_id: null, status: 'active', bound_by_line_user_id: requesterLineId,
-  });
-  return { ok: true };
+    const groupBindings = await listActiveBindingsForGroup(groupId);
+    if (groupBindings.some((binding) => binding.kind !== 'family')) {
+      return { ok: false, reason: 'กลุ่มนี้ถูกผูกเป็นกลุ่มประเภทอื่นแล้ว', code:'GROUP_KIND_CONFLICT' };
+    }
+    const current = await findActiveFamilyBinding(careProfileId);
+    if (current?.line_group_id === groupId) return { ok: true, existing: true, binding:current };
+    if (current) {
+      return { ok:false, reason:'Care Profile นี้เชื่อมกลุ่มครอบครัวแล้ว', code:'FAMILY_GROUP_ALREADY_BOUND' };
+    }
+    const binding = await GroupBindings.insert({
+      binding_id: id('GB'), care_profile_id: careProfileId, line_group_id: groupId, kind: 'family', bound_at: now(),
+      center_id: null, status: 'active', bound_by_line_user_id: requesterLineId,
+    });
+    return { ok: true, binding };
+}
+
+async function bindFamilyGroup(input) {
+  return withTransaction(GROUP_BINDING_TRANSACTION_KEY, () => bindFamilyGroupInCurrentTransaction(input));
 }
 
 async function recordMedicationSnapshot({ careProfileId, items, recordedBy, source = 'manual', sourceImageBase64 = null }) {
@@ -244,17 +253,51 @@ async function getMedicationHistory(careProfileId) {
 }
 
 // ── FR-H2: บันทึกนัด/ยาด้วยตนเอง (ใช้ร่วมกันได้ทั้ง linked และ independent) ──
-async function addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy }) {
+function appointmentCreateHash({ careProfileId, hospital, datetime, note }) {
+  return createHash('sha256').update(JSON.stringify({
+    careProfileId,
+    hospital:String(hospital || '').trim(),
+    datetime:new Date(datetime).toISOString(),
+    note:String(note || '').trim(),
+  })).digest('hex');
+}
+
+async function addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy, idempotencyKey = null }) {
   if (isPast(datetime)) return { ok: false, reason: 'ไม่สามารถบันทึกนัดที่เป็นเวลาในอดีตได้' }; // ข้อ G2
-  const appt = await Appointments.insert({
-    appointment_id: id('APT'), care_profile_id: careProfileId, hospital, datetime, note: note || '',
-    source: 'family_manual', source_center_id: null, created_by: createdBy, created_at: now(), status:'confirmed', // ข้อ J5
+  const safeKey = /^[A-Za-z0-9._:-]{8,160}$/.test(String(idempotencyKey || '')) ? String(idempotencyKey) : null;
+  const safeKeyHash = safeKey ? createHash('sha256').update(safeKey).digest('hex') : null;
+  let payloadHash;
+  try { payloadHash = appointmentCreateHash({ careProfileId, hospital, datetime, note }); }
+  catch (_error) { return { ok:false, reason:'วันเวลานัดไม่ถูกต้อง' }; }
+  const saved = await withTransaction(`appointment-create:${createdBy}:${careProfileId}:${safeKeyHash || id('REQ')}`, async () => {
+    const existing = safeKey && await Appointments.findOne((item) => (
+      item.care_profile_id === careProfileId
+        && item.created_by === createdBy
+        && item.creation_idempotency_hash === safeKeyHash
+    ));
+    if (existing) {
+      if (existing.creation_payload_hash !== payloadHash) return { conflict:true };
+      return { appointment:existing, duplicate:true };
+    }
+    const appointment = await Appointments.insert({
+      appointment_id: id('APT'), care_profile_id: careProfileId, hospital:String(hospital || '').trim(), datetime,
+      note: String(note || '').trim(), version:1,
+      source: 'family_manual', source_center_id: null, created_by: createdBy, created_at: now(), status:'confirmed', // ข้อ J5
+      creation_idempotency_hash:safeKeyHash, creation_payload_hash:safeKey ? payloadHash : null,
+    });
+    const resident = await Residents.findOne((r) => r.care_profile_id === careProfileId && r.status === 'active');
+    await require('./transportService').launchTransportChoice({ appointment, careProfileId, centerId:resident?.center_id || null, notifyFamily:false });
+    return { appointment, duplicate:false };
   });
-  const { Residents } = require('../db');
+  if (saved.conflict) return { ok:false, reason:'คำขอบันทึกนัดนี้ถูกใช้กับข้อมูลอื่นแล้ว' };
   const resident = await Residents.findOne((r) => r.care_profile_id === careProfileId && r.status === 'active');
-  await require('./transportService').launchTransportChoice({ appointment:appt, careProfileId, centerId:resident?.center_id || null });
-  if (resident?.center_id) await notifyCenterChange(resident.center_id, `📅 ครอบครัวเพิ่มนัดใหม่ของ ${resident.full_name}\n${hospital} · ${datetime}`, `family-appointment:${appt.appointment_id}`);
-  return { ok: true, appointment: appt };
+  await require('./transportService').launchTransportChoice({
+    appointment:saved.appointment, careProfileId, centerId:resident?.center_id || null, notifyFamily:true,
+  });
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({
+    eventType:'created', appointment:saved.appointment,
+  });
+  return { ok: true, appointment: saved.appointment, duplicate:saved.duplicate, notificationState };
 }
 
 async function addMedicationByFamily({ careProfileId, name, dose, createdBy }) {
@@ -275,27 +318,61 @@ async function notifyCenterChange(centerId, text, dedupeKey) {
 
 async function updateFamilyAppointment({ careProfileId, appointmentId, patch, requesterLineId }) {
   if (!await canAccessProfile(careProfileId, requesterLineId)) return { ok: false, reason: 'ไม่มีสิทธิ์' };
-  const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && a.care_profile_id === careProfileId && a.status !== 'cancelled');
-  if (!appointment) return { ok: false, reason: 'ไม่พบนัด' };
   if (patch.datetime && isPast(patch.datetime)) return { ok: false, reason: 'วันนัดต้องเป็นเวลาในอนาคต' };
-  const clean = {}; for (const key of ['hospital', 'datetime', 'note']) if (key in patch) clean[key] = patch[key];
-  const version = Number(appointment.version || 1) + 1;
-  const updated = await Appointments.update((a) => a.appointment_id === appointmentId, { ...clean, version, updated_at: now(), updated_by: requesterLineId, day_before_reminded: false, same_day_reminded: false });
+  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+    const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && a.care_profile_id === careProfileId && a.status !== 'cancelled');
+    if (!appointment) return { missing:true };
+    const requested = {};
+    for (const key of ['hospital', 'datetime', 'note']) if (key in patch) requested[key] = patch[key];
+    const { patch:clean, changedFields } = require('./appointmentNotificationService').materialPatch(appointment, requested);
+    if (changedFields.length === 0) return { appointment, changedFields, noChange:true };
+    const update = { ...clean, version:Number(appointment.version || 1) + 1, updated_at:now(), updated_by:requesterLineId,
+      last_material_changed_fields:changedFields };
+    if (changedFields.includes('datetime')) { update.day_before_reminded = false; update.same_day_reminded = false; }
+    const updated = await Appointments.update((a) => a.appointment_id === appointmentId, update);
+    return { appointment:updated, changedFields };
+  });
+  if (mutation.missing) return { ok: false, reason: 'ไม่พบนัด' };
+  if (mutation.noChange) {
+    const notificationState = Array.isArray(mutation.appointment.last_material_changed_fields)
+      ? await require('./appointmentNotificationService').notifyLifecycle({
+        eventType:'updated', appointment:mutation.appointment,
+        changedFields:mutation.appointment.last_material_changed_fields,
+      })
+      : { status:'not_needed' };
+    return { ok:true, appointment:mutation.appointment, noChange:true, notificationState };
+  }
   await require('./transportService').notifyAppointmentChanged(appointmentId, 'updated', requesterLineId);
-  await audit('appointment.updated_by_family', requesterLineId, { careProfileId, appointmentId, version });
-  return { ok: true, appointment: updated };
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({
+    eventType:'updated', appointment:mutation.appointment, changedFields:mutation.changedFields,
+  });
+  await audit('appointment.updated_by_family', requesterLineId, { careProfileId, appointmentId, version:mutation.appointment.version, changedFields:mutation.changedFields });
+  return { ok: true, appointment: mutation.appointment, notificationState };
 }
 
 async function cancelFamilyAppointment({ careProfileId, appointmentId, requesterLineId, reason = '' }) {
   if (!await canAccessProfile(careProfileId, requesterLineId)) return { ok: false, reason: 'ไม่มีสิทธิ์' };
-  const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && a.care_profile_id === careProfileId);
-  if (!appointment) return { ok: false, reason: 'ไม่พบนัด' };
-  if (appointment.status === 'cancelled') return { ok: true, appointment, alreadyCancelled: true };
-  const updated = await Appointments.update((a) => a.appointment_id === appointmentId, { status: 'cancelled', cancelled_at: now(), cancelled_by: requesterLineId, cancellation_reason: reason });
-  await require('../db').TransportPlans.updateAll((p) => p.appointment_id === appointmentId, { status: 'cancelled', cancelled_at: now(), cancellation_reason: reason });
+  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+    const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && a.care_profile_id === careProfileId);
+    if (!appointment) return { missing:true };
+    if (appointment.status === 'cancelled') return { appointment, alreadyCancelled:true };
+    const updated = await Appointments.update((a) => a.appointment_id === appointmentId, {
+      status:'cancelled', cancelled_at:now(), cancelled_by:requesterLineId, cancellation_reason:String(reason || '').trim(),
+    });
+    await require('../db').TransportPlans.updateAll((p) => p.appointment_id === appointmentId, {
+      status:'cancelled', cancelled_at:now(), cancellation_reason:String(reason || '').trim(),
+    });
+    return { appointment:updated, alreadyCancelled:false };
+  });
+  if (mutation.missing) return { ok: false, reason: 'ไม่พบนัด' };
+  if (mutation.alreadyCancelled) {
+    const notificationState = await require('./appointmentNotificationService').notifyLifecycle({ eventType:'cancelled', appointment:mutation.appointment });
+    return { ok:true, appointment:mutation.appointment, alreadyCancelled:true, notificationState };
+  }
   await require('./transportService').notifyAppointmentChanged(appointmentId, 'cancelled', requesterLineId);
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({ eventType:'cancelled', appointment:mutation.appointment });
   await audit('appointment.cancelled_by_family', requesterLineId, { careProfileId, appointmentId, reason });
-  return { ok: true, appointment: updated };
+  return { ok: true, appointment: mutation.appointment, notificationState };
 }
 
 // ── FR-H3: ไทม์ไลน์ย้อนหลัง (กรองนัดที่ผ่านแล้วออกจาก "นัดใกล้ถึง" แต่ยังอยู่ในประวัติ — ข้อ G3) ──
@@ -361,7 +438,7 @@ const AI_RESTRICTED_MESSAGE =
   + 'ตอนนี้บันทึกนัดด้วยการพิมพ์ได้เลยค่ะ'; // ข้อ N4 — ต้องไม่รู้สึกถูกกีดกัน
 
 module.exports = {
-  recordConsent, getConsentState, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup,
+  recordConsent, getConsentState, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup, bindFamilyGroupInCurrentTransaction,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
   exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
   recordMedicationSnapshot, getMedicationHistory, createCaregiverInvite, getCaregiverInvite, acceptCaregiverInvite, canAccessProfile, hasPermission,

@@ -14,6 +14,13 @@
 const { TransportPlans, CenterRateCards, Bills, GroupBindings, CareProfiles, Appointments, Residents, audit, id, now, withTransaction } = require('../db');
 const lineClient = require('../providers/lineClient');
 const notificationService = require('./notificationService');
+const {
+  GROUP_BINDING_TRANSACTION_KEY,
+  findActiveFamilyBinding,
+  findActiveCare2goBinding,
+  listActiveBindingsForGroup,
+  isActiveGroupBinding,
+} = require('./groupBindingRepository');
 
 const CARE2GO_UNAVAILABLE_DEADLINE_HOURS = 12; // ข้อ L11
 
@@ -44,18 +51,35 @@ async function launchTransportChoice({ appointment, careProfileId, centerId, not
   const target = await resolveFamilyTarget(careProfileId, profile);
   if (target && notifyFamily) {
     const liffId = process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID';
-    await lineClient.pushMessage(target, [{ type:'text', text:`📅 มีนัดใหม่ที่รอเลือกวิธีเดินทาง\n${appointment.hospital} — ${appointment.datetime}\n\nกรุณาเปิด Family LIFF เพื่อตรวจสอบและยืนยัน\nhttps://liff.line.me/${liffId}?view=transport` }]);
+    try {
+      await notificationService.enqueueAndDeliver({
+        dedupeKey:`transport-choice:${appointment.appointment_id}:family`,
+        to:target,
+        kind:'transport_choice_required',
+        meta:{ planId:plan.plan_id, appointmentId:appointment.appointment_id, careProfileId, audience:'family' },
+        messages:[{ type:'text', text:`📅 ${profile?.patient_name || 'Care Profile'} — กรุณาเลือกวิธีเดินทางสำหรับนัดนี้\n${appointment.hospital} — ${appointment.datetime}\n\nเปิด Family LIFF เพื่อตรวจสอบและยืนยัน\nhttps://liff.line.me/${liffId}?view=transport` }],
+      });
+    } catch (_error) {
+      // Transport Plan is authoritative. A temporary notification enqueue
+      // failure must not make appointment creation appear to have failed.
+    }
   }
   return plan;
 }
 
 async function bindCare2goOperationsGroup(groupId, actorLineId) {
-  const old = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
-  if (old && old.line_group_id !== groupId) await GroupBindings.update((g) => g.binding_id === old.binding_id, { status:'inactive', unbound_at:now() });
-  let binding = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.line_group_id === groupId && g.status !== 'inactive');
-  if (!binding) binding = await GroupBindings.insert({ binding_id:id('GB'), kind:'care2go_ops', line_group_id:groupId, status:'active', bound_by_line_user_id:actorLineId, bound_at:now() });
-  await audit('care2go.group_bound', actorLineId, { groupId });
-  return binding;
+  return withTransaction(GROUP_BINDING_TRANSACTION_KEY, async () => {
+    const conflict = (await listActiveBindingsForGroup(groupId)).find((binding) => binding.kind !== 'care2go_ops');
+    if (conflict) return { ok:false, reason:'กลุ่มนี้ถูกผูกเป็นกลุ่มประเภทอื่นแล้ว', code:'GROUP_KIND_CONFLICT' };
+    const old = await findActiveCare2goBinding();
+    if (old && old.line_group_id !== groupId) {
+      await GroupBindings.update((binding) => binding.binding_id === old.binding_id, { status:'inactive', unbound_at:now() });
+    }
+    let binding = await GroupBindings.findOne((item) => isActiveGroupBinding(item, 'care2go_ops') && item.line_group_id === groupId);
+    if (!binding) binding = await GroupBindings.insert({ binding_id:id('GB'), kind:'care2go_ops', line_group_id:groupId, status:'active', bound_by_line_user_id:actorLineId, bound_at:now() });
+    await audit('care2go.group_bound', actorLineId, { groupId });
+    return { ...binding, ok:true };
+  });
 }
 
 async function notifyCare2goOperations(planId, requestedByType) {
@@ -66,7 +90,7 @@ async function notifyCare2goOperations(planId, requestedByType) {
   const center = plan.center_id ? await Centers.findOne((c) => c.center_id === plan.center_id) : null;
   const resident = plan.center_id ? await Residents.findOne((r) => r.center_id === plan.center_id && r.care_profile_id === plan.care_profile_id && r.status === 'active') : null;
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === plan.care_profile_id);
-  const ops = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
+  const ops = await findActiveCare2goBinding();
   if (!ops) return { ok:false, reason:'ยังไม่ได้ผูกกลุ่มปฏิบัติการ Care2Go' };
   const contact = requestedByType === 'center' ? (center?.contact_phone || 'ยังไม่มีเบอร์ติดต่อศูนย์') : (profile?.emergency_contact_phone || profile?.family_phone || 'ยังไม่มีเบอร์ญาติ');
   const flex = require('../flexMessages');
@@ -82,7 +106,7 @@ async function notifyCare2goOperations(planId, requestedByType) {
 async function familyRequestCare2go(planId, requesterLineId) {
   const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
   if (!plan || plan.status !== 'awaiting_family') return { ok:false, reason:'รายการนี้ไม่อยู่ในสถานะรอครอบครัว' };
-  const ops = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
+  const ops = await findActiveCare2goBinding();
   const requireOps = process.env.REQUIRE_CARE2GO_OPS_BINDING === 'true' || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_CARE2GO_OPS_BINDING !== 'false');
   if (!ops && requireOps) return { ok:false, reason:'ยังไม่ได้เปิดรับคำขอ Care2Go กรุณาติดต่อเจ้าหน้าที่' };
   await TransportPlans.update((p) => p.plan_id === planId, { family_choice:'care2go', family_decided_by:requesterLineId, family_decided_at:now(), status:'care2go_requested', needs:['vehicle'], liability_mode:'agent', care2go_booking_id:id('B') });
@@ -98,7 +122,7 @@ async function care2goAcknowledge(planId, actorLineId, confirmed=false) {
   await TransportPlans.update((p)=>p.plan_id===planId,{status,care2go_acknowledged_by:actorLineId,care2go_acknowledged_at:now()});
   await appendHistory(planId,confirmed?'care2go_confirmed':'care2go_acknowledged'); await audit(`transport.${status}`,actorLineId,{planId});
   const profile=await CareProfiles.findOne((p)=>p.care_profile_id===plan.care_profile_id); const target=await resolveFamilyTarget(plan.care_profile_id,profile);
-  if(target) await lineClient.pushMessage(target,[{type:'text',text:confirmed?'✅ Care2Go ยืนยันการจัดบริการแล้ว ทีมงานจะโทรยืนยันรายละเอียดค่ะ':'✅ ทีม Care2Go รับเรื่องแล้ว กำลังประสานรถ/ผู้ดูแลค่ะ'}]);
+  if(target) await lineClient.pushMessage(target,[{type:'text',text:`${profile?.patient_name || 'Care Profile'} — ${confirmed?'✅ Care2Go ยืนยันการจัดบริการแล้ว ทีมงานจะโทรยืนยันรายละเอียดค่ะ':'✅ ทีม Care2Go รับเรื่องแล้ว กำลังประสานรถ/ผู้ดูแลค่ะ'}`}]);
   return {ok:true,status};
 }
 
@@ -113,7 +137,7 @@ async function notifyAppointmentChanged(appointmentId, changeType, actorLineId) 
   const plan = await TransportPlans.findOne((p) => p.appointment_id === appointmentId);
   if (!plan) return { ok: true, skipped: true };
   const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId);
-  const ops = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
+  const ops = await findActiveCare2goBinding();
   if (ops && (plan.care2go_booking_id || ['care2go_requested','care2go_acknowledged','care2go_confirmed'].includes(plan.status))) {
     const label = changeType === 'cancelled' ? '❌ ยกเลิกนัด/คำขอบริการ' : '⚠️ นัดมีการแก้ไข กรุณาตรวจสอบข้อมูลล่าสุด';
     await require('./notificationService').enqueueAndDeliver({
@@ -129,25 +153,36 @@ async function notifyAppointmentChanged(appointmentId, changeType, actorLineId) 
 
 // ── FR-L1, L2: ครอบครัวเลือก "เราไปเอง" ──
 async function familyChooseSelf(planId, requesterLineId) {
-  const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
-  if (!plan) return { ok: false, reason: 'ไม่พบแผนการเดินทาง' };
-  if (plan.status !== 'awaiting_family') return { ok: false, reason: 'รายการนี้ไม่ได้อยู่ในสถานะรอครอบครัวตัดสินใจ' };
+  const transition = await withTransaction(`transport-family-choice:${planId}`, async () => {
+    const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
+    if (!plan) return { ok: false, reason: 'ไม่พบแผนการเดินทาง' };
+    if (plan.status === 'family_handled' && plan.family_choice === 'self') {
+      return { ok:true, status:'family_handled', duplicate:true, centerId:plan.center_id || null };
+    }
+    if (plan.status !== 'awaiting_family') return { ok: false, reason: 'รายการนี้ไม่ได้อยู่ในสถานะรอครอบครัวตัดสินใจ' };
 
-  await TransportPlans.update((p) => p.plan_id === planId, {
-    family_choice: 'self', family_decided_by: requesterLineId, family_decided_at: now(), status: 'family_handled',
+    await TransportPlans.update((p) => p.plan_id === planId, {
+      family_choice: 'self', family_decided_by: requesterLineId, family_decided_at: now(), status: 'family_handled',
+    });
+    await appendHistory(planId, 'family_choice=self');
+    await audit('transport.family_self', requesterLineId, { planId });
+    return { ok:true, status:'family_handled', duplicate:false, centerId:plan.center_id || null };
   });
-  await appendHistory(planId, 'family_choice=self');
-  await audit('transport.family_self', requesterLineId, { planId });
+  if (!transition.ok || transition.duplicate) return transition;
 
   // แจ้งกลุ่มงานศูนย์เพื่อทราบ (ข้อ L2)
-  if (plan.center_id) {
+  if (transition.centerId) {
     const { Centers } = require('../db');
-    const center = await Centers.findOne((c) => c.center_id === plan.center_id);
+    const center = await Centers.findOne((c) => c.center_id === transition.centerId);
     if (center?.group_id) {
-      await lineClient.pushMessage(center.group_id, [{ type: 'text', text: `ญาติแจ้งว่าจะพาไปเอง สำหรับนัดที่กำลังจะถึง` }]);
+      await notificationService.enqueueAndDeliver({
+        dedupeKey:`transport-family-self:${planId}:center`, to:center.group_id,
+        kind:'transport_family_self', meta:{planId,centerId:transition.centerId},
+        messages:[{ type:'text', text:'ญาติแจ้งว่าจะพาไปเอง สำหรับนัดที่กำลังจะถึง' }],
+      });
     }
   }
-  return { ok: true, status: 'family_handled' };
+  return transition;
 }
 
 // ── FR-L1, L3: ครอบครัวเลือก "ให้ศูนย์จัดการให้" ──
@@ -192,7 +227,7 @@ async function centerChoose(planId, choice, requesterLineId, { needs = [], note 
     return { ok:false, reason:'แพ็กเกจของศูนย์ไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบก่อนดำเนินการ' };
   }
   if (choice === 'care2go' && (process.env.REQUIRE_CARE2GO_OPS_BINDING === 'true' || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_CARE2GO_OPS_BINDING !== 'false'))) {
-    const ops = await GroupBindings.findOne((g) => g.kind === 'care2go_ops' && g.status !== 'inactive');
+    const ops = await findActiveCare2goBinding();
     if (!ops) return { ok: false, reason: 'ยังไม่ได้ผูกกลุ่มปฏิบัติการ Care2Go จึงยังส่งคำขอไม่ได้' };
   }
 
@@ -233,12 +268,12 @@ async function centerChoose(planId, choice, requesterLineId, { needs = [], note 
     const priceLines = [];
     if (needs.includes('escort') && rateCard?.escort_enabled) priceLines.push(`ค่าคนเฝ้าไข้ ${rateCard.escort_price} บาท`);
     if (needs.includes('vehicle') && rateCard?.vehicle_enabled) priceLines.push(`ค่ารถรับส่ง ${rateCard.vehicle_price} บาท`);
-    familyText = ['ศูนย์รับจัดการเรื่องการเดินทางให้แล้ว', ...priceLines, '', 'ออกใบเสร็จโดยศูนย์'].join('\n');
+    familyText = [`${careProfile?.patient_name || 'Care Profile'} — ศูนย์รับจัดการเรื่องการเดินทางให้แล้ว`, ...priceLines, '', 'ออกใบเสร็จโดยศูนย์'].join('\n');
   } else {
     care2goBookingId = id('B'); // ในระบบจริง: เรียก API ฝั่ง Care2Go เพื่อจองจริง
     await TransportPlans.update((p) => p.plan_id === planId, { care2go_booking_id: care2goBookingId });
     familyText = [
-      'ศูนย์ประสาน Care2Go ให้แล้ว',
+      `${careProfile?.patient_name || 'Care Profile'} — ศูนย์ประสาน Care2Go ให้แล้ว`,
       'ทีมงาน Care2Go จะติดต่อคุณโดยตรงเพื่อยืนยันรายละเอียดและราคา',
       '', 'ออกใบเสร็จโดย Care2Go',
     ].join('\n');
@@ -287,13 +322,13 @@ async function markCare2goUnavailable(planId, appointmentDatetime) {
     await lineClient.pushMessage(center.group_id, [{ type: 'text', text: 'Care2Go ไม่สามารถจัดหาคนหรือรถให้ได้ กรุณาเลือกวิธีจัดการใหม่โดยเร็ว' }]);
   }
   if (familyTarget) {
-    await lineClient.pushMessage(familyTarget, [{ type: 'text', text: 'ขออภัยค่ะ ตอนนี้ทีมงานกำลังจัดหาทางเลือกอื่นให้ จะแจ้งความคืบหน้าเร็วๆ นี้' }]);
+    await lineClient.pushMessage(familyTarget, [{ type: 'text', text: `${careProfile?.patient_name || 'Care Profile'} — ขออภัยค่ะ ตอนนี้ทีมงานกำลังจัดหาทางเลือกอื่นให้ จะแจ้งความคืบหน้าเร็วๆ นี้` }]);
   }
   return { ok: true, metDeadline: onTime };
 }
 
 async function resolveFamilyTarget(careProfileId, careProfile) {
-  const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
+  const groupBinding = await findActiveFamilyBinding(careProfileId);
   return groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
 }
 
@@ -340,7 +375,7 @@ async function remindPendingFamilyChoices(referenceDate = new Date()) {
           dedupeKey:`transport-reminder:${plan.plan_id}:${stage.key}:family:${familyTarget}`,
           to:familyTarget, kind:'transport_family_reminder',
           meta:{ planId:plan.plan_id, appointmentId:appt.appointment_id, stage:stage.key, recipientType:'family' },
-          messages:[{ type:'text', text:`⏰ เหลืออีก${hoursLeftLabel}ก่อนถึงนัด ${appt.hospital} วันที่ ${new Date(appt.datetime).toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Bangkok' })}\nยังไม่ได้เลือกวิธีเดินทางเลยค่ะ` }],
+          messages:[{ type:'text', text:`⏰ ${careProfile?.patient_name || 'Care Profile'} — เหลืออีก${hoursLeftLabel}ก่อนถึงนัด ${appt.hospital} วันที่ ${new Date(appt.datetime).toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Bangkok' })}\nยังไม่ได้เลือกวิธีเดินทางเลยค่ะ` }],
         });
         if (family.ok) queued.push(family.notification);
       }
@@ -420,7 +455,7 @@ async function createBill({ centerId, careProfileId, appointmentId, items, creat
   const careProfile = await CareProfiles.findOne((cp) => cp.care_profile_id === careProfileId);
   const target = await resolveFamilyTarget(careProfileId, careProfile);
   if (target) {
-    const lines = ['ใบแจ้งค่าใช้จ่าย', ...items.map((it) => `${it.label} — ${it.amount} บาท`), '', `รวม ${total} บาท`];
+    const lines = [`ใบแจ้งค่าใช้จ่าย — ${careProfile?.patient_name || 'Care Profile'}`, ...items.map((it) => `${it.label} — ${it.amount} บาท`), '', `รวม ${total} บาท`];
     await lineClient.pushMessage(target, [{ type: 'text', text: lines.join('\n') }]);
   }
   return bill;

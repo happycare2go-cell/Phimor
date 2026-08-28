@@ -1,6 +1,7 @@
 const { id, now, withTransaction, Appointments, PendingCards, Residents } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { createLabRepository } = require('./labRepository');
+const { createClinicalRecordMutationAuthority } = require('./clinicalRecordMutationAuthority');
 const {
   IDENTIFIER_PATTERN, LabDomainError, fail, normalizeIdentifier, normalizeText,
   normalizeReportInput, normalizeObservations, normalizeSource, deriveLabActor,
@@ -125,6 +126,7 @@ function projectReport(row, { observations = null, sources = null, events = null
     retentionUntil: toIso(row.retention_until),
     createdAt: toIso(row.created_at), updatedAt: toIso(row.updated_at),
   };
+  if (typeof row.is_authoritative === 'boolean') projected.isCurrent = row.is_authoritative;
   if (observations) projected.observations = observations.map(projectObservation);
   if (sources) projected.sources = sources.map(projectSource);
   if (events) projected.events = events.map(projectEvent);
@@ -188,6 +190,8 @@ function createLabResultService(overrides = {}) {
   const transaction = overrides.withTransaction || withTransaction;
   const idFactory = overrides.idFactory || id;
   const nowFactory = overrides.nowFactory || now;
+  const mutationAuthority = overrides.mutationAuthority
+    || createClinicalRecordMutationAuthority(overrides.mutationAuthorityOptions);
   const findAppointment = overrides.findAppointment || (async ({ appointmentId, careProfileId }) => (
     Appointments.findOne((item) => item.appointment_id === appointmentId
       && item.care_profile_id === careProfileId && item.status !== 'cancelled')
@@ -234,6 +238,26 @@ function createLabResultService(overrides = {}) {
       repository.listEvents(report.report_id),
     ]);
     return projectReport(report, { observations, sources, events });
+  }
+
+  async function mutationCapabilities({ report, access, careProfileId, centerId }) {
+    const denied = Object.freeze({ canCreateCorrection:false, canVoid:false });
+    if (!report || report.status !== 'confirmed' || report.is_authoritative === false) return denied;
+    const latest = typeof repository.findLatestVersion === 'function'
+      ? await repository.findLatestVersion(report.report_group_id) : report;
+    if (!latest || latest.report_id !== report.report_id || latest.status !== 'confirmed') return denied;
+    try {
+      requireConfirmation(access);
+      await mutationAuthority.assertMutationAllowed({
+        record:report, access, careProfileId, requestedCenterId:centerId, fail,
+      });
+      return Object.freeze({ canCreateCorrection:true, canVoid:true });
+    } catch (_) { return denied; }
+  }
+
+  async function projectWithCapabilities(report, access, careProfileId, centerId, detail = false) {
+    const projected = detail ? await loadDetail(report) : projectReport(report);
+    return { ...projected, mutationCapabilities:await mutationCapabilities({ report, access, careProfileId, centerId }) };
   }
 
   async function createDraft({ careProfileId, lineUserId, centerId = null, input } = {}) {
@@ -356,7 +380,7 @@ function createLabResultService(overrides = {}) {
     const report = await repository.findReport(reportId);
     if (!report || report.care_profile_id !== careProfileId) fail('REPORT_NOT_FOUND');
     if (report.status === 'draft' && !canEditDraft(access)) fail('REPORT_NOT_FOUND');
-    return loadDetail(report);
+    return projectWithCapabilities(report, access, careProfileId, centerId, true);
   }
 
   async function listReports({
@@ -375,7 +399,7 @@ function createLabResultService(overrides = {}) {
     const hasMore = rows.length > parsedLimit;
     const visible = rows.slice(0, parsedLimit);
     return {
-      items: visible.map((row) => projectReport(row)),
+      items: await Promise.all(visible.map((row) => projectWithCapabilities(row, access, careProfileId, centerId))),
       nextCursor: hasMore ? encodeCursor(visible[visible.length - 1]) : null,
     };
   }
@@ -390,6 +414,11 @@ function createLabResultService(overrides = {}) {
       const actor = { ...deriveLabActor(access), actorId: lineUserId };
       const current = await repository.findReportForUpdate(reportId);
       if (!current || current.care_profile_id !== careProfileId) fail('REPORT_NOT_FOUND');
+      if (current.supersedes_report_id) {
+        await mutationAuthority.assertMutationAllowed({
+          record:current, access, careProfileId, requestedCenterId:centerId, fail,
+        });
+      }
       const observations = await repository.listObservations(reportId);
       requireConfirmableReport(current, observations);
       const report = await repository.confirmReport(reportId, actor);
@@ -423,6 +452,9 @@ function createLabResultService(overrides = {}) {
       const actor = { ...deriveLabActor(access), actorId: lineUserId };
       const latest = await repository.findLatestVersionForUpdate(prior.report_group_id);
       if (!latest || latest.report_id !== reportId || latest.status !== 'confirmed') fail('VERSION_CONFLICT');
+      await mutationAuthority.assertMutationAllowed({
+        record:latest, access, careProfileId, requestedCenterId:centerId, fail,
+      });
       const [oldObservations, oldSources] = await Promise.all([
         repository.listObservations(reportId), repository.listSources(reportId),
       ]);
@@ -470,7 +502,10 @@ function createLabResultService(overrides = {}) {
       const actor = { ...deriveLabActor(access), actorId: lineUserId };
       const current = await repository.findReportForUpdate(reportId);
       if (!current || current.care_profile_id !== careProfileId) fail('REPORT_NOT_FOUND');
-      if (current.status === 'voided') fail('REPORT_ALREADY_VOIDED');
+      await mutationAuthority.assertMutationAllowed({
+        record:current, access, careProfileId, requestedCenterId:centerId, fail,
+      });
+      if (current.status === 'voided') return loadDetail(current);
       if (current.status !== 'confirmed') fail('REPORT_NOT_CONFIRMED');
       const report = await repository.voidReport(reportId, voidReason);
       if (!report) fail('REPORT_NOT_CONFIRMED');

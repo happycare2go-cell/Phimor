@@ -5,6 +5,7 @@ const path = require('node:path');
 
 process.env.NODE_ENV = 'test';
 
+const db = require('../backend/db');
 const { createLabResultService } = require('../backend/services/labResultService');
 const { LabDomainError, normalizeObservation } = require('../backend/domain/lab');
 
@@ -74,6 +75,7 @@ function fixture({ failEventType = null, serviceOverrides = {} } = {}) {
       return clone(state.reports.filter((row) => row.report_group_id === groupId)
         .sort((a, b) => b.version_no - a.version_no)[0] || null);
     },
+    async findLatestVersion(groupId) { return this.findLatestVersionForUpdate(groupId); },
     async listObservations(reportId) {
       return clone(state.observations.filter((row) => row.report_id === reportId)
         .sort((a, b) => a.source_ordinal - b.source_ordinal));
@@ -124,15 +126,19 @@ function fixture({ failEventType = null, serviceOverrides = {} } = {}) {
     async listReports({ careProfileId, includeDrafts, includeHistory, cursor, limit }) {
       let rows = state.reports.filter((row) => row.care_profile_id === careProfileId);
       if (!includeHistory) {
-        const latestConfirmed = new Map();
-        for (const row of rows.filter((item) => item.status === 'confirmed')) {
-          const old = latestConfirmed.get(row.report_group_id);
-          if (!old || row.version_no > old.version_no) latestConfirmed.set(row.report_group_id, row);
+        const latestAuthoritative = new Map();
+        for (const row of rows.filter((item) => ['confirmed', 'voided'].includes(item.status))) {
+          const old = latestAuthoritative.get(row.report_group_id);
+          if (!old || row.version_no > old.version_no) latestAuthoritative.set(row.report_group_id, row);
         }
-        rows = [...latestConfirmed.values(), ...(includeDrafts ? rows.filter((row) => row.status === 'draft') : [])];
+        rows = [...latestAuthoritative.values()].filter((row) => row.status === 'confirmed')
+          .concat(includeDrafts ? rows.filter((row) => row.status === 'draft') : []);
       } else rows = rows.filter((row) => row.status !== 'draft' || includeDrafts);
       rows = rows.filter((row) => includeHistory || row.status !== 'voided').map((row) => ({
-        ...row, sort_time: row.specimen_collected_at || row.reported_at || row.created_at,
+        ...row, is_authoritative: row.status === 'confirmed'
+          && !state.reports.some((item) => item.report_group_id === row.report_group_id
+            && ['confirmed', 'voided'].includes(item.status) && item.version_no > row.version_no),
+        sort_time: row.specimen_collected_at || row.reported_at || row.created_at,
       })).sort((a, b) => b.sort_time.localeCompare(a.sort_time) || b.report_id.localeCompare(a.report_id));
       if (cursor) rows = rows.filter((row) => row.sort_time < cursor.sortTime
         || (row.sort_time === cursor.sortTime && row.report_id < cursor.reportId));
@@ -367,6 +373,18 @@ test('correction creates an incremented draft version and leaves prior confirmed
   assert.equal(correction.supersedesReportId, confirmed.reportId);
   const prior = state().reports.find((row) => row.report_id === confirmed.reportId);
   assert.equal(prior.status, 'confirmed'); assert.equal(prior.laboratory_name, confirmed.laboratoryName);
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:confirmed.reportId,lineUserId:'U-OWNER'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
+});
+
+test('Family Lab capabilities expose actions only to an authorized actor on the authoritative version', async () => {
+  const {service}=fixture();
+  const draft=await service.createDraft({careProfileId:'CP-1',lineUserId:'U-OWNER',input:draftInput()});
+  await service.confirmDraft({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-OWNER'});
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-OWNER'})).mutationCapabilities,
+    {canCreateCorrection:true,canVoid:true});
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-VIEW'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
 });
 
 test('concurrent correction requests serialize and only one next version is created', async () => {
@@ -406,6 +424,66 @@ test('normal list selects only the latest confirmed correction version', async (
   assert.equal(normal.items.length,1);assert.equal(normal.items[0].versionNo,2);
   const history=await service.listReports({careProfileId:'CP-1',lineUserId:'U-OWNER',includeHistory:true});
   assert.deepEqual(history.items.map((item)=>item.versionNo).sort(),[1,2]);
+});
+
+test('voiding the latest correction never resurrects V1 and duplicate void appends one event', async () => {
+  const { service, state } = fixture();
+  const first = await service.createDraft({ careProfileId:'CP-1', lineUserId:'U-OWNER', input:draftInput() });
+  await service.confirmDraft({ careProfileId:'CP-1', reportId:first.reportId, lineUserId:'U-OWNER' });
+  const second = await service.createCorrectionDraft({
+    careProfileId:'CP-1', reportId:first.reportId, lineUserId:'U-OWNER', reason:'แก้ไขค่า',
+  });
+  await service.confirmDraft({ careProfileId:'CP-1', reportId:second.reportId, lineUserId:'U-OWNER' });
+  const once = await service.voidReport({
+    careProfileId:'CP-1', reportId:second.reportId, lineUserId:'U-OWNER', reason:'ฉบับแก้ไขไม่ถูกต้อง',
+  });
+  const twice = await service.voidReport({
+    careProfileId:'CP-1', reportId:second.reportId, lineUserId:'U-OWNER', reason:'retry',
+  });
+  assert.equal(once.status, 'voided'); assert.equal(twice.status, 'voided');
+  assert.equal((await service.listReports({ careProfileId:'CP-1', lineUserId:'U-OWNER' })).items.length, 0);
+  const history = await service.listReports({ careProfileId:'CP-1', lineUserId:'U-OWNER', includeHistory:true });
+  assert.deepEqual(history.items.map((item) => [item.versionNo, item.status, item.isCurrent]), [
+    [2, 'voided', false], [1, 'confirmed', false],
+  ]);
+  assert.equal(state().events.filter((event) => event.report_id === second.reportId
+    && event.event_type === 'voided').length, 1);
+});
+
+test('Center-authored Lab correction and void remain manager/owner-only across the correction lifecycle', async () => {
+  db.resetAll();
+  await db.Residents.insert({ resident_id:'RES-1', care_profile_id:'CP-1', center_id:'CTR-1', status:'active' });
+  for (const [staffId, lineUserId, role] of [
+    ['STF-1', 'U-CENTER-STAFF', 'staff'], ['STF-2', 'U-CENTER-MANAGER', 'manager'],
+    ['STF-3', 'U-CENTER-OWNER', 'owner'],
+  ]) await db.CenterStaff.insert({ staff_id:staffId, line_user_id:lineUserId, center_id:'CTR-1', role, status:'active' });
+  const { service } = fixture();
+  const draft = await service.createDraft({
+    careProfileId:'CP-1', lineUserId:'U-CENTER-STAFF', centerId:'CTR-1', input:draftInput(),
+  });
+  await service.confirmDraft({
+    careProfileId:'CP-1', reportId:draft.reportId, lineUserId:'U-CENTER-MANAGER', centerId:'CTR-1',
+  });
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-CENTER-STAFF',centerId:'CTR-1'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-CENTER-MANAGER',centerId:'CTR-1'})).mutationCapabilities,
+    {canCreateCorrection:true,canVoid:true});
+  await assert.rejects(service.createCorrectionDraft({
+    careProfileId:'CP-1', reportId:draft.reportId, lineUserId:'U-OWNER', reason:'ไม่ควรผ่าน',
+  }), { code:'ACCESS_DENIED' });
+  const correction = await service.createCorrectionDraft({
+    careProfileId:'CP-1', reportId:draft.reportId, lineUserId:'U-CENTER-MANAGER', centerId:'CTR-1', reason:'แก้ไข',
+  });
+  await assert.rejects(service.confirmDraft({
+    careProfileId:'CP-1', reportId:correction.reportId, lineUserId:'U-OWNER',
+  }), { code:'ACCESS_DENIED' });
+  await service.confirmDraft({
+    careProfileId:'CP-1', reportId:correction.reportId, lineUserId:'U-CENTER-MANAGER', centerId:'CTR-1',
+  });
+  assert.equal((await service.voidReport({
+    careProfileId:'CP-1', reportId:correction.reportId, lineUserId:'U-CENTER-OWNER',
+    centerId:'CTR-1', reason:'ยกเลิก',
+  })).status, 'voided');
 });
 
 test('draft visibility is restricted while confirmed reads are available to view-only caregiver', async () => {
