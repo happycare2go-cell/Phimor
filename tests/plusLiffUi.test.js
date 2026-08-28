@@ -32,17 +32,17 @@ test('Plus UI ซ่อนเมื่อ Plus disabled หรือไม่ม
   assert.equal(plusUI.isInternalEntitlement({ status: 'basic', plus: false }), false);
 });
 
-test('Plus UI แสดงเฉพาะ active internal entitlement จาก backend', () => {
+test('Plus UI แสดง active entitlement ที่ backend อนุมัติ รวม payment entitlement', () => {
   assert.equal(plusUI.isInternalEntitlement({ status: 'active', plus: true, source: 'internal' }), true);
-  assert.equal(plusUI.isInternalEntitlement({ status: 'active', plus: true, source: 'payment' }), false);
+  assert.equal(plusUI.isInternalEntitlement({ status: 'active', plus: true, source: 'payment' }), true);
   assert.equal(plusUI.isInternalEntitlement({ status: 'expired', plus: true, source: 'internal' }), false);
 });
 
-test('Family LIFF มี panel ทดสอบที่ซ่อนเป็นค่าเริ่มต้นและไม่มีราคา/สมัคร', () => {
+test('Family LIFF แยก Plus AI panel จาก central payment offer', () => {
   const panel = familyHtml.match(/<section class="card plus-panel"[\s\S]*?<\/section>/)?.[0] || '';
   assert.match(panel, /id="plusPanel"[^>]*hidden/);
-  assert.match(panel, /พี่หมอ Plus — ทดสอบภายใน/);
-  assert.match(panel, /INTERNAL TEST/);
+  assert.match(panel, /พี่หมอ Plus/);
+  assert.match(panel, />PLUS</);
   assert.doesNotMatch(panel, /59\s*บาท|สมัคร/);
 });
 

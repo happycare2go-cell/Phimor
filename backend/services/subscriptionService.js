@@ -1,7 +1,7 @@
 const { Centers, CenterStaff, Residents, CareProfiles, audit, now } = require('../db');
 const notificationService = require('./notificationService');
-const { projectCenter } = require('./centerProjection');
 const { formatThaiDateTime } = require('../utils/thaiDate');
+const { displayIdentity, maskedInternalReference } = require('../utils/safeIdentity');
 
 const DAY_MS = 86400000;
 
@@ -82,7 +82,19 @@ async function getAdminCenterDetails(centerId) {
   const residents = await Residents.findWhere((r) => r.center_id === centerId);
   const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
   const profiles = await CareProfiles.findWhere((p) => profileIds.has(p.care_profile_id));
-  return { center: projectCenter(center), entitlement: entitlement(center), staff, residents, profiles };
+  const owner = staff.find((row) => row.role === 'owner' && row.line_user_id === center.owner_line_id) || staff.find((row) => row.role === 'owner');
+  return {
+    center:{
+      centerId:center.center_id, name:center.name, status:center.status,
+      address:center.address || '', contactPhone:center.contact_phone || '',
+      ownerIdentity:displayIdentity({ displayName:owner?.display_name, lineUserId:center.owner_line_id }),
+      reference:maskedInternalReference(center.center_id, 'ศูนย์'),
+    },
+    entitlement:entitlement(center),
+    staff:staff.map((row) => ({ staffId:row.staff_id, role:row.role, status:row.status || 'active', displayIdentity:displayIdentity({ displayName:row.display_name, lineUserId:row.line_user_id }) })),
+    residents:residents.map((row) => ({ residentId:row.resident_id, displayName:row.full_name, room:row.room || null, status:row.status, careProfileLinked:Boolean(row.care_profile_id) })),
+    profiles:profiles.map((row) => ({ careProfileId:row.care_profile_id, displayName:row.patient_name, status:row.status })),
+  };
 }
 
 module.exports = { entitlement, setSubscription, sendExpiryReminders, getAdminCenterDetails };

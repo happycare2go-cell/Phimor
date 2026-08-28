@@ -118,7 +118,12 @@ function createDoctorVisitsRouter(overrides = {}) {
       || !onlyFields(req.body || {}, new Set())) {
       return res.status(400).json({ status: 'unavailable', errorCode: 'INVALID_INPUT' });
     }
-    const decision = limiter.checkAndRecord(`doctor-visit-ai:${req.user.lineUserId}`, limit, windowMs);
+    let decision;
+    try {
+      decision = await limiter.checkAndRecord(
+        `doctor-visit-ai:${req.user.lineUserId}`, limit, windowMs, { domain:'doctor_visit_ai' }
+      );
+    } catch (_) { return doctorVisitError(res, new Error('rate limit unavailable')); }
     res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
     if (!decision.allowed) {
       res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));

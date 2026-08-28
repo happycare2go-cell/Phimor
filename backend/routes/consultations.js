@@ -131,11 +131,17 @@ function createConsultationsRouter(overrides = {}) {
     const safety=classifyConsultationSafety(req.body.question);
     if(safety.action!=='pharmacist_consultation_eligible')return res.status(403).json(safety);
     try{
-      rates.requireCheckout(req.user.lineUserId,req.consultationConfig);
+      await rates.requireCheckout(req.user.lineUserId,req.consultationConfig);
       const provider=overrides.paymentProvider||createConsultationPaymentProvider(overrides.paymentProviderOptions);
       const result=await checkout.prepareCheckout({lineUserId:req.user.lineUserId,careProfileId:req.body.careProfileId,initialQuestion:req.body.question,termsAccepted:true,termsVersion:req.body.termsVersion,provider,config:req.consultationConfig});
-      return res.status(201).json({status:result.status,orderId:result.orderId,amountMinor:result.amountMinor,currency:result.currency,durationMinutes:result.durationMinutes,termsVersion:result.termsVersion,payment:result.paymentInstructions});
+      return res.status(result.resumed ? 200 : 201).json({status:result.status,orderId:result.orderId,amountMinor:result.amountMinor,currency:result.currency,durationMinutes:result.durationMinutes,termsVersion:result.termsVersion,payment:result.paymentInstructions,resumed:result.resumed===true});
     }catch(error){return consultationError(res,error);}
+  }));
+
+  router.get('/orders/current',asyncHandler(async(req,res)=>{
+    if(!IDENTIFIER_PATTERN.test(req.query.careProfileId||''))return res.status(400).json({status:'invalid_request',errorCode:'INVALID_CARE_PROFILE_ID'});
+    try{return res.json(await paymentStatus.getCurrent({careProfileId:req.query.careProfileId,lineUserId:req.user.lineUserId}));}
+    catch(error){return consultationError(res,error);}
   }));
 
   router.get('/orders/:orderId/status',asyncHandler(async(req,res)=>{
@@ -168,7 +174,7 @@ function createConsultationsRouter(overrides = {}) {
       return res.status(400).json({ status:'invalid_request', errorCode:'UNSUPPORTED_FIELD' });
     }
     try {
-      rates.requireMessage({caseId:req.params.caseId,actorType:'customer',actorId:req.user.lineUserId},req.consultationConfig);
+      await rates.requireMessage({caseId:req.params.caseId,actorType:'customer',actorId:req.user.lineUserId},req.consultationConfig);
       const result = await messages.sendMessage({
         caseId:req.params.caseId,
         actor:{ type:'customer', lineUserId:req.user.lineUserId },

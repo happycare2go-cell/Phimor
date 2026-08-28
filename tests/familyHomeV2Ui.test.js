@@ -154,10 +154,20 @@ test('upcoming appointment appears only as an action and recent activity contain
   assert.ok(recent.length <= 3);
   assert.ok(actions.some((item) => item.kind === 'appointment'));
   assert.ok(recent.every((item) => item.destination !== 'appointments'));
-  assert.ok(recent.some((item) => item.title === 'อัปเดต Care Profile ล่าสุด'));
+  assert.ok(recent.some((item) => item.title === 'อัปเดต Care Profile'));
+  assert.match(recent[0].detail, / · \d{2}:\d{2}$/);
   assert.equal((html.match(/id="upcomingList"/g) || []).length, 1);
   assert.ok(html.indexOf('id="upcomingList"') > html.indexOf('id="view-record"'));
   assert.doesNotMatch(source, /\/api\/activity|event timeline|activity table/i);
+});
+
+test('recent activity uses one light row without nested action-card styling', () => {
+  assert.match(source, /row\.className='family-recent-item'/);
+  assert.match(source, /family-recent-item__icon/);
+  assert.doesNotMatch(source, /row\.className='family-action family-recent-item'/);
+  assert.match(css, /\.family-recent-list\{display:grid;gap:7px\}/);
+  assert.match(css, /\.family-recent-item\{[^}]*min-height:52px[^}]*border:1px solid #e6eaf2/);
+  assert.match(css, /\.family-recent-item__icon\{[^}]*width:30px[^}]*height:30px[^}]*border-radius:50%/);
 });
 
 test('profile switching clears profile-scoped UI before refreshing and modules retain stale guards', () => {

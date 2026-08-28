@@ -15,7 +15,8 @@
   ]);
 
   function isInternalEntitlement(value) {
-    return Boolean(value && value.status === 'active' && value.plus === true && value.source === 'internal');
+    return Boolean(value && value.status === 'active' && value.plus === true
+      && ['internal', 'promotion', 'payment'].includes(value.source));
   }
 
   function safeText(value, fallback = '') {

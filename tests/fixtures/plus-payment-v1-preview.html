@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <title>PHIMOR Plus V1 mobile review</title>
+  <link rel="stylesheet" href="../../liff-app/assets/mascot-ui.css">
+  <link rel="stylesheet" href="../../liff-app/family/lab-results-ui.css">
+  <link rel="stylesheet" href="../../liff-app/family/plus-payment-ui.css">
+  <style>
+    :root{--navy:#1c2b64;--gold:#deb14e;--gray:#5a6580;--bg:#f5f7fa;--ice:#e8ecf7}
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;overflow-x:hidden}
+    body{font-family:'Sarabun','Noto Sans Thai',system-ui,sans-serif;background:var(--bg);color:#1a1a2e;font-size:15px}
+    .preview-shell{width:100%;min-height:100vh;padding-bottom:max(20px,env(safe-area-inset-bottom))}
+    .hdr{position:sticky;top:0;z-index:2;background:var(--navy);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:11px}
+    .hdr__back{width:44px;height:44px;border:0;border-radius:12px;background:rgba(255,255,255,.12);color:#fff;font-size:22px}
+    .hdr__title{font-size:17px;font-weight:800}.hdr__sub{font-size:11px;opacity:.82;margin-top:2px}
+    main{padding:14px}.card{background:#fff;border-radius:14px;padding:16px;margin:0 0 12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .btn{display:block;width:100%;min-height:44px;padding:12px;border-radius:9px;border:0;font:700 14px inherit;text-align:center}
+    .btn-primary{background:var(--navy);color:#fff}.btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+    .screen{display:none}.screen.is-active{display:block}.section-kicker{font-size:11px;font-weight:800;color:#8a6200;letter-spacing:.02em}
+    .section-title{margin:4px 0 3px;color:var(--navy);font-size:20px}.section-sub{margin:0 0 14px;color:var(--gray);font-size:12px;line-height:1.55}
+    .lab-summary{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.lab-summary h3{margin:0;color:var(--navy);font-size:16px}
+    .confirmed{padding:4px 8px;border-radius:999px;background:#e7f7ee;color:#185b38;font-size:11px;font-weight:800}
+    .lab-meta{margin-top:5px;color:var(--gray);font-size:12px}.lab-result{margin:13px 0 0;padding:12px;border-radius:12px;background:#f7f8fb}
+    .lab-result strong{display:block}.lab-result__value{font-size:22px;font-weight:900;color:var(--navy);margin:4px 0}.source-flag{font-size:11px;color:#765516;font-weight:800}
+    .locked-callout{display:flex;gap:10px;align-items:flex-start;padding:12px;border-radius:12px;background:#fff8df;margin:12px 0}
+    .locked-callout__icon{flex:0 0 32px;width:32px;height:32px;border-radius:10px;display:grid;place-items:center;background:#fff;color:#795b00}
+    .locked-callout p{margin:0;color:#5e4a0e;font-size:12px;line-height:1.6}.locked-callout strong{display:block;color:#463500}
+    .demo-qr{width:218px;aspect-ratio:1;margin:0 auto;border:10px solid #fff;border-radius:10px;box-shadow:0 0 0 1px #d9deea;background:repeating-conic-gradient(#111 0 25%,#fff 0 50%) 0/18px 18px;position:relative}
+    .demo-qr:after{content:'ตัวอย่าง';position:absolute;inset:78px 44px;display:grid;place-items:center;background:#fff;border:4px solid #111;font-size:12px;font-weight:900}
+    .reference{text-align:center;font-size:11px;color:var(--gray);margin:4px 0 0}.timeline{display:flex;gap:8px;justify-content:center;align-items:center;color:#6a7182;font-size:11px}
+    .timeline b{display:block;width:8px;height:8px;border-radius:50%;background:#d5dae5}.timeline b.on{background:#1d7550}
+    .success-mark{width:68px;height:68px;border-radius:50%;display:grid;place-items:center;margin:2px auto 10px;background:#e5f7ed;color:#176b43;font-size:34px;font-weight:900}
+    .center{text-align:center}.notice{padding:11px;border-radius:12px;background:#eef3ff;color:#26396d;font-size:12px;line-height:1.6}
+    .feature-return{border-left:4px solid var(--gold)}.feature-return h3{margin:0;color:var(--navy)}.feature-return p{font-size:12px;color:var(--gray);line-height:1.6}
+    .membership-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.membership-head h3{margin:3px 0;color:var(--navy)}
+    .period-box{padding:12px;border-radius:12px;background:#f6f7fb;font-size:12px;line-height:1.65}.period-box strong{color:var(--navy)}
+    .history-item{padding:13px 0;border-bottom:1px solid #e7eaf1}.history-item:last-child{border:0}.history-item__top{display:flex;justify-content:space-between;gap:10px;font-weight:800;color:var(--navy)}
+    .history-item p{margin:4px 0 0;color:var(--gray);font-size:11px;line-height:1.55}.status-text{font-size:11px;color:#176b43;font-weight:800}
+    .safe-note{font-size:11px;color:var(--gray);line-height:1.55;margin:0}.actions{display:grid;gap:8px;margin-top:4px}
+    @media(max-width:390px){main{padding:12px}.card{padding:14px}.plus-commerce-panel{padding:14px}.section-title{font-size:19px}}
+  </style>
+</head>
+<body>
+  <div class="preview-shell">
+    <header class="hdr"><button class="hdr__back" aria-label="กลับ">‹</button><div><div class="hdr__title" id="headerTitle">พี่หมอ Plus</div><div class="hdr__sub">ตัวอย่างข้อมูลสำหรับตรวจ UX เท่านั้น</div></div></header>
+    <main>
+      <section class="screen" data-screen="p1">
+        <p class="section-kicker">ผลตรวจ</p><h1 class="section-title">ผลตรวจล่าสุด</h1><p class="section-sub">ข้อมูลที่ยืนยันแล้วของคุณสมพร</p>
+        <article class="card"><div class="lab-summary"><div><h3>รายงานผลตรวจเลือด</h3><div class="lab-meta">25 ส.ค. 2569 · โรงพยาบาลตัวอย่าง</div></div><span class="confirmed">ยืนยันแล้ว</span></div><div class="lab-result"><strong>Hemoglobin</strong><div class="lab-result__value">12.4 g/dL</div><span>ช่วงอ้างอิง 12.0–16.0</span></div><div class="locked-callout"><span class="locked-callout__icon">✦</span><p><strong>ให้พี่หมอช่วยอธิบาย</strong>อธิบายข้อมูลที่ยืนยันแล้วด้วย AI โดยไม่เปลี่ยนผลตรวจต้นฉบับ</p></div><button class="btn btn-primary">ให้พี่หมอช่วยอธิบาย</button></article>
+      </section>
+      <section class="screen" data-screen="p2"><article class="card plus-commerce-panel"><div class="plus-commerce-heading"><div><span class="plus-plan-chip">พี่หมอ Free</span><h2>ใช้ฟีเจอร์ Plus</h2><p>เลือกได้ตามต้องการ ไม่มีการตัดเงินอัตโนมัติ</p></div></div><div class="plus-commerce-content"><p class="plus-context-label">ต้องการใช้ “อธิบายผลตรวจด้วย AI”?</p><p>ฟีเจอร์นี้รวมอยู่ในพี่หมอ Plus</p><button class="btn btn-primary">ดูพี่หมอ Plus</button><button class="btn btn-outline">ไว้ก่อน</button></div></article></section>
+      <section class="screen" data-screen="p3"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><span class="plus-plan-chip">พี่หมอ Plus</span><h3 class="plus-offer-title">พี่หมอ Plus</h3><div class="plus-offer-price">59 บาท / 30 วัน</div><p class="plus-commerce__lead center">พี่หมอช่วยสรุป ช่วยเตรียม และช่วยจำเรื่องสุขภาพให้คุณ</p><ul class="plus-benefits"><li>อธิบายผลตรวจด้วย AI</li><li>เตรียมคำถามก่อนพบแพทย์</li><li>ช่วยจัดระเบียบสิ่งที่หมอบอก</li><li>สรุปข้อมูลสุขภาพที่บันทึกไว้และสิ่งที่เปลี่ยนในรายการยา</li></ul><p class="plus-plan-rule">ใช้งาน Plus ได้ 30 วันนับจากวันที่ชำระสำเร็จ</p><p class="plus-plan-rule">ครบกำหนดแล้วสามารถต่ออายุได้โดยชำระอีกครั้ง</p><p class="plus-no-renew">ไม่มีการตัดเงินอัตโนมัติ</p><button class="btn btn-primary">สมัครพี่หมอ Plus — 59 บาท</button><button class="btn btn-outline">ไว้ก่อน</button></div></article></section>
+      <section class="screen" data-screen="p4"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><span class="plus-plan-chip">รอชำระเงิน</span><h3>ชำระพี่หมอ Plus</h3><div class="plus-offer-price">59 บาท / 30 วัน</div><p class="plus-payment-state">สแกน QR เพื่อชำระเงิน รายการเดิมจะกลับมาเมื่อเปิดหน้านี้อีกครั้ง</p><div class="demo-qr" role="img" aria-label="QR ตัวอย่าง ไม่สามารถชำระเงินจริง"></div><p class="reference">อ้างอิงรายการ PLUS-••••-1042</p><p class="plus-no-renew">ไม่มีการตัดเงินอัตโนมัติ</p><button class="btn btn-outline">ตรวจสอบสถานะการชำระเงิน</button></div></article></section>
+      <section class="screen" data-screen="p5"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><span class="plus-plan-chip">กำลังตรวจสอบ</span><h3>กำลังตรวจสอบการชำระเงิน</h3><p class="plus-payment-state">ระบบได้รับสถานะรายการแล้วและกำลังยืนยันกับผู้ให้บริการ กรุณาอย่าชำระซ้ำ</p><div class="timeline"><b class="on"></b><span>สร้างรายการ</span><b class="on"></b><span>ตรวจสอบ</span><b></b><span>เปิดสิทธิ์</span></div><p class="safe-note center">คุณปิดหน้านี้ได้ ระบบจะตรวจสอบรายการเดิมต่อโดยไม่สร้างรายการใหม่</p><button class="btn btn-outline">ตรวจสอบอีกครั้ง</button></div></article></section>
+      <section class="screen" data-screen="p6"><article class="card plus-commerce-panel"><div class="plus-commerce-content center"><div class="success-mark">✓</div><span class="plus-plan-chip plus-plan-chip--active">พี่หมอ Plus</span><h3>เปิดใช้พี่หมอ Plus แล้ว</h3><p class="plus-commerce__lead">ชำระสำเร็จ 59 บาท<br>ใช้งานได้ถึง 27 ก.ย. 2569</p><p class="plus-no-renew">ไม่มีการตัดเงินอัตโนมัติ</p><button class="btn btn-primary">กลับไปอธิบายผลตรวจ</button></div></article></section>
+      <section class="screen" data-screen="p7"><p class="section-kicker">ผลตรวจ</p><h1 class="section-title">พี่หมอช่วยอธิบาย</h1><article class="card feature-return"><h3>Hemoglobin 12.4 g/dL</h3><p>ข้อมูลนี้วัดปริมาณฮีโมโกลบินในเลือด โดยผลและช่วงอ้างอิงด้านบนมาจากรายงานที่ยืนยันแล้ว</p><div class="notice"><strong>ข้อควรทราบ</strong><br>คำอธิบายนี้ช่วยทำความเข้าใจข้อมูล ไม่ใช่การวินิจฉัยหรือคำแนะนำการรักษา</div></article><article class="card"><h3>คำถามที่อาจถามแพทย์</h3><p class="safe-note">ช่วงอ้างอิงนี้เหมาะกับบริบทของฉันหรือไม่ และมีข้อมูลใดที่ควรติดตามเพิ่มเติม?</p></article></section>
+      <section class="screen" data-screen="p8"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><div class="membership-head"><div><span class="plus-plan-chip plus-plan-chip--active">พี่หมอ Plus</span><h3>พี่หมอ Plus กำลังใช้งาน</h3></div><span class="status-text">ใช้งานได้</span></div><div class="period-box">เริ่มใช้ 29 ส.ค. 2569<br><strong>ใช้งานได้ถึง 28 ก.ย. 2569</strong></div><p class="plus-no-renew">ไม่มีการตัดเงินอัตโนมัติ</p><div class="actions"><button class="btn btn-primary">ต่ออายุ — 59 บาท / 30 วัน</button><button class="btn btn-outline">ประวัติการชำระ Plus</button></div></div></article></section>
+      <section class="screen" data-screen="p9"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><span class="plus-plan-chip plus-plan-chip--active">ต่ออายุก่อนหมดอายุ</span><h3>รักษาวันที่เหลือไว้ครบถ้วน</h3><div class="plus-offer-price">59 บาท / 30 วัน</div><div class="period-box">สิทธิ์ปัจจุบันถึง <strong>20 ก.ย. 2569</strong><br>เมื่อชำระสำเร็จ สิทธิ์ใหม่จะต่อถึง <strong>20 ต.ค. 2569</strong></div><p class="plus-plan-rule">30 วันใหม่เริ่มต่อจากวันหมดอายุปัจจุบัน ไม่ตัดวันที่เหลือ</p><p class="plus-no-renew">ไม่มีการตัดเงินอัตโนมัติ</p><button class="btn btn-primary">ต่ออายุพี่หมอ Plus — 59 บาท</button><button class="btn btn-outline">ไว้ก่อน</button></div></article></section>
+      <section class="screen" data-screen="p10"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><span class="plus-plan-chip">หมดอายุแล้ว</span><h3>พี่หมอ Plus หมดอายุแล้ว</h3><p class="plus-commerce__lead">ข้อมูลสุขภาพที่คุณบันทึกยังดูได้ตามปกติ ฟีเจอร์ AI จะกลับมาใช้ได้หลังชำระสำเร็จ</p><div class="plus-offer-price">59 บาท / 30 วัน</div><p class="plus-plan-rule">สิทธิ์ใหม่เริ่มนับ 30 วันจากเวลาที่ชำระสำเร็จ</p><p class="plus-no-renew">ไม่มีการตัดเงินอัตโนมัติ</p><button class="btn btn-primary">ต่ออายุ 59 บาท / 30 วัน</button><button class="btn btn-outline">ไว้ก่อน</button></div></article></section>
+      <section class="screen" data-screen="p11"><article class="card plus-commerce-panel"><div class="plus-commerce-content"><h3>ประวัติการชำระ Plus</h3><p class="safe-note">แสดงเฉพาะรายการของบัญชีนี้ โดยไม่แสดงรหัสภายในของผู้ให้บริการ</p><div class="history-item"><div class="history-item__top"><span>59 บาท</span><span class="status-text">เปิดสิทธิ์แล้ว</span></div><p>29 ส.ค. 2569<br>สิทธิ์ 29 ส.ค. – 28 ก.ย. 2569</p></div><div class="history-item"><div class="history-item__top"><span>59 บาท</span><span class="status-text">เปิดสิทธิ์แล้ว</span></div><p>30 ก.ค. 2569<br>สิทธิ์ 30 ก.ค. – 29 ส.ค. 2569</p></div><button class="btn btn-outline">กลับไปหน้าสิทธิ์ Plus</button></div></article></section>
+    </main>
+  </div>
+  <script>
+    const allowed = new Set(['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11']);
+    function renderPreview(){
+      const requested = location.hash.slice(1).toLowerCase();
+      const state = allowed.has(requested) ? requested : 'p1';
+      document.querySelectorAll('.screen').forEach((node) => node.classList.toggle('is-active', node.dataset.screen === state));
+      const titles = {p1:'ผลตรวจ',p2:'พี่หมอ Plus',p3:'พี่หมอ Plus',p4:'ชำระพี่หมอ Plus',p5:'ตรวจสอบการชำระเงิน',p6:'สมัคร Plus สำเร็จ',p7:'อธิบายผลตรวจ',p8:'สิทธิ์พี่หมอ Plus',p9:'ต่ออายุพี่หมอ Plus',p10:'ต่ออายุพี่หมอ Plus',p11:'ประวัติการชำระ Plus'};
+      document.getElementById('headerTitle').textContent = titles[state];
+      document.title = `${state.toUpperCase()} · ${titles[state]}`;
+    }
+    addEventListener('hashchange', renderPreview); renderPreview();
+  </script>
+</body>
+</html>

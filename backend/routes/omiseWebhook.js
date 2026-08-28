@@ -1,11 +1,11 @@
 const express=require('express');
-const {createConsultationOmiseWebhookService}=require('../services/consultationOmiseWebhookService');
+const {createOmiseWebhookDispatchService}=require('../services/omiseWebhookDispatchService');
 
 function createOmiseWebhookRouter(overrides={}){
   const router=express.Router();
   router.post('/',async(req,res)=>{
     try{
-      const service=overrides.webhookService||createConsultationOmiseWebhookService(overrides.dependencies);
+      const service=overrides.webhookService||createOmiseWebhookDispatchService(overrides.dependencies);
       const result=await service.handle({rawBody:req.body,headers:req.headers});
       if(!result.acknowledged)return res.status(503).json({status:'retry_required'});
       return res.status(200).json({status:result.status==='processed'?'accepted':'acknowledged',duplicate:result.duplicate||false});

@@ -45,11 +45,21 @@
     return date.toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'});
   }
 
+  function formatActivityDate(value){
+    if(!value)return '';
+    const date=new Date(value);
+    if(Number.isNaN(date.getTime()))return '';
+    const options={timeZone:'Asia/Bangkok'};
+    const datePart=date.toLocaleDateString('th-TH',{...options,day:'numeric',month:'short',year:'numeric'});
+    const timePart=date.toLocaleTimeString('th-TH',{...options,hour:'2-digit',minute:'2-digit',hour12:false});
+    return `${datePart} · ${timePart}`;
+  }
+
   function buildRecentItems(profileEntry){
     if(!profileEntry)return [];
     const items=[];
     const updatedAt=profileEntry.profile?._updatedAt||profileEntry.profile?.updated_at||null;
-    if(updatedAt)items.push({destination:'health',icon:'✓',title:'อัปเดต Care Profile ล่าสุด',detail:formatDate(updatedAt)});
+    if(updatedAt)items.push({destination:'health',icon:'✓',title:'อัปเดต Care Profile',detail:formatActivityDate(updatedAt)});
     return items.slice(0,3);
   }
 
@@ -78,8 +88,8 @@
       clearNode(recentList);
       if(!items.length){appendText(doc,recentList,'div','family-action-empty','ยังไม่มีกิจกรรมล่าสุดที่แสดงได้จากข้อมูลปัจจุบัน');return;}
       items.forEach((item)=>{
-        const row=doc.createElement('button');row.type='button';row.className='family-action family-recent-item';row.dataset.destination=item.destination;
-        appendText(doc,row,'span','family-action__icon',item.icon);
+        const row=doc.createElement('button');row.type='button';row.className='family-recent-item';row.dataset.destination=item.destination;
+        appendText(doc,row,'span','family-recent-item__icon',item.icon);
         const copy=doc.createElement('span');copy.className='family-recent-item__copy';appendText(doc,copy,'span','family-recent-item__title',item.title);appendText(doc,copy,'span','family-recent-item__detail',item.detail);row.appendChild(copy);
         row.addEventListener('click',()=>onNavigate(item.destination));recentList.appendChild(row);
       });

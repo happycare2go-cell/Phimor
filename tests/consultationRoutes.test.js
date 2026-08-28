@@ -259,6 +259,34 @@ test('unexpected database errors become a generic safe unavailable envelope', as
   assert.doesNotMatch(JSON.stringify(operationalEvents),/consultation_messages|PRIVATE_SQL_STACK|ขอข้อมูลเพิ่ม|U-PHARM|CASE-1/);
 });
 
+test('current checkout discovery is scoped to authenticated Family actor and selected Care Profile', async () => {
+  let seen;
+  await withApi({family:{
+    readService:reads(),
+    paymentStatusService:{async getCurrent(input){seen=input;return {status:'payment_pending',orderId:'ORDER-1',payment:{method:'promptpay'}};}},
+  }},async(api)=>{
+    const response=await api('/api/consultations/orders/current?careProfileId=CP-SELECTED',{},'U-FAMILY');
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).orderId,'ORDER-1');
+  });
+  assert.deepEqual(seen,{lineUserId:'U-FAMILY',careProfileId:'CP-SELECTED'});
+});
+
+test('reused active checkout returns 200 and does not expose provider internals', async () => {
+  await withApi({family:{
+    readService:reads(),
+    checkoutService:{async prepareCheckout(){return {resumed:true,status:'payment_pending',orderId:'ORDER-1',amountMinor:10000,currency:'THB',durationMinutes:1440,termsVersion:'consult-v1',paymentInstructions:{method:'promptpay',qrImageUrl:'https://cdn.omise.co/qr.png'}};}},
+    rateLimitService:{requireCheckout(){}},
+    paymentProvider:{},
+  }},async(api)=>{
+    const response=await api('/api/consultations/checkout',{method:'POST',body:JSON.stringify({careProfileId:'CP-1',question:'ขอคำปรึกษาเรื่องยา',termsAccepted:true,termsVersion:'consult-v1'})},'U-FAMILY');
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.equal(body.resumed,true);assert.equal(body.orderId,'ORDER-1');
+    assert.equal(JSON.stringify(body).includes('provider_checkout_id'),false);
+  });
+});
+
 test('Family realtime ticket and read receipt routes derive customer identity server-side',async()=>{
   const seen=[];
   await withApi({family:{readService:reads(),realtimeAccessService:{async issueFamilyTicket(input){seen.push(['ticket',input]);return {ticket:'SHORT',expiresAt:'2026-08-27T10:01:00Z',websocketPath:'/api/consultations/realtime'};}},readReceiptService:{async markRead(input){seen.push(['read',input]);return {reader:'customer',sequence:4,changed:true};}}}},async(api)=>{

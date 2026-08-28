@@ -60,14 +60,103 @@ test('ลายเซ็น LINE แบบ HMAC-SHA256 ถูกต้องผ�
   assert.strictEqual(lineSdk.validateSignature(rawBody, secret, 'invalid-signature'), false);
 });
 
-test('LINE redelivery ที่มี webhookEventId เดิมต้องบันทึกและประมวลผลครั้งเดียว', async () => {
-  const event = { webhookEventId:'EVT_DUPLICATE', type:'message', replyToken:'RT_DUP',
-    message:{ type:'text', text:'สวัสดี' }, source:{ type:'group', groupId:'G_UNKNOWN', userId:'U_TEST' } };
-  assert.strictEqual((await postWebhook([event])).status, 200);
-  assert.strictEqual((await postWebhook([event])).status, 200);
+test('LINE join redelivery ที่มี webhookEventId เดิมต้องส่ง onboarding ครั้งเดียว', async () => {
+  const event = { webhookEventId:'EVT_DUPLICATE', type:'join',
+    deliveryContext:{ isRedelivery:false }, source:{ type:'group', groupId:'G_UNKNOWN' } };
+  const redelivery = { ...event, deliveryContext:{ isRedelivery:true } };
+  const [first, second] = await Promise.all([postWebhook([event]), postWebhook([redelivery])]);
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(second.status, 200);
   const rows = await db.WebhookInbox.findWhere((row) => row.event_key === 'EVT_DUPLICATE');
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(rows[0].attempts, 1);
+  const onboarding = lineClient.getSentLog().filter((item) => item.type === 'push'
+    && item.to === 'G_UNKNOWN' && item.messages[0].text.includes('พี่หมอเข้ากลุ่มแล้ว'));
+  assert.strictEqual(onboarding.length, 1);
+});
+
+test('concurrent webhook workers atomically claim one pending join event', async () => {
+  let pushes = 0;
+  let releasePush;
+  let markStarted;
+  const pushGate = new Promise((resolve) => { releasePush = resolve; });
+  const pushStarted = new Promise((resolve) => { markStarted = resolve; });
+  const originalPush = lineClient.pushMessage;
+  lineClient.pushMessage = async () => {
+    pushes += 1;
+    markStarted();
+    await pushGate;
+    return { ok:true };
+  };
+  try {
+    await db.WebhookInbox.insert({
+      inbox_id:'WH-CONCURRENT', event_key:'EVT-CONCURRENT',
+      event:{ webhookEventId:'EVT-CONCURRENT', type:'join', source:{ type:'group', groupId:'G-CONCURRENT' } },
+      status:'pending', attempts:0, received_at:db.now(),
+    });
+    const firstWorker = require('../backend/routes/webhook').processPendingWebhookEvents();
+    await pushStarted;
+    const secondResult = await require('../backend/routes/webhook').processPendingWebhookEvents();
+    assert.strictEqual(pushes, 1);
+    assert.strictEqual(secondResult.processed, 0);
+    releasePush();
+    await firstWorker;
+    const row = await db.WebhookInbox.findOne((item) => item.inbox_id === 'WH-CONCURRENT');
+    assert.strictEqual(row.status, 'processed');
+    assert.strictEqual(row.attempts, 1);
+  } finally {
+    releasePush();
+    lineClient.pushMessage = originalPush;
+  }
+});
+
+test('onboarding retry reuses one stable LINE retry key', async () => {
+  const retryKeys = [];
+  const originalPush = lineClient.pushMessage;
+  const originalError = console.error;
+  lineClient.pushMessage = async (_to, _messages, options) => {
+    retryKeys.push(options.retryKey);
+    if (retryKeys.length === 1) throw new Error('simulated timeout');
+    return { ok:true };
+  };
+  console.error = () => {};
+  try {
+    await db.WebhookInbox.insert({
+      inbox_id:'WH-RETRY', event_key:'EVT-RETRY',
+      event:{ webhookEventId:'EVT-RETRY', type:'join', source:{ type:'group', groupId:'G-RETRY' } },
+      status:'pending', attempts:0, received_at:db.now(),
+    });
+    await require('../backend/routes/webhook').processPendingWebhookEvents();
+    await require('../backend/routes/webhook').processPendingWebhookEvents();
+    assert.strictEqual(retryKeys.length, 2);
+    assert.strictEqual(retryKeys[0], retryKeys[1]);
+    assert.match(retryKeys[0], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    const row = await db.WebhookInbox.findOne((item) => item.inbox_id === 'WH-RETRY');
+    assert.strictEqual(row.status, 'processed');
+    assert.strictEqual(row.attempts, 2);
+  } finally {
+    console.error = originalError;
+    lineClient.pushMessage = originalPush;
+  }
+});
+
+test('memberJoined alongside join does not send a second onboarding message', async () => {
+  const webhook = require('../backend/routes/webhook');
+  await webhook.processEvent({ webhookEventId:'EVT-JOIN', type:'join', source:{ type:'group', groupId:'G-PAIR' } });
+  await webhook.processEvent({ webhookEventId:'EVT-MEMBER', type:'memberJoined',
+    source:{ type:'group', groupId:'G-PAIR' }, joined:{ members:[{ type:'user', userId:'U-MEMBER' }] } });
+  const onboarding = lineClient.getSentLog().filter((item) => item.type === 'push'
+    && item.to === 'G-PAIR' && item.messages[0].text.includes('พี่หมอเข้ากลุ่มแล้ว'));
+  assert.strictEqual(onboarding.length, 1);
+});
+
+test('distinct legitimate group joins each receive one onboarding message', async () => {
+  const webhook = require('../backend/routes/webhook');
+  await webhook.processEvent({ webhookEventId:'EVT-JOIN-A', type:'join', source:{ type:'group', groupId:'G-A' } });
+  await webhook.processEvent({ webhookEventId:'EVT-JOIN-B', type:'join', source:{ type:'group', groupId:'G-B' } });
+  const onboarding = lineClient.getSentLog().filter((item) => item.type === 'push'
+    && item.messages[0].text.includes('พี่หมอเข้ากลุ่มแล้ว'));
+  assert.deepStrictEqual(onboarding.map((item) => item.to), ['G-A', 'G-B']);
 });
 
 test('Flow เต็มผ่าน HTTP: พนักงานทักในกลุ่ม → ส่งรูปส่วนตัว → ผู้จัดการยืนยัน → ครอบครัวได้รับ', async () => {
@@ -189,6 +278,8 @@ test('เชิญบอทเข้ากลุ่มอย่างเดี�
   assert.strictEqual(updated.group_id, null);
   const prompt = lineClient.getSentLog().find((x) => x.type === 'push' && x.to === 'G_NEW');
   assert.ok(prompt.messages[0].text.includes('STAFF-'));
+  assert.match(prompt.retryKey, /^[0-9a-f-]{36}$/);
+  assert.strictEqual(lineClient.getSentLog().filter((item) => item.type === 'reply').length, 0);
 });
 
 test('ข้อ N4 (แก้ไขแล้ว): Care Profile อิสระส่งรูปแบบ 1-1 ต้องได้ข้อความสุภาพที่เสนอทางเลือก ไม่ใช่ข้อความปฏิเสธทั่วไป', async () => {

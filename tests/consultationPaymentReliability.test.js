@@ -337,7 +337,10 @@ test('malformed consultation rate-limit environment values use conservative defa
   service.checkCheckout('U-1'); service.checkMessage({caseId:'C-1',actorType:'customer',actorId:'U-1'});
   service.checkPharmacistAccept('PH-1');
   service.checkAssistant({caseId:'C-1',pharmacistId:'PH-1'});
-  assert.deepEqual(calls.map((item)=>item.slice(1)),[[3,600000],[10,60000],[10,60000],[5,600000]]);
+  assert.deepEqual(calls.map((item)=>item.slice(1)),[
+    [3,600000,{domain:'consultation'}],[10,60000,{domain:'consultation'}],
+    [10,60000,{domain:'consultation'}],[5,600000,{domain:'consultation'}],
+  ]);
 });
 
 test('durable payment ingestion allowlists metadata and excludes raw payload, secrets and health context', async () => {

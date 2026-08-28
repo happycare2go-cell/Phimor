@@ -473,7 +473,7 @@
     };
   }
 
-  function createController({ doc, session, getCurrentProfile, onPrepareQuestions = null }) {
+  function createController({ doc, session, getCurrentProfile, onPrepareQuestions = null, onUpgradeRequired = null }) {
     const panel = doc.getElementById('labResultsPanel');
     const patient = doc.getElementById('labResultsPatient');
     const entry = doc.getElementById('labResultsEntry');
@@ -490,6 +490,10 @@
       if (!error) return;
       const view = errorView(error, area);
       appendText(doc, parent, 'p', `lab-error lab-error--${view.kind}`, view.message);
+      if (view.kind === 'plus' && typeof onUpgradeRequired === 'function') {
+        const upgrade = appendText(doc, parent, 'button', 'btn btn-gold lab-retry', 'ดูพี่หมอ Plus — 59 บาท / 30 วัน');
+        upgrade.type = 'button'; upgrade.addEventListener('click', onUpgradeRequired); return;
+      }
       if (retry) {
         const button = appendText(doc, parent, 'button', 'btn btn-outline lab-retry', 'ลองใหม่');
         button.type = 'button'; button.addEventListener('click', retry);

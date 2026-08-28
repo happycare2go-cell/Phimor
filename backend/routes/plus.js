@@ -3,6 +3,9 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { loadFeatureFlags } = require('../config/featureFlags');
 const { getPlusEntitlement } = require('../services/plusEntitlementService');
+const { PLUS_CAPABILITY_REGISTRY } = require('../services/plusEntitlementService');
+const { createPlusPaymentOrderService, paymentAvailable } = require('../services/plusPaymentOrderService');
+const { PLUS_PLAN_ID, PLUS_PRICE_MINOR, PLUS_CURRENCY, PLUS_DURATION_DAYS, PLUS_RETURN_TARGETS } = require('../domain/plusPayment');
 const { authorizeCareProfileAccess } = require('../services/careProfileAuthorizationService');
 const { handlePlusRequest, PURPOSES } = require('../services/plusOrchestrationService');
 const { getUpcomingAppointmentById } = require('../services/appointmentSummaryService');
@@ -11,6 +14,7 @@ const rateLimiter = require('../utils/rateLimiter');
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const ASK_FIELDS = new Set(['question', 'purposeHint']);
 const PREPARE_FIELDS = new Set(['question']);
+const CHECKOUT_FIELDS = new Set(['returnTarget', 'idempotencyKey', 'renew']);
 
 function parseRateLimit(value, fallback = 10) {
   const parsed = Number(value);
@@ -19,6 +23,23 @@ function parseRateLimit(value, fallback = 10) {
 
 function unavailable(res, errorCode, status = 503) {
   return res.status(status).json({ status: 'unavailable', errorCode, message: 'Phimor Plus ยังไม่พร้อมใช้งานสำหรับบัญชีนี้' });
+}
+
+function paymentError(res, error) {
+  const status = Number.isInteger(error?.status) ? error.status : 503;
+  const code = /^[A-Z][A-Z0-9_]{2,79}$/.test(error?.code || '') ? error.code : 'PLUS_PAYMENT_UNAVAILABLE';
+  const messages = {
+    PLUS_ALREADY_ACTIVE: 'พี่หมอ Plus ยังใช้งานได้ หากต้องการต่ออายุกรุณาเลือกต่ออายุโดยตรง',
+    PLUS_ORDER_NOT_FOUND: 'ไม่พบรายการพี่หมอ Plus นี้',
+    PLUS_PAYMENT_DISABLED: 'การสมัครพี่หมอ Plus ยังไม่พร้อมใช้งาน',
+    INVALID_RETURN_TARGET: 'ไม่สามารถกลับไปยังฟีเจอร์ที่ขอได้',
+    INVALID_IDEMPOTENCY_KEY: 'ไม่สามารถสร้างรายการซ้ำได้ กรุณาลองใหม่',
+  };
+  return res.status(status).json({
+    status: status >= 500 ? 'unavailable' : 'rejected',
+    errorCode: code,
+    message: messages[code] || 'ดำเนินการพี่หมอ Plus ไม่สำเร็จ กรุณาลองใหม่',
+  });
 }
 
 function validateIdentifier(value) {
@@ -72,6 +93,7 @@ function createPlusRouter(overrides = {}) {
   const appointmentGetter = overrides.getUpcomingAppointmentById || getUpcomingAppointmentById;
   const orchestrate = overrides.handlePlusRequest || handlePlusRequest;
   const limiter = overrides.rateLimiter || rateLimiter;
+  const plusPayments = overrides.plusPaymentService || createPlusPaymentOrderService(overrides.plusPaymentDependencies);
   const limit = parseRateLimit(overrides.rateLimit ?? process.env.PLUS_RATE_LIMIT_PER_5_MINUTES);
   const windowMs = overrides.rateWindowMs || 5 * 60 * 1000;
 
@@ -81,15 +103,72 @@ function createPlusRouter(overrides = {}) {
     if (!req.plusFlags.plus.enabled) return unavailable(res, 'PLUS_DISABLED');
     next();
   });
-  router.use((req, res, next) => {
-    const decision = limiter.checkAndRecord(`plus:${req.user.lineUserId}`, limit, windowMs);
+  router.use(asyncHandler(async (req, res, next) => {
+    let decision;
+    try { decision = await limiter.checkAndRecord(`plus:${req.user.lineUserId}`, limit, windowMs, { domain:'plus_api' }); }
+    catch (_) { return unavailable(res, 'RATE_LIMIT_UNAVAILABLE'); }
     res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
     if (!decision.allowed) {
       res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
       return res.status(429).json({ status: 'unavailable', errorCode: 'PLUS_RATE_LIMITED', message: 'เรียกใช้ Phimor Plus ถี่เกินไป กรุณารอสักครู่' });
     }
     next();
+  }));
+
+  router.get('/offer', (req, res) => {
+    const liveCapabilities = Object.entries(PLUS_CAPABILITY_REGISTRY)
+      .filter(([, value]) => value.status === 'LIVE')
+      .map(([capability]) => capability);
+    return res.json({
+      status: 'available', planId: PLUS_PLAN_ID, name: 'พี่หมอ Plus',
+      amountMinor: PLUS_PRICE_MINOR, currency: PLUS_CURRENCY, durationDays: PLUS_DURATION_DAYS,
+      renewal: 'manual', automaticRenewal: false,
+      paymentAvailable: paymentAvailable(req.plusFlags), liveCapabilities,
+    });
   });
+
+  router.get('/orders/current', asyncHandler(async (req, res) => {
+    try { return res.json(await plusPayments.getCurrent({ lineUserId: req.user.lineUserId })); }
+    catch (error) { return paymentError(res, error); }
+  }));
+
+  router.get('/orders/history', asyncHandler(async (req, res) => {
+    const before = typeof req.query.before === 'string' && req.query.before ? req.query.before : null;
+    if (before && Number.isNaN(new Date(before).getTime())) {
+      return res.status(400).json({ status: 'rejected', errorCode: 'INVALID_HISTORY_CURSOR' });
+    }
+    try {
+      return res.json(await plusPayments.getHistory({
+        lineUserId: req.user.lineUserId, limit: req.query.limit, before,
+      }));
+    } catch (error) { return paymentError(res, error); }
+  }));
+
+  router.get('/orders/:orderId/status', asyncHandler(async (req, res) => {
+    if (!validateIdentifier(req.params.orderId)) {
+      return res.status(400).json({ status: 'rejected', errorCode: 'INVALID_PLUS_ORDER_ID' });
+    }
+    try { return res.json(await plusPayments.getStatus({ lineUserId: req.user.lineUserId, orderId: req.params.orderId })); }
+    catch (error) { return paymentError(res, error); }
+  }));
+
+  router.post('/orders', asyncHandler(async (req, res) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((field) => !CHECKOUT_FIELDS.has(field))
+      || !PLUS_RETURN_TARGETS.includes(body.returnTarget)
+      || typeof body.idempotencyKey !== 'string'
+      || (body.renew !== undefined && typeof body.renew !== 'boolean')) {
+      return res.status(400).json({ status: 'rejected', errorCode: 'INVALID_PLUS_CHECKOUT' });
+    }
+    try {
+      const result = await plusPayments.createCheckout({
+        lineUserId: req.user.lineUserId, returnTarget: body.returnTarget,
+        idempotencyKey: body.idempotencyKey, renew: body.renew === true,
+      });
+      return res.status(result.resumed ? 200 : 201).json(result);
+    } catch (error) { return paymentError(res, error); }
+  }));
 
   async function loadEntitlement(req) {
     return entitlementGetter({ lineUserId: req.user.lineUserId, flags: req.plusFlags, queryFn: overrides.entitlementQueryFn });
@@ -98,8 +177,14 @@ function createPlusRouter(overrides = {}) {
   const requireInternalEntitlement = asyncHandler(async (req, res, next) => {
     const entitlement = await loadEntitlement(req);
     if (!entitlement.allowed) {
-      if (['NO_PLUS_ENTITLEMENT', 'ENTITLEMENT_INACTIVE'].includes(entitlement.reasonCode)) {
-        return res.status(403).json({ status: 'upgrade_required', planCode: 'family_basic', reasonCode: entitlement.reasonCode, upgradeAvailable: false });
+      if (['NO_PLUS_ENTITLEMENT', 'ENTITLEMENT_INACTIVE', 'ENTITLEMENT_EXPIRED'].includes(entitlement.reasonCode)) {
+        return res.status(403).json({
+          status: 'upgrade_required',
+          planCode: 'family_basic',
+          reasonCode: entitlement.reasonCode,
+          errorCode: entitlement.reasonCode,
+          upgradeAvailable: paymentAvailable(req.plusFlags),
+        });
       }
       return unavailable(res, entitlement.reasonCode, 403);
     }
@@ -143,8 +228,8 @@ function createPlusRouter(overrides = {}) {
   router.get('/entitlement', asyncHandler(async (req, res) => {
     const entitlement = await loadEntitlement(req);
     if (!entitlement.allowed) {
-      if (['NO_PLUS_ENTITLEMENT', 'ENTITLEMENT_INACTIVE'].includes(entitlement.reasonCode)) {
-        return res.json({ status: 'basic', planCode: 'family_basic', plus: false, upgradeAvailable: false, reasonCode: entitlement.reasonCode });
+      if (['NO_PLUS_ENTITLEMENT', 'ENTITLEMENT_INACTIVE', 'ENTITLEMENT_EXPIRED'].includes(entitlement.reasonCode)) {
+        return res.json({ status: entitlement.reasonCode === 'ENTITLEMENT_EXPIRED' ? 'expired' : 'basic', planCode: 'family_basic', plus: false, upgradeAvailable: paymentAvailable(req.plusFlags), reasonCode: entitlement.reasonCode });
       }
       return unavailable(res, entitlement.reasonCode, 403);
     }

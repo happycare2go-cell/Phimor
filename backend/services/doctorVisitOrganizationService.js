@@ -79,7 +79,8 @@ function createDoctorVisitOrganizationService(overrides = {}) {
       throw new DoctorVisitDomainError('ACCESS_DENIED');
     }
     await entitlement({
-      lineUserId, feature: 'ai_explanation', flags, queryFn: overrides.entitlementQueryFn,
+      lineUserId, feature: 'ai_explanation', capability: 'doctor_visit_organization', flags,
+      queryFn: overrides.entitlementQueryFn,
     });
     const record = await recordService.getRecord({ careProfileId, visitRecordId, lineUserId, centerId });
     if (record.status !== 'draft') throw new DoctorVisitDomainError('RECORD_NOT_DRAFT');

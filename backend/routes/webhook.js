@@ -12,9 +12,10 @@ const lineClient = require('../providers/lineClient');
 const flex = require('../flexMessages');
 const rateLimiter = require('../utils/rateLimiter');
 const { messagingConfigured } = require('../config/runtimeCapabilities');
-const { Residents, PendingCards, CareProfiles, CenterStaff, Centers, WebhookInbox, id, now } = require('../db');
+const { Residents, PendingCards, CareProfiles, CenterStaff, Centers, WebhookInbox, id, now, withTransaction } = require('../db');
 
 const IMAGE_RATE_LIMIT = Number(process.env.IMAGE_RATE_LIMIT_PER_MINUTE) || 5;
+const WEBHOOK_PROCESSING_LEASE_MS = 5 * 60 * 1000;
 const webhookParser = (process.env.NODE_ENV === 'test' || process.env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true')
   ? express.json()
   : line.middleware({ channelSecret: process.env.LINE_CHANNEL_SECRET || 'missing-channel-secret' });
@@ -60,7 +61,7 @@ async function handleJoinEvent(event) {
   await lineClient.pushMessage(groupId, [{
     type: 'text',
     text: 'พี่หมอเข้ากลุ่มแล้วค่ะ กรุณาส่งรหัส STAFF-xxxxxx หรือ FAMILY-xxxxxx ที่สร้างไว้ หรือรหัสตั้งค่ากลุ่ม Care2Go ตามที่ผู้ดูแลระบบกำหนด',
-  }]);
+  }], { retryKey:webhookRetryKey(event, 'group-onboarding') });
 }
 
 async function captureStaffFromGroupEvent(event) {
@@ -120,7 +121,12 @@ async function handleImageMessage(event, imageBuffer) {
     });
   }
 
-  const rl = rateLimiter.checkAndRecord(lineUserId, IMAGE_RATE_LIMIT, 60000);
+  let rl;
+  try {
+    rl = await rateLimiter.checkAndRecord(lineUserId, IMAGE_RATE_LIMIT, 60000, { domain:'line_image_ingestion' });
+  } catch (_) {
+    return safeReply(event.replyToken, { type:'text', text:'ระบบจำกัดการส่งรูปยังไม่พร้อม กรุณาลองใหม่ภายหลังค่ะ' });
+  }
   if (!rl.allowed) {
     const waitSec = Math.ceil(rl.retryAfterMs / 1000);
     return safeReply(event.replyToken, { type: 'text', text: `ส่งรูปถี่เกินไปค่ะ กรุณารออีกประมาณ ${waitSec} วินาทีแล้วลองใหม่` });
@@ -282,17 +288,67 @@ function eventKey(event) {
   return createHash('sha256').update(JSON.stringify({ type:event.type, timestamp:event.timestamp, source:event.source, message:event.message, postback:event.postback?.data, replyToken:event.replyToken })).digest('hex');
 }
 
+function webhookRetryKey(event, purpose) {
+  const bytes = Buffer.from(createHash('sha256').update(`${purpose}:${eventKey(event)}`).digest().subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
+function processingLeaseExpired(item, currentTime = Date.now()) {
+  if (item.status !== 'processing' || !item.processing_started_at) return false;
+  const started = new Date(item.processing_started_at).getTime();
+  return Number.isFinite(started) && currentTime - started >= WEBHOOK_PROCESSING_LEASE_MS;
+}
+
+async function enqueueWebhookEvent(event) {
+  const key = eventKey(event);
+  return withTransaction(`line-webhook-intake:${key}`, async () => {
+    const existing = await WebhookInbox.findOne((item) => item.event_key === key);
+    if (existing) return { inserted:false, item:existing };
+    const item = await WebhookInbox.insert({
+      inbox_id:id('WH'), event_key:key, event, status:'pending', attempts:0, received_at:now(),
+    });
+    return { inserted:true, item };
+  });
+}
+
+async function claimWebhookEvent(candidate) {
+  return withTransaction(`line-webhook-process:${candidate.inbox_id}`, async () => {
+    const current = await WebhookInbox.findOne((item) => item.inbox_id === candidate.inbox_id);
+    if (!current) return null;
+    if (!['pending', 'retrying'].includes(current.status) && !processingLeaseExpired(current)) return null;
+    const claimId = id('WHC');
+    return WebhookInbox.update((item) => item.inbox_id === current.inbox_id, {
+      status:'processing', processing_claim_id:claimId, processing_started_at:now(),
+    });
+  });
+}
+
 async function processPendingWebhookEvents(limit = 50) {
-  const pending = await WebhookInbox.findWhere((e) => ['pending', 'retrying'].includes(e.status));
+  const pending = await WebhookInbox.findWhere((item) =>
+    ['pending', 'retrying'].includes(item.status) || processingLeaseExpired(item));
   let processed = 0;
-  for (const item of pending.slice(0, limit)) {
+  for (const candidate of pending.slice(0, limit)) {
+    const item = await claimWebhookEvent(candidate);
+    if (!item) continue;
     try {
       await processEvent(item.event);
-      await WebhookInbox.update((e) => e.inbox_id === item.inbox_id, { status:'processed', processed_at:now(), attempts:Number(item.attempts||0)+1 });
+      await WebhookInbox.update((entry) => entry.inbox_id === item.inbox_id
+        && entry.processing_claim_id === item.processing_claim_id, {
+        status:'processed', processed_at:now(), attempts:Number(item.attempts||0)+1,
+        processing_claim_id:null, processing_started_at:null,
+      });
       processed += 1;
     } catch (err) {
       const attempts = Number(item.attempts || 0) + 1;
-      await WebhookInbox.update((e) => e.inbox_id === item.inbox_id, { status:attempts>=5?'dead_letter':'retrying', attempts, last_error:String(err.message||err).slice(0,500), last_attempt_at:now() });
+      await WebhookInbox.update((entry) => entry.inbox_id === item.inbox_id
+        && entry.processing_claim_id === item.processing_claim_id, {
+        status:attempts>=5?'dead_letter':'retrying', attempts,
+        last_error:String(err.message||err).slice(0,500), last_attempt_at:now(),
+        processing_claim_id:null, processing_started_at:null,
+      });
       console.error('webhook handler error:', err);
     }
   }
@@ -304,9 +360,7 @@ router.post('/webhook', requireMessagingCapability, webhookParser, async (req, r
   // Persist every event before acknowledging LINE.  A worker can replay a
   // pending item after a process restart, and webhookEventId prevents doubles.
   for (const event of events) {
-    const key = eventKey(event);
-    const existing = await WebhookInbox.findOne((e) => e.event_key === key);
-    if (!existing) await WebhookInbox.insert({ inbox_id:id('WH'), event_key:key, event, status:'pending', attempts:0, received_at:now() });
+    await enqueueWebhookEvent(event);
   }
   res.status(200).end();
   await processPendingWebhookEvents();
@@ -318,3 +372,5 @@ module.exports.requireMessagingCapability = requireMessagingCapability;
 module.exports.isUserIdCommand = isUserIdCommand;
 module.exports.handleUserIdCommand = handleUserIdCommand;
 module.exports.processEvent = processEvent;
+module.exports.enqueueWebhookEvent = enqueueWebhookEvent;
+module.exports.webhookRetryKey = webhookRetryKey;

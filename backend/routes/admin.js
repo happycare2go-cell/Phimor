@@ -12,11 +12,15 @@ const { requireAdminKey, validAdminKey } = require('../middleware/adminAuth');
 const { requireAuth } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
-const { Centers, Residents, CareProfiles, AuditLog, DataSubjectRequests, AdminUsers, audit, id, now } = require('../db');
+const { Centers, Residents, CareProfiles, AuditLog, AdminUsers, audit, id, now } = require('../db');
 const subscriptionService = require('../services/subscriptionService');
 const { createConsultationPaymentSupportService } = require('../services/consultationPaymentSupportService');
+const privacyService = require('../services/privacyService');
+const { displayIdentity } = require('../utils/safeIdentity');
+const { createPlusPaymentSupportService } = require('../services/plusPaymentSupportService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
+const plusPaymentSupport = createPlusPaymentSupportService();
 const { createPlatformAdminRouter } = require('./platformAdmin');
 
 // Bootstrap ครั้งแรกต้องมีทั้ง LINE identity และ ADMIN_API_KEY ปัจจุบัน
@@ -38,6 +42,28 @@ router.post('/bootstrap', requireAuth, asyncHandler(async (req, res) => {
 router.use(requireAdminKey);
 router.use('/platform', createPlatformAdminRouter());
 
+// Minimal reliability projection for operators. It exposes only counts and
+// scheduler metadata; notification bodies and integration payloads stay out.
+router.get('/operations/reliability', asyncHandler(async (req, res) => {
+  const notificationReader = req.app.locals.notificationService
+    || require('../services/notificationService');
+  const integrationReader = req.app.locals.integrationEventService
+    || require('../services/integrationEventService').integrationEventService;
+  const notifications = await notificationReader.getHealth();
+  const integration = await integrationReader.listOperationalStatus({ limit:200 });
+  const integrationStates = integration.items.reduce((summary, item) => {
+    const key = ['retrying', 'dead', 'rejected', 'pending_subject_mapping'].includes(item.eventStatus)
+      ? item.eventStatus : 'other';
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {});
+  res.json({
+    notifications,
+    integration:{ sampleLimit:200, states:integrationStates, groupReconciliation:integration.summary },
+    scheduler:req.app.locals.schedulerHealth?.() || { configuredJobs:0, jobs:{} },
+  });
+}));
+
 // Exact-reference lookup for payment incidents. The projection intentionally
 // excludes LINE identities, the consultation question and Care Profile data.
 router.get('/consultation-payments/lookup', asyncHandler(async (req, res) => {
@@ -55,6 +81,25 @@ router.get('/consultation-payments/lookup', asyncHandler(async (req, res) => {
       errorCode:error?.code || 'PAYMENT_LOOKUP_FAILED',
       message:status === 404 ? 'ไม่พบรายการจากเลขอ้างอิงนี้'
         : status === 400 ? 'เลขอ้างอิงไม่ถูกต้อง' : 'ตรวจสอบรายการชำระเงินไม่สำเร็จ',
+    });
+  }
+}));
+
+// Safe exact-reference support lookup. No provider identifiers, clinical data,
+// full LINE identity or stored payment payload is projected.
+router.get('/plus-payments/lookup', asyncHandler(async (req, res) => {
+  try {
+    const result = await plusPaymentSupport.lookup({ reference: req.query.reference });
+    await audit('admin.plus_payment_lookup', req.admin.actor, { found: true });
+    return res.json(result);
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    if (status < 500) await audit('admin.plus_payment_lookup', req.admin.actor, { found: false, errorCode: error.code });
+    return res.status(status).json({
+      error: status === 404 ? 'not_found' : status === 400 ? 'bad_request' : 'internal_error',
+      errorCode: error?.code || 'PLUS_PAYMENT_LOOKUP_FAILED',
+      message: status === 404 ? 'ไม่พบรายการพี่หมอ Plus จากเลขอ้างอิงนี้'
+        : status === 400 ? 'เลขอ้างอิงไม่ถูกต้อง' : 'ตรวจสอบรายการพี่หมอ Plus ไม่สำเร็จ',
     });
   }
 }));
@@ -100,8 +145,10 @@ router.get('/centers', asyncHandler(async (req, res) => {
   const rows = [];
   for (const c of centers) {
     const residents = await Residents.findWhere((r) => r.center_id === c.center_id && r.status === 'active');
+    const owner = await require('../db').CenterStaff.findOne((staff) => staff.center_id === c.center_id && staff.line_user_id === c.owner_line_id && staff.role === 'owner');
     rows.push({
-      centerId: c.center_id, name: c.name, ownerLineId: c.owner_line_id,
+      centerId: c.center_id, name: c.name,
+      ownerIdentity:displayIdentity({ displayName:owner?.display_name, lineUserId:c.owner_line_id }),
       status: c.status, groupBound: !!c.group_id, createdAt: c.created_at,
       address: c.address || '', contactPhone: c.contact_phone || '', activeResidentCount: residents.length,
       subscriptionStartAt: c.subscription_start_at || null, subscriptionEndAt: c.subscription_end_at || null,
@@ -148,7 +195,10 @@ router.get('/centers/:centerId/care-profiles', asyncHandler(async (req, res) => 
   const rows = [];
   for (const resident of residents) {
     const profile = resident.care_profile_id && await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
-    rows.push({ resident, profile: profile || null });
+    rows.push({
+      resident:{ residentId:resident.resident_id, displayName:resident.full_name, room:resident.room || null, status:resident.status },
+      careProfile:profile ? { careProfileId:profile.care_profile_id, displayName:profile.patient_name, status:profile.status, linked:true } : null,
+    });
   }
   await audit('admin.care_profiles_viewed', req.admin.actor, { centerId: center.center_id, count: rows.length });
   res.json({ center: { centerId: center.center_id, name: center.name }, rows });
@@ -161,15 +211,21 @@ router.get('/audit', asyncHandler(async (req, res) => {
 }));
 
 router.get('/data-requests', asyncHandler(async (req, res) => {
-  res.json({ requests: await DataSubjectRequests.findAll() });
+  res.json({ requests:await privacyService.listAdminRequests(req.admin.actor), fulfillmentMode:'manual_review' });
 }));
 
 router.patch('/data-requests/:requestId', asyncHandler(async (req, res) => {
-  if (!['in_progress', 'completed', 'rejected'].includes(req.body.status)) return res.status(400).json({ error: 'bad_request' });
-  const request = await DataSubjectRequests.update((r) => r.request_id === req.params.requestId, { status: req.body.status, admin_note: String(req.body.note || '').slice(0, 1000), updated_at: now(), updated_by: req.admin.actor });
-  if (!request) return res.status(404).json({ error: 'not_found' });
-  await audit('privacy.data_request_updated', req.admin.actor, { requestId: request.request_id, status: request.status });
-  res.json(request);
+  try {
+    res.json({ request:await privacyService.updateRequest({
+      requestId:req.params.requestId, status:req.body?.status,
+      publicNote:req.body?.publicNote, adminNote:req.body?.adminNote,
+      manualFulfillmentConfirmed:req.body?.manualFulfillmentConfirmed === true,
+      actorReference:req.admin.actor,
+    }) });
+  } catch (error) {
+    if (error instanceof privacyService.PrivacyRequestError) return res.status(error.status).json({ error:error.code, message:error.message });
+    throw error;
+  }
 }));
 
 // GET /api/admin/centers/:centerId/staff — ดูรายชื่อทีมงานของศูนย์
@@ -182,7 +238,8 @@ router.get('/centers/:centerId/staff', asyncHandler(async (req, res) => {
   res.json({
     centerId: center.center_id, centerName: center.name,
     staff: staff.map((s) => ({
-      lineUserId: s.line_user_id,
+      staffId:s.staff_id,
+      displayIdentity:displayIdentity({ displayName:s.display_name, lineUserId:s.line_user_id }),
       role: s.role,
       roleLabel: { owner: 'เจ้าของศูนย์', manager: 'ผู้จัดการ', staff: 'พนักงาน' }[s.role] || s.role,
       autoRegistered: !!s.auto_registered,

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PHIMOR Privacy / DSR V1 — Local Preview</title>
+  <link rel="stylesheet" href="../../liff-app/family/privacy-ui.css">
+  <link rel="stylesheet" href="../../liff-app/system-admin/privacy-operations-ui.css">
+  <style>
+    :root{--navy:#1c2b64;--teal:#167f78;--gold:#deb14e;--gray:#667085;--bg:#f5f7fb}
+    *{box-sizing:border-box}html,body{margin:0;min-width:0;background:var(--bg);color:#1d2939;font:14px/1.55 "Sarabun","Noto Sans Thai",system-ui,sans-serif;overflow-x:hidden}
+    button,input,select,textarea{font:inherit}.preview-shell{width:100%;min-height:100vh;padding:calc(16px + env(safe-area-inset-top)) 14px calc(24px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#edf2fb 0,#f8f9fc 165px)}
+    .preview-header{display:flex;align-items:center;gap:11px;margin:0 2px 14px}.preview-avatar{display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;border-radius:50%;background:var(--navy);color:#fff;font-size:19px;font-weight:800}.preview-header h1{margin:0;color:var(--navy);font-size:20px;line-height:1.25}.preview-header p{margin:2px 0 0;color:var(--gray);font-size:11.5px}
+    .card{padding:15px;border:1px solid #e4e8f0;border-radius:14px;background:#fff;box-shadow:0 1px 5px rgba(28,43,100,.06)}.card+.card{margin-top:12px}.muted{color:var(--gray)}.secondary,.primary,.danger{min-height:44px;padding:10px 14px;border-radius:10px;font-weight:700}.secondary{border:1px solid #d0d5dd;background:#fff;color:var(--navy)}.primary{border:0;background:var(--navy);color:#fff}.danger{border:1px solid #b42318;background:#fff;color:#b42318}.preview-state{display:none}.preview-state.is-visible{display:block}.preview-state[data-preview="r3"].is-visible{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;background:rgba(0,0,0,.4)}.preview-title{margin:0 0 2px;color:var(--navy);font-size:19px}.preview-subtitle{margin:0 0 13px;color:var(--gray);font-size:12px}.preview-actions{display:grid;gap:9px;margin-top:12px}.preview-actions button{width:100%}.privacy-card{margin-top:12px}.privacy-choice{display:grid;gap:8px}.privacy-choice button{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:48px;padding:11px 12px;border:1px solid #e1e6ef;border-radius:11px;background:#fff;color:var(--navy);text-align:left;font-weight:700}.privacy-choice small{display:block;color:var(--gray);font-weight:400}.privacy-form label{display:block;margin:10px 0 5px;font-weight:700}.privacy-form select,.privacy-form textarea{width:100%;padding:10px;border:1px solid #cfd5e1;border-radius:9px;background:#fff}.privacy-form textarea{min-height:96px}
+    .preview-modal-backdrop{display:flex;align-items:flex-end;width:100%;min-height:100%;padding:0}.preview-modal{width:100%;padding:20px max(16px,env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));border-radius:16px 16px 0 0;background:#fff;box-shadow:0 -8px 30px rgba(0,0,0,.15)}.preview-modal h2{margin:0;color:var(--navy);font-size:19px}.preview-modal p{color:#475467;line-height:1.7}.preview-modal__note{padding:11px;border-radius:10px;background:#fff5e6;color:#694d11;font-size:12px}.preview-modal__actions{display:grid;grid-template-columns:1fr 1.25fr;gap:8px;margin-top:15px}.preview-modal__actions button{min-height:44px}
+    .identity-row,.team-row,.relation-row{display:flex;align-items:center;gap:11px;min-width:0;padding:12px 0;border-top:1px solid #edf0f5}.identity-row:first-child,.team-row:first-child,.relation-row:first-child{border-top:0}.identity-icon{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;border-radius:50%;background:#eef2fa;color:var(--navy);font-weight:800}.identity-main{min-width:0;flex:1}.identity-main strong{display:block;color:var(--navy);overflow-wrap:anywhere}.identity-main span{display:block;color:var(--gray);font-size:12px}.identity-row button{flex:0 0 auto;min-height:44px;padding:8px 11px;border:1px solid #d0d5dd;border-radius:9px;background:#fff;color:#b42318;font-weight:700}
+    .admin-title{margin:0;color:var(--navy);font-size:18px}.admin-summary{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}.admin-metric{padding:11px;border-radius:11px;background:#f4f6fb}.admin-metric strong{display:block;color:var(--navy);font-size:17px}.admin-metric span{color:var(--gray);font-size:11px}.admin-record-list{margin-top:10px}.privacy-ops__item select,.privacy-ops__item textarea{padding:9px;border:1px solid #cfd5e1;border-radius:9px}.privacy-ops__item>button{width:100%;border:0;border-radius:9px;background:var(--navy);color:#fff;font-weight:700}
+    .preview-footer{margin:13px 4px 0;color:var(--gray);font-size:10.5px;text-align:center}.badge{display:inline-flex;align-items:center;min-height:25px;padding:3px 8px;border-radius:99px;background:#e9f7f1;color:#087a55;font-size:11px;font-weight:800}.badge--wait{background:#fff4dd;color:#805b12}.badge--neutral{background:#eef1f8;color:#475467}
+    :focus-visible{outline:3px solid rgba(222,177,78,.8);outline-offset:2px}@media(max-width:390px){.preview-shell{padding-left:13px;padding-right:13px}.privacy-request__top,.privacy-ops__heading{flex-direction:column}.privacy-status,.privacy-ops__status{align-self:flex-start}}
+  </style>
+</head>
+<body>
+  <main class="preview-shell">
+    <header class="preview-header"><div class="preview-avatar" aria-hidden="true">พ</div><div><h1 id="previewHeading">ความเป็นส่วนตัว</h1><p id="previewContext">Care Profile ที่เลือก: คุณแม่ตัวอย่าง</p></div></header>
+
+    <section class="preview-state" data-preview="r1">
+      <h2 class="preview-title">ความเป็นส่วนตัว</h2><p class="preview-subtitle">จัดการความยินยอมและติดตามคำขอเกี่ยวกับข้อมูลของคุณ</p>
+      <section class="privacy-intro"><h2>คุณควบคุมคำขอเกี่ยวกับข้อมูลของคุณได้</h2><p>การส่งคำขอเป็นการเริ่มกระบวนการตรวจสอบโดยทีมงาน ไม่ใช่การลบ ส่งออก หรือจำกัดข้อมูลโดยอัตโนมัติ</p></section>
+      <section class="card privacy-card"><div class="privacy-choice"><button><span>ความยินยอม<small>สถานะปัจจุบัน: ให้ความยินยอมแล้ว</small></span><span>›</span></button><button><span>คำขอเกี่ยวกับข้อมูลส่วนบุคคล<small>ส่งคำขอใหม่และติดตามสถานะ</small></span><span>›</span></button></div></section>
+    </section>
+
+    <section class="preview-state" data-preview="r2">
+      <h2 class="preview-title">ความยินยอม</h2><p class="preview-subtitle">ตรวจสอบสถานะและผลกระทบก่อนตัดสินใจ</p>
+      <section class="card privacy-card"><div class="privacy-card__heading"><h2>สถานะความยินยอม</h2><p>บัญชี LINE ที่กำลังใช้งาน</p></div><div class="privacy-state"><div class="privacy-state__heading">ให้ความยินยอมแล้ว</div><p class="privacy-state__detail">อนุญาตให้ใช้ข้อมูลตามวัตถุประสงค์และเวอร์ชันที่แสดงไว้</p><p class="privacy-state__meta">บันทึกล่าสุด 25 ส.ค. 2569 · 13:24</p></div><button class="privacy-button privacy-button--danger">ถอนความยินยอม</button></section>
+      <section class="card privacy-card"><strong>ก่อนถอนความยินยอม</strong><p class="privacy-help">บางฟังก์ชันที่ต้องใช้ข้อมูลส่วนบุคคลอาจใช้งานไม่ได้ ข้อมูลเดิมไม่ได้ถูกลบโดยอัตโนมัติ</p></section>
+    </section>
+
+    <section class="preview-state" data-preview="r3">
+      <div class="preview-modal-backdrop"><section class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="withdrawTitle"><h2 id="withdrawTitle">ยืนยันถอนความยินยอม</h2><p>การถอนความยินยอมอาจทำให้บางฟังก์ชันที่ต้องใช้ข้อมูลส่วนบุคคลไม่สามารถใช้งานได้</p><div class="preview-modal__note">ข้อมูลบางส่วนอาจยังถูกเก็บไว้ตามวัตถุประสงค์ที่จำเป็นหรือข้อกำหนดที่เกี่ยวข้อง การดำเนินการนี้ไม่ลบ Care Profile โดยอัตโนมัติ</div><div class="preview-modal__actions"><button class="secondary">ยกเลิก</button><button class="danger">ยืนยันถอน</button></div></section></div>
+    </section>
+
+    <section class="preview-state" data-preview="r4">
+      <h2 class="preview-title">ความยินยอม</h2><p class="preview-subtitle">สถานะได้รับการอัปเดตแล้ว</p>
+      <section class="card privacy-card"><div class="privacy-state"><div class="privacy-state__heading">ถอนความยินยอมแล้ว</div><p class="privacy-state__detail">ระบบหยุดการประมวลผลที่อาศัยความยินยอมตามขอบเขตนี้ ข้อมูลเดิมไม่ได้ถูกลบโดยอัตโนมัติ</p><p class="privacy-state__meta">อัปเดต 28 ส.ค. 2569 · 09:42</p></div><button class="privacy-button">ให้ความยินยอมอีกครั้ง</button></section>
+      <section class="card privacy-card"><strong>ต้องการใช้สิทธิข้อมูลด้านอื่น?</strong><p class="privacy-help">คุณยังส่งคำขอสำเนา แก้ไข จำกัดการใช้ หรือลบข้อมูลเพื่อให้ทีมงานตรวจสอบได้</p><button class="secondary" style="width:100%;margin-top:10px">ไปยังคำขอเกี่ยวกับข้อมูล</button></section>
+    </section>
+
+    <section class="preview-state" data-preview="r5">
+      <h2 class="preview-title">ส่งคำขอใหม่</h2><p class="preview-subtitle">ระบุรายละเอียดเท่าที่จำเป็น โดยไม่ใส่ข้อมูลสุขภาพที่ไม่เกี่ยวข้อง</p>
+      <section class="card privacy-card"><form class="privacy-form"><label>ประเภทคำขอ</label><select><option>ขอสำเนาข้อมูล</option><option>ขอแก้ไขข้อมูล</option><option>ขอจำกัดการใช้ข้อมูล</option><option>ขอลบข้อมูล</option></select><p class="privacy-help">ทีมงานจะตรวจสอบขอบเขตและยืนยันตัวตนก่อนดำเนินการ</p><label>รายละเอียดเพิ่มเติม (ไม่บังคับ)</label><textarea maxlength="500" placeholder="ระบุเฉพาะข้อมูลที่ทีมงานต้องใช้ตรวจสอบคำขอนี้"></textarea><button class="privacy-button" type="button">ตรวจสอบและส่งคำขอ</button></form></section>
+    </section>
+
+    <section class="preview-state" data-preview="r6">
+      <h2 class="preview-title">สถานะคำขอของฉัน</h2><p class="preview-subtitle">แสดงเฉพาะคำขอของบัญชีที่กำลังใช้งาน</p>
+      <div class="privacy-request-list"><article class="privacy-request"><div class="privacy-request__top"><strong>ขอสำเนาข้อมูล</strong><span class="privacy-status privacy-status--in_progress">กำลังตรวจสอบ</span></div><div class="privacy-request__reference">เลขอ้างอิง ••••8A21</div><div class="privacy-request__date">ส่งเมื่อ 27 ส.ค. 2569 · 16:10</div><p class="privacy-request__meaning">ทีมงานกำลังตรวจสอบตัวตนและขอบเขตข้อมูล</p></article><article class="privacy-request"><div class="privacy-request__top"><strong>ขอแก้ไขข้อมูล</strong><span class="privacy-status privacy-status--completed">ดำเนินการตามกระบวนการแล้ว</span></div><div class="privacy-request__reference">เลขอ้างอิง ••••71BC</div><div class="privacy-request__date">ส่งเมื่อ 20 ส.ค. 2569 · 11:05</div><p class="privacy-request__note">สถานะนี้เป็นบันทึกกระบวนการ คำขอไม่ได้ทำให้ระบบแก้ไขหรือลบข้อมูลอัตโนมัติ</p></article></div>
+    </section>
+
+    <section class="preview-state" data-preview="r7">
+      <section class="card privacy-ops"><div class="privacy-ops__header"><div><h2 class="admin-title">คำขอเกี่ยวกับข้อมูลส่วนบุคคล</h2><p class="muted" style="margin:3px 0 0">คิวดำเนินงานแบบควบคุม แสดงข้อมูลเท่าที่จำเป็น</p></div><button class="secondary">รีเฟรชคิว</button></div><p class="privacy-ops__notice">การเปลี่ยนสถานะไม่ลบ ส่งออก แก้ไข หรือจำกัดข้อมูลอัตโนมัติ ต้องดำเนินการตามขั้นตอนที่ได้รับอนุมัติ</p><div class="privacy-ops__list"><article class="privacy-ops__item"><div class="privacy-ops__heading"><strong>ขอจำกัดการใช้ข้อมูล</strong><span class="privacy-ops__status privacy-ops__status--pending">รับคำขอแล้ว</span></div><div class="privacy-ops__identity">คุณผู้ใช้งานตัวอย่าง</div><div class="privacy-ops__meta">เลขอ้างอิง ••••C920 · 28 ส.ค. 2569</div><p class="privacy-ops__details">ขอตรวจสอบการใช้ข้อมูลสำหรับบริการเสริม</p><label>สถานะ<select><option>รับคำขอแล้ว</option><option>กำลังตรวจสอบ</option><option>ดำเนินการตามกระบวนการแล้ว</option></select></label><label>ข้อความที่ผู้ขอเห็น<textarea placeholder="ใส่เฉพาะข้อความที่ปลอดภัย"></textarea></label><button>บันทึกสถานะ</button></article></div></section>
+    </section>
+
+    <section class="preview-state" data-preview="r8">
+      <h2 class="preview-title">ครอบครัวและการเข้าถึง</h2><p class="preview-subtitle">จัดการผู้ดูแลร่วมของ Care Profile นี้</p>
+      <section class="card"><h3 style="margin:0;color:var(--navy)">ผู้ดูแลร่วม</h3><div class="identity-row"><span class="identity-icon">ส</span><div class="identity-main"><strong>สมใจ ผู้ดูแล</strong><span>ผู้ดูแลร่วม · แก้ไขข้อมูลได้</span></div><button>ถอนสิทธิ์</button></div><div class="identity-row"><span class="identity-icon">L</span><div class="identity-main"><strong>บัญชี LINE ••••1642</strong><span>ผู้ดูแลร่วม · ดูข้อมูลได้</span></div><button>ถอนสิทธิ์</button></div></section>
+      <p class="preview-footer">ชื่อที่ยืนยันแล้วจะแสดงก่อน หากไม่มีจะแสดงเพียงข้อมูลอ้างอิงที่ปกปิดแล้ว</p>
+    </section>
+
+    <section class="preview-state" data-preview="r9">
+      <h2 class="preview-title">ทีมของศูนย์</h2><p class="preview-subtitle">Happy Home Senior · สาขาตัวอย่าง</p>
+      <section class="card"><div class="team-row"><span class="identity-icon">น</span><div class="identity-main"><strong>นันท์ ผู้ดูแล</strong><span>Staff · ใช้งานอยู่</span></div><span class="badge">อนุมัติแล้ว</span></div><div class="team-row"><span class="identity-icon">L</span><div class="identity-main"><strong>บัญชี LINE ••••7284</strong><span>Staff · รออนุมัติ</span></div><span class="badge badge--wait">รอตรวจสอบ</span></div></section>
+      <button class="primary" style="width:100%;margin-top:12px">เพิ่มสมาชิกทีม</button>
+    </section>
+
+    <section class="preview-state" data-preview="r10">
+      <h2 class="preview-title">รายละเอียดศูนย์</h2><p class="preview-subtitle">มุมมองปฏิบัติการสำหรับ System Admin</p>
+      <section class="card"><h3 class="admin-title">Happy Home Senior</h3><p class="muted" style="margin:2px 0">สาขาตัวอย่าง · เปิดใช้งาน</p><div class="admin-summary"><div class="admin-metric"><strong>24</strong><span>ผู้พักที่เชื่อมอยู่</span></div><div class="admin-metric"><strong>8</strong><span>สมาชิกทีม</span></div></div><div class="relation-row"><span class="identity-icon">จ</span><div class="identity-main"><strong>เจ้าของศูนย์ตัวอย่าง</strong><span>Owner · บัญชีได้รับการยืนยัน</span></div></div></section>
+      <section class="card"><h3 class="admin-title">ความสัมพันธ์ผู้พัก</h3><div class="admin-record-list"><div class="admin-record"><strong>คุณสมใจ ใจดี</strong><span class="muted">ห้อง A201 · Care Profile เชื่อมแล้ว</span></div><div class="admin-record"><strong>คุณสายใจ สุขดี</strong><span class="muted">ห้อง A202 · Care Profile เชื่อมแล้ว</span></div></div></section>
+      <p class="preview-footer">ไม่แสดงกรุ๊ปเลือด โรคประจำตัว ประวัติแพ้ยา หรือ LINE User ID ในมุมมองปฏิบัติการทั่วไป</p>
+    </section>
+    <p class="preview-footer">ข้อมูลสมมติสำหรับตรวจ UX ในเครื่องเท่านั้น · ไม่เชื่อมต่อระบบจริง</p>
+  </main>
+  <script>
+    const headings={r1:['ความเป็นส่วนตัว','Care Profile ที่เลือก: คุณแม่ตัวอย่าง'],r2:['ความยินยอม','บัญชีครอบครัว'],r3:['ถอนความยินยอม','ยืนยันก่อนดำเนินการ'],r4:['ความยินยอม','สถานะล่าสุด'],r5:['คำขอข้อมูลส่วนบุคคล','ส่งคำขอใหม่'],r6:['คำขอข้อมูลส่วนบุคคล','ติดตามสถานะ'],r7:['System Admin','Privacy Operations'],r8:['ครอบครัวและการเข้าถึง','Care Profile ที่เลือก: คุณแม่ตัวอย่าง'],r9:['Center Admin','สมาชิกทีม'],r10:['System Admin','Center Operations']};
+    function show(){const key=(location.hash.slice(1)||'r1').toLowerCase();document.querySelectorAll('.preview-state').forEach((node)=>node.classList.toggle('is-visible',node.dataset.preview===key));const label=headings[key]||headings.r1;document.getElementById('previewHeading').textContent=label[0];document.getElementById('previewContext').textContent=label[1];document.documentElement.dataset.preview=key;scrollTo(0,0)}
+    addEventListener('hashchange',show);show();
+  </script>
+</body>
+</html>

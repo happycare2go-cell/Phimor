@@ -42,6 +42,9 @@ function requiredRuntimeEnvironment(env = process.env) {
   if (!isMinimalFamilyPlusStaging(env) && String(env.CONSULTATION_ENABLED || '').trim().toLowerCase() === 'true') {
     required.push('LIFF_ID_PHARMACIST');
   }
+  if (String(env.PLUS_PAYMENT_ENABLED || '').trim().toLowerCase() === 'true') {
+    required.push('CONSULTATION_PAYMENT_PROVIDER', 'OMISE_PUBLIC_KEY', 'OMISE_SECRET_KEY', 'OMISE_WEBHOOK_SECRET');
+  }
   return required;
 }
 

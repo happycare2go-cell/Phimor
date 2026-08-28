@@ -34,8 +34,21 @@ const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
 const { missingRuntimeEnvironment, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
 const { createConsultationRealtimeGateway } = require('./realtime/consultationRealtimeGateway');
+const { createConsultationLifecycleSchedulerService } = require('./services/consultationLifecycleSchedulerService');
+const { createSchedulerCoordinatorService } = require('./services/schedulerCoordinatorService');
+const sharedRateLimiter = require('./utils/rateLimiter');
+const { createPlusPaymentSchedulerService } = require('./services/plusPaymentSchedulerService');
+const { createPlusPaymentRepository } = require('./services/plusPaymentRepository');
+const { loadFeatureFlags } = require('./config/featureFlags');
+const { paymentAvailable } = require('./services/plusPaymentOrderService');
+
+const consultationLifecycleScheduler = createConsultationLifecycleSchedulerService();
+const schedulerCoordinator = createSchedulerCoordinatorService();
+const plusPaymentScheduler = createPlusPaymentSchedulerService();
+const plusPaymentRepository = createPlusPaymentRepository();
 
 const app = express();
+app.locals.schedulerHealth = () => schedulerCoordinator.health();
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -62,10 +75,19 @@ app.use(webhookRouter);
 app.use('/api/payments/omise/webhook', express.raw({ type:'application/json', limit:'256kb' }), omiseWebhookRouter);
 app.use(express.json({ limit: '10mb' }));
 
-app.use('/api', (req, res, next) => {
+app.use('/api', async (req, res, next) => {
   const limit = process.env.NODE_ENV === 'test' ? 2000 : Number(process.env.API_RATE_LIMIT_PER_5_MINUTES || 300);
-  const key = `${req.ip}:${req.path.startsWith('/admin') ? 'admin' : 'api'}`;
-  const result = require('./utils/rateLimiter').checkAndRecord(key, limit, 5 * 60000);
+  const domain = req.path.startsWith('/admin') ? 'admin_api'
+    : req.path.startsWith('/integrations/v1/') ? 'integration_edge' : 'generic_api';
+  let result;
+  try { result = await sharedRateLimiter.checkAndRecord(req.ip || 'unknown', limit, 5 * 60000, { domain }); }
+  catch (error) {
+    if (req.path.startsWith('/integrations/v1/')) {
+      const { publicIntegrationError } = require('./domain/integrationErrorContract');
+      return res.status(503).json({ status:'retrying', error:publicIntegrationError(error, { status:503 }) });
+    }
+    return res.status(503).json({ error:'rate_limit_unavailable', message:'ระบบจำกัดอัตราการใช้งานไม่พร้อม กรุณาลองใหม่ภายหลัง' });
+  }
   if (!result.allowed) {
     res.setHeader('Retry-After', Math.ceil(result.retryAfterMs / 1000));
     if (req.path.startsWith('/integrations/v1/')) {
@@ -74,7 +96,7 @@ app.use('/api', (req, res, next) => {
     }
     return res.status(429).json({ error:'rate_limited', message:'เรียกใช้งานถี่เกินไป กรุณารอสักครู่' });
   }
-  next();
+  return next();
 });
 
 app.use('/api/admin', adminRouter);
@@ -103,9 +125,14 @@ app.get('/ready', async (req, res) => {
   let database = true; let databaseError = null;
   try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
   const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
+  const rateLimits = await sharedRateLimiter.getHealth();
+  const plusPaymentStorage = paymentAvailable(loadFeatureFlags())
+    ? await plusPaymentRepository.getHealth()
+    : { available: true, configured: false };
   const consultationRealtime = app.locals.consultationRealtimeHealth?.() || { configured:false, started:false };
-  const ready = database && missing.length === 0;
-  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, schedulerHeartbeatAt, notifications, consultationRealtime });
+  const scheduler = schedulerCoordinator.health();
+  const ready = database && rateLimits.available && plusPaymentStorage.available && missing.length === 0;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, rateLimits, plusPaymentStorage, schedulerHeartbeatAt, scheduler, notifications, consultationRealtime });
 });
 app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 
@@ -131,31 +158,33 @@ function schedulerReferenceDate() {
 }
 function startScheduler() {
   const heartbeat = () => { schedulerHeartbeatAt = new Date().toISOString(); };
-  scheduledTasks.push(cron.schedule('*/15 * * * *', () => { cardService.expireOldCards().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('*/15 * * * *', () => { cardService.sendPendingCardReminders().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('0 7 * * *', () => { reminderService.sendAppointmentReminders().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('0 18 * * 0', () => { reminderService.sendWeeklySummary().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('0 18 * * *', () => { reminderService.sendTomorrowSummaryToCenters().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('*/30 * * * *', () => { transportService.remindPendingFamilyChoices().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('0 9 * * *', () => { heartbeat(); subscriptionService.sendExpiryReminders().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('*/2 * * * *', () => { heartbeat(); notificationService.processPending().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('*/1 * * * *', () => { heartbeat(); webhookRouter.processPendingWebhookEvents?.().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('*/1 * * * *', () => {
-    heartbeat(); integrationEventService.processDue().catch(() => console.error('integration inbox processing unavailable'));
-  }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('15 2 * * *', () => { heartbeat(); require('./services/centerService').reconcileAllCenterStaff().catch(console.error); }, { timezone: TZ }));
-  scheduledTasks.push(cron.schedule('45 2 * * *', () => { heartbeat(); require('./services/retentionService').purgeExpiredSourceImages().catch(console.error); }, { timezone: TZ }));
+  const run = (jobName, task) => {
+    heartbeat();
+    schedulerCoordinator.run(jobName, task).catch(() => {});
+  };
+  scheduledTasks.push(cron.schedule('*/15 * * * *', () => run('cardExpiry', () => cardService.expireOldCards()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/15 * * * *', () => run('pendingCardReminders', () => cardService.sendPendingCardReminders()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 7 * * *', () => run('appointmentReminders', () => reminderService.sendAppointmentReminders()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 18 * * 0', () => run('appointmentWeeklySummary', () => reminderService.sendWeeklySummary()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 18 * * *', () => run('centerTomorrowSummary', () => reminderService.sendTomorrowSummaryToCenters()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/30 * * * *', () => run('transportReminders', () => transportService.remindPendingFamilyChoices()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('0 9 * * *', () => run('subscriptionExpiry', () => subscriptionService.sendExpiryReminders()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/2 * * * *', () => run('notificationRetry', () => notificationService.processPending()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('webhookInbox', () => webhookRouter.processPendingWebhookEvents?.()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('integrationInbox', () => integrationEventService.processDue()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('consultationLifecycle', () => consultationLifecycleScheduler.runDueWork()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('plusPaymentReconciliation', () => plusPaymentScheduler.runDueWork()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('15 2 * * *', () => run('centerStaffReconciliation', () => require('./services/centerService').reconcileAllCenterStaff()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('45 2 * * *', () => run('sourceImageRetention', () => require('./services/retentionService').purgeExpiredSourceImages()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('10 * * * *', () => run('sharedRateLimitCleanup', () => sharedRateLimiter.cleanupExpired()), { timezone: TZ }));
   // Staging only: run time-sensitive jobs every minute with an optional clock
   // offset. Production never enters this branch.
   if (process.env.STAGING_MODE === 'true') {
     scheduledTasks.push(cron.schedule('* * * * *', () => {
       const referenceDate = schedulerReferenceDate();
-      heartbeat();
-      Promise.all([
-        reminderService.sendAppointmentReminders(referenceDate),
-        reminderService.sendTomorrowSummaryToCenters(referenceDate),
-        subscriptionService.sendExpiryReminders(referenceDate),
-      ]).catch(console.error);
+      run('appointmentReminders', () => reminderService.sendAppointmentReminders(referenceDate));
+      run('centerTomorrowSummary', () => reminderService.sendTomorrowSummaryToCenters(referenceDate));
+      run('subscriptionExpiry', () => subscriptionService.sendExpiryReminders(referenceDate));
     }, { timezone: TZ }));
   }
   heartbeat();
@@ -189,3 +218,4 @@ module.exports.startScheduler = startScheduler;
 module.exports.stopScheduler = stopScheduler;
 module.exports.schedulerReferenceDate = schedulerReferenceDate;
 module.exports.createBackendHttpServer = createBackendHttpServer;
+module.exports.schedulerCoordinator = schedulerCoordinator;

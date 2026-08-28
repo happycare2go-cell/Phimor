@@ -1,5 +1,11 @@
 # PHIMOR database migrations
 
+The current code sequence ends at `0015_add_plus_payment_v1.js`. The canonical
+tail is `0013_add_consultation_payment_recovery.js`, then
+`0014_create_shared_rate_limit_windows.js`, then `0015_add_plus_payment_v1.js`.
+Plus payment must remain disabled until migration 0015 is applied after every
+earlier pending migration and the compatible backend is ready to deploy.
+
 Migrations are explicit operations. The application does not run them during startup.
 
 Commands (from `backend`):

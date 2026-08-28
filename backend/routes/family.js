@@ -5,6 +5,7 @@ const router = express.Router();
 const { requireAuth, requireFamilyAccess } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const familyService = require('../services/familyService');
+const privacyService = require('../services/privacyService');
 const healthHistoryService = require('../services/careProfileHealthHistoryService');
 const { CareProfiles, CareProfileMembers } = require('../db');
 
@@ -49,29 +50,48 @@ router.post('/invite/:token/accept', asyncHandler(async (req, res) => {
 
 // GET /api/consent/check — ตรวจสอบว่าเคยยินยอมแล้วหรือยัง (ข้อ H6 — ใช้ตัดสินใจว่าจะบล็อกหน้าหลักไหม)
 router.get('/consent/check', asyncHandler(async (req, res) => {
-  const hasConsent = await familyService.hasValidConsent(req.user.lineUserId);
-  res.json({ hasConsent });
+  res.json(await familyService.getConsentState(req.user.lineUserId));
 }));
 
 // POST /api/consent — บันทึกการยินยอม PDPA (ข้อ H6)
 router.post('/consent', asyncHandler(async (req, res) => {
   const { accepted } = req.body;
-  const consent = await familyService.recordConsent(req.user.lineUserId, !!accepted);
-  res.status(201).json(consent);
+  if (accepted !== true) return res.status(400).json({ error:'confirmation_required', message:'กรุณายืนยันว่าต้องการให้ความยินยอม' });
+  await familyService.recordConsent(req.user.lineUserId, true);
+  res.status(201).json(await familyService.getConsentState(req.user.lineUserId));
 }));
 
 router.post('/consent/withdraw', asyncHandler(async (req, res) => {
-  const consent = await familyService.recordConsent(req.user.lineUserId, false);
-  await require('../db').audit('consent.withdrawn', req.user.lineUserId, { consentId: consent.consent_id });
-  res.json({ ok: true, message: 'บันทึกการถอนความยินยอมแล้ว เจ้าหน้าที่จะดำเนินการตามคำขอข้อมูลต่อไป' });
+  if (req.body?.confirmed !== true) return res.status(400).json({ error:'confirmation_required', message:'กรุณายืนยันการถอนความยินยอม' });
+  const before = await familyService.getConsentState(req.user.lineUserId);
+  if (before.status !== 'withdrawn') await familyService.recordConsent(req.user.lineUserId, false);
+  res.json({ ok:true, consent:await familyService.getConsentState(req.user.lineUserId), message:'บันทึกการถอนความยินยอมแล้ว ข้อมูลเดิมไม่ได้ถูกลบอัตโนมัติ' });
 }));
 
 router.post('/data-requests', asyncHandler(async (req, res) => {
-  const type = String(req.body.type || 'export');
-  if (!['export', 'delete', 'correct', 'restrict'].includes(type)) return res.status(400).json({ error: 'bad_request', message: 'ประเภทคำขอไม่ถูกต้อง' });
-  const request = await require('../db').DataSubjectRequests.insert({ request_id: require('../db').id('DSR'), line_user_id: req.user.lineUserId, type, status: 'pending', note: String(req.body.note || '').slice(0, 1000), requested_at: require('../db').now() });
-  await require('../db').audit('privacy.data_request_created', req.user.lineUserId, { requestId: request.request_id, type });
-  res.status(201).json(request);
+  try {
+    const result = await privacyService.createRequest({
+      lineUserId:req.user.lineUserId, displayName:req.user.claims?.name,
+      type:req.body?.type, note:req.body?.note,
+    });
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (error) {
+    if (error instanceof privacyService.PrivacyRequestError) return res.status(error.status).json({ error:error.code, message:error.message });
+    throw error;
+  }
+}));
+
+router.get('/data-requests', asyncHandler(async (req, res) => {
+  res.json({ requests:await privacyService.listOwnRequests(req.user.lineUserId) });
+}));
+
+router.get('/data-requests/:requestId', asyncHandler(async (req, res) => {
+  try {
+    res.json({ request:await privacyService.getOwnRequest({ lineUserId:req.user.lineUserId, requestId:req.params.requestId }) });
+  } catch (error) {
+    if (error instanceof privacyService.PrivacyRequestError) return res.status(error.status).json({ error:error.code, message:error.message });
+    throw error;
+  }
 }));
 
 // POST /api/care-profile/independent — สร้าง Care Profile อิสระเอง (ข้อ N1)
@@ -102,15 +122,31 @@ router.get('/caregiver-invites/:token', asyncHandler(async (req, res) => {
 
 router.post('/caregiver-invites/:token/accept', asyncHandler(async (req, res) => {
   if (!await familyService.hasValidConsent(req.user.lineUserId)) return res.status(412).json({ error:'consent_required', message:'กรุณายืนยันความยินยอมก่อนใช้งาน' });
-  const result = await familyService.acceptCaregiverInvite(req.params.token, req.user.lineUserId);
+  const result = await familyService.acceptCaregiverInvite(req.params.token, req.user.lineUserId, { displayName:req.user.claims?.name });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
-  res.status(201).json(result.member);
+  res.status(201).json({ memberId:result.member.member_id, role:result.member.role, status:result.member.status });
 }));
 
 router.get('/care-profile/:careProfileId/caregivers', requireFamilyAccess(), asyncHandler(async (req, res) => {
   if (req.familyRole !== 'owner') return res.status(403).json({ error: 'forbidden' });
   const result = await familyService.listCaregivers(req.params.careProfileId, req.user.lineUserId);
   res.json(result);
+}));
+
+router.delete('/care-profile/:careProfileId/caregivers/member/:memberId', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  const member = await familyService.caregiverByMemberId({ careProfileId:req.params.careProfileId, memberId:req.params.memberId, requesterLineId:req.user.lineUserId });
+  if (!member) return res.status(404).json({ error:'not_found', message:'ไม่พบผู้ดูแลร่วม' });
+  const result = await familyService.revokeCaregiver({ careProfileId:req.params.careProfileId, targetLineId:member.line_user_id, requesterLineId:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(result);
+}));
+
+router.patch('/care-profile/:careProfileId/caregivers/member/:memberId', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  const member = await familyService.caregiverByMemberId({ careProfileId:req.params.careProfileId, memberId:req.params.memberId, requesterLineId:req.user.lineUserId });
+  if (!member) return res.status(404).json({ error:'not_found', message:'ไม่พบผู้ดูแลร่วม' });
+  const result = await familyService.updateCaregiverPermissions({ careProfileId:req.params.careProfileId, targetLineId:member.line_user_id, permissions:req.body.permissions, requesterLineId:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json({ memberId:result.member.member_id, permissions:result.member.permissions });
 }));
 
 router.delete('/care-profile/:careProfileId/caregivers/:targetLineId', requireFamilyAccess(), asyncHandler(async (req, res) => {
@@ -122,7 +158,7 @@ router.delete('/care-profile/:careProfileId/caregivers/:targetLineId', requireFa
 router.patch('/care-profile/:careProfileId/caregivers/:targetLineId', requireFamilyAccess(), asyncHandler(async (req, res) => {
   const result = await familyService.updateCaregiverPermissions({ careProfileId:req.params.careProfileId, targetLineId:req.params.targetLineId, permissions:req.body.permissions, requesterLineId:req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
-  res.json(result.member);
+  res.json({ memberId:result.member.member_id, permissions:result.member.permissions, status:result.member.status });
 }));
 
 router.post('/care-profile/:careProfileId/leave', requireFamilyAccess(), asyncHandler(async (req, res) => {

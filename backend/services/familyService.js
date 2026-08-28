@@ -11,12 +11,25 @@ async function recordConsent(lineUserId, accepted) {
   const consent = await Consents.insert({
     consent_id: id('CNS'), line_user_id: lineUserId, accepted, version: CONSENT_VERSION, at: now(),
   });
+  await audit(accepted ? 'consent.granted' : 'consent.withdrawn', lineUserId, {
+    consentId:consent.consent_id, version:CONSENT_VERSION,
+  });
   return consent;
 }
 
+async function getConsentState(lineUserId) {
+  const rows = await Consents.findAll();
+  const latest = rows.find((row) => row.line_user_id === lineUserId && row.version === CONSENT_VERSION) || null;
+  return {
+    hasConsent:latest?.accepted === true,
+    status:latest ? (latest.accepted === true ? 'active' : 'withdrawn') : 'not_given',
+    version:CONSENT_VERSION,
+    updatedAt:latest?.at || null,
+  };
+}
+
 async function hasValidConsent(lineUserId) {
-  const c = await Consents.findOne((x) => x.line_user_id === lineUserId && x.accepted && x.version === CONSENT_VERSION);
-  return !!c;
+  return (await getConsentState(lineUserId)).hasConsent;
 }
 
 async function createCaregiverInvite({ careProfileId, requesterLineId }) {
@@ -35,12 +48,13 @@ async function getCaregiverInvite(token) {
   return profile ? { ok:true, invite, patientName:profile.patient_name } : { ok:false, reason:'ไม่พบ Care Profile' };
 }
 
-async function acceptCaregiverInvite(token, lineUserId) {
+async function acceptCaregiverInvite(token, lineUserId, identity = {}) {
   const found = await getCaregiverInvite(token); if (!found.ok) return found;
   if (found.invite.created_by === lineUserId) return { ok:false, reason:'เจ้าของ Care Profile ไม่จำเป็นต้องรับคำเชิญของตนเอง' };
   let member = await CareProfileMembers.findOne((m) => m.care_profile_id === found.invite.care_profile_id && m.line_user_id === lineUserId);
-  if (member) member = await CareProfileMembers.update((m) => m.member_id === member.member_id, { status:'active', role:'caregiver', rejoined_at:now() });
-  else member = await CareProfileMembers.insert({ member_id:id('CPM'), care_profile_id:found.invite.care_profile_id, line_user_id:lineUserId, role:'caregiver', status:'active', permissions:['view','edit_profile','manage_appointments','manage_medications','decide_transport'], joined_at:now(), invited_by:found.invite.created_by });
+  const displayName = typeof identity.displayName === 'string' ? identity.displayName.trim().slice(0, 160) : null;
+  if (member) member = await CareProfileMembers.update((m) => m.member_id === member.member_id, { status:'active', role:'caregiver', rejoined_at:now(), display_name:displayName || member.display_name || null });
+  else member = await CareProfileMembers.insert({ member_id:id('CPM'), care_profile_id:found.invite.care_profile_id, line_user_id:lineUserId, display_name:displayName, role:'caregiver', status:'active', permissions:['view','edit_profile','manage_appointments','manage_medications','decide_transport'], joined_at:now(), invited_by:found.invite.created_by });
   await CareProfileShareInvites.update((i) => i.invite_id === found.invite.invite_id, { used_at:now(), used_by:lineUserId, status:'used' });
   await audit('care_profile.caregiver_joined', lineUserId, { careProfileId:found.invite.care_profile_id, invitedBy:found.invite.created_by });
   return { ok:true, member };
@@ -121,7 +135,18 @@ async function listCaregivers(careProfileId, requesterLineId) {
   if (!profile) return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้น' };
   const members = await CareProfileMembers.findWhere((m) => m.care_profile_id === careProfileId && m.status === 'active');
   const invites = await CareProfileShareInvites.findWhere((i) => i.care_profile_id === careProfileId && i.status === 'active');
-  return { ok: true, ownerLineId: profile.owner_line_id, members, invites };
+  const { displayIdentity } = require('../utils/safeIdentity');
+  return { ok: true, members:members.map((member) => ({
+    memberId:member.member_id,
+    displayIdentity:displayIdentity({ displayName:member.display_name, lineUserId:member.line_user_id }),
+    role:member.role || 'caregiver', status:member.status, permissions:member.permissions || ['view'],
+  })), pendingInviteCount:invites.length };
+}
+
+async function caregiverByMemberId({ careProfileId, memberId, requesterLineId }) {
+  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId && p.owner_line_id === requesterLineId);
+  if (!profile) return null;
+  return CareProfileMembers.findOne((member) => member.care_profile_id === careProfileId && member.member_id === memberId);
 }
 
 async function revokeCaregiver({ careProfileId, targetLineId, requesterLineId }) {
@@ -336,9 +361,9 @@ const AI_RESTRICTED_MESSAGE =
   + 'ตอนนี้บันทึกนัดด้วยการพิมพ์ได้เลยค่ะ'; // ข้อ N4 — ต้องไม่รู้สึกถูกกีดกัน
 
 module.exports = {
-  recordConsent, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup,
+  recordConsent, getConsentState, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
   exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
   recordMedicationSnapshot, getMedicationHistory, createCaregiverInvite, getCaregiverInvite, acceptCaregiverInvite, canAccessProfile, hasPermission,
-  listCaregivers, revokeCaregiver, updateCaregiverPermissions, leaveCareProfile, updateFamilyAppointment, cancelFamilyAppointment,
+  listCaregivers, caregiverByMemberId, revokeCaregiver, updateCaregiverPermissions, leaveCareProfile, updateFamilyAppointment, cancelFamilyAppointment,
 };

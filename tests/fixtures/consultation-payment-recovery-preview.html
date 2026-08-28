@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PHIMOR Consultation Payment Recovery — Local Preview</title>
+  <link rel="stylesheet" href="../../liff-app/family/consultation-ui.css">
+  <style>
+    :root{--navy:#1c2b64;--gold:#deb14e;--gray:#5a6580;--bg:#f5f7fa;--ice:#e8ecf7}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:#1a1a2e;font:15px/1.5 "Sarabun","Noto Sans Thai",system-ui,sans-serif}.preview-shell{width:100%;min-height:100vh;padding:calc(18px + env(safe-area-inset-top)) 16px calc(22px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#eef3fb 0,#f8f9fc 150px)}.preview-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}.preview-avatar{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:#1c2b64;color:#fff;font-size:22px}.preview-head h1{margin:0;color:var(--navy);font-size:20px}.preview-head p{margin:2px 0 0;color:var(--gray);font-size:12px}.card{margin:0 0 12px;padding:16px;border-radius:14px;background:#fff;box-shadow:0 1px 5px rgba(28,43,100,.08)}.card h3{margin:0 0 4px;color:var(--navy);font-size:16px}.consultation-heading{align-items:center}.consultation-heading p{margin-top:2px}.consultation-payment{margin-top:14px;background:#fbfcff}.consultation-payment strong{display:block;color:var(--navy);font-size:16px}.consultation-payment__qr{width:190px!important;aspect-ratio:1;border:10px solid #fff;box-shadow:0 1px 8px rgba(0,0,0,.08);image-rendering:pixelated}.preview-status{display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:12px;border-radius:12px;background:#eef4ff;color:#26385f}.preview-status--wait{background:#fff8df;color:#6f5515}.preview-status--success{background:#eef9f5;color:#175742}.preview-status--closed{background:#f0f2f5;color:#475467}.preview-status__icon{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.82);font-weight:800}.preview-status strong{display:block}.preview-status p{margin:2px 0 0;font-size:12px}.consultation-case-summary{display:block}.consultation-case-summary h4{font-size:15px}.consultation-open-chat{display:block;width:100%;padding:12px;border:0;border-radius:9px;background:var(--navy);color:#fff;font:600 14px inherit}.btn{display:block;width:100%;min-height:44px;padding:11px;border:0;border-radius:9px;background:var(--navy);color:#fff;font:600 14px inherit}.preview-note{margin:14px 2px 0;color:var(--gray);font-size:11px;text-align:center}.preview-ref{overflow-wrap:anywhere}.preview-hidden{display:none!important}
+  </style>
+</head>
+<body>
+  <main class="preview-shell">
+    <header class="preview-head"><div class="preview-avatar" aria-hidden="true">พ</div><div><h1>ปรึกษาเภสัชกร</h1><p>Care Profile ที่เลือก: คุณแม่ตัวอย่าง</p></div></header>
+    <section class="card consultation-panel" aria-labelledby="stateTitle">
+      <div class="consultation-heading"><div><h3 id="stateTitle">กู้คืนรายการปรึกษา</h3><p>ระบบตรวจสอบรายการเดิมอย่างปลอดภัย โดยไม่สร้างรายการชำระเงินซ้ำ</p></div></div>
+
+      <div id="pending" class="preview-state">
+        <div class="preview-status"><span class="preview-status__icon">↻</span><div><strong>พบรายการชำระเงินเดิม</strong><p>เปิด LIFF อีกครั้งแล้ว ระบบกู้คืนรายการที่ยังชำระได้</p></div></div>
+        <div class="consultation-payment"><strong>PromptPay • 100 บาท</strong><p>ยังไม่ได้ชำระ • สแกน QR เดิมเพื่อชำระ 100 บาท</p><p class="consultation-payment-reference preview-ref">เลขอ้างอิงการชำระเงิน: ORDER-DEMO-0828</p><img class="consultation-payment__qr" alt="QR ตัวอย่างสำหรับการตรวจ UX" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='210' height='210' viewBox='0 0 21 21'%3E%3Crect width='21' height='21' fill='white'/%3E%3Cg fill='%231c2b64'%3E%3Cpath d='M1 1h7v7H1zm2 2v3h3V3zM13 1h7v7h-7zm2 2v3h3V3zM1 13h7v7H1zm2 2v3h3v-3z' fill-rule='evenodd'/%3E%3Cpath d='M10 2h2v2h-2zm0 4h2v3h-2zm4 4h2v2h-2zm4 0h2v4h-2zm-8 2h3v2h-3zm5 2h2v2h-2zm-5 3h2v3h-2zm3-1h2v4h-2zm4 1h3v3h-3z'/%3E%3C/g%3E%3C/svg%3E"></div>
+      </div>
+
+      <div id="confirming" class="preview-state preview-hidden"><div class="preview-status preview-status--wait"><span class="preview-status__icon">…</span><div><strong>รอการยืนยันการชำระเงิน</strong><p>ระบบได้รับสถานะแล้วและกำลังตรวจสอบกับผู้ให้บริการ คุณไม่ต้องสร้างรายการใหม่</p></div></div><p class="consultation-payment-reference preview-ref">เลขอ้างอิงการชำระเงิน: ORDER-DEMO-0828</p><button class="btn" type="button">ตรวจสอบสถานะอีกครั้ง</button></div>
+
+      <div id="queued" class="preview-state preview-hidden"><div class="preview-status preview-status--wait"><span class="preview-status__icon">✓</span><div><strong>ชำระเงินแล้ว • รอเภสัชกรรับเคส</strong><p>ระยะเวลา 24 ชั่วโมงจะเริ่มเมื่อเภสัชกรรับเคส ห้องแชทจะเปิดหลังรับเคส</p></div></div><section class="consultation-case-summary"><h4>Consult Case DEMO-0828</h4><p class="consultation-help">เข้าคิว 28 ส.ค. 2569 · 10:05</p><p class="consultation-case__reference">เลขอ้างอิง ORDER-DEMO-0828</p></section></div>
+
+      <div id="accepted" class="preview-state preview-hidden"><div class="preview-status preview-status--success"><span class="preview-status__icon">✓</span><div><strong>เภสัชกรรับเคสแล้ว</strong><p>ห้องแชทพร้อมใช้งาน และระยะเวลา 24 ชั่วโมงเริ่มแล้ว</p></div></div><section class="consultation-case-summary"><h4>เภสัชกร ณิชา</h4><p class="consultation-help">กำลังปรึกษา • เหลือเวลา 23 ชม. 47 นาที</p><button class="consultation-open-chat" type="button">เข้าห้องแชท</button></section></div>
+
+      <div id="closed" class="preview-state preview-hidden"><div class="preview-status preview-status--closed"><span class="preview-status__icon">■</span><div><strong>เคสหมดอายุ / ปิดแล้ว</strong><p>การปรึกษาสิ้นสุดแล้ว แต่ข้อความที่บันทึกไว้ยังเปิดอ่านย้อนหลังได้</p></div></div><section class="consultation-case-summary"><h4>Consult Case DEMO-0828</h4><p class="consultation-help">สิ้นสุด 29 ส.ค. 2569 · 10:18</p><button class="consultation-open-chat" type="button">เปิดอ่านข้อความย้อนหลัง</button></section></div>
+    </section>
+    <p class="preview-note">ข้อมูลตัวอย่างสำหรับตรวจ UX ในเครื่องเท่านั้น • ไม่เชื่อมต่อ LINE, Omise หรือฐานข้อมูล</p>
+  </main>
+  <script>
+    const names={f1:'pending',f2:'confirming',f3:'queued',f4:'accepted',f5:'closed'};
+    const show=()=>{const selected=names[location.hash.slice(1).toLowerCase()]||'pending';document.querySelectorAll('.preview-state').forEach((node)=>node.classList.toggle('preview-hidden',node.id!==selected));document.documentElement.dataset.preview=selected;};
+    addEventListener('hashchange',show);show();
+  </script>
+</body>
+</html>
