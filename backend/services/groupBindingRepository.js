@@ -24,6 +24,11 @@ async function findActiveCenterBinding(groupId, bindings = GroupBindings) {
     && binding.line_group_id === groupId);
 }
 
+async function findActiveCenterBindingByCenter(centerId, bindings = GroupBindings) {
+  return bindings.findOne((binding) => isActiveGroupBinding(binding, 'center_staff')
+    && binding.center_id === centerId);
+}
+
 async function findActiveCare2goBinding(bindings = GroupBindings) {
   return bindings.findOne((binding) => isActiveGroupBinding(binding, 'care2go_ops'));
 }
@@ -35,5 +40,6 @@ module.exports = {
   findActiveFamilyBinding,
   listActiveBindingsForGroup,
   findActiveCenterBinding,
+  findActiveCenterBindingByCenter,
   findActiveCare2goBinding,
 };

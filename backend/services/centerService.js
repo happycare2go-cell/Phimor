@@ -538,51 +538,64 @@ async function getCenterAppointments(centerId) {
 }
 
 async function updateAppointment({ centerId, appointmentId, patch, requesterLineId }) {
-  const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
-  const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
-  const appointment = await require('../db').Appointments.findOne(
-    (a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id) && a.status !== 'cancelled'
-  );
-  if (!appointment) return { ok: false, reason: 'ไม่พบนัดที่ใช้งานอยู่ในสาขานี้' };
   if (patch.datetime && new Date(patch.datetime).getTime() <= Date.now()) return { ok: false, reason: 'วันเวลานัดต้องเป็นเวลาในอนาคต' };
-  const clean = {};
-  for (const [input, stored] of Object.entries({ hospital:'hospital', datetime:'datetime', note:'note', clinicOrDepartment:'clinic_or_department', reasonForVisit:'reason_for_visit', relatedCondition:'related_condition', doctorName:'doctor_name' })) {
-    if (input in patch) clean[stored] = patch[input];
+  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+    const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
+    const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
+    const appointment = await require('../db').Appointments.findOne(
+      (a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id) && a.status !== 'cancelled'
+    );
+    if (!appointment) return { missing:true };
+    const { patch:clean, changedFields } = require('./appointmentNotificationService').materialPatch(appointment, patch);
+    if (changedFields.length === 0) return { appointment, changedFields, noChange:true };
+    const update = { ...clean, updated_by:requesterLineId, updated_at:now(), version:Number(appointment.version || 1) + 1,
+      last_material_changed_fields:changedFields };
+    // เมื่อแก้วันนัด ให้สิทธิ์ระบบส่งการเตือนตามวันใหม่อีกครั้ง
+    if (changedFields.includes('datetime')) { update.day_before_reminded = false; update.same_day_reminded = false; }
+    const updated = await require('../db').Appointments.update((a) => a.appointment_id === appointmentId, update);
+    return { appointment:updated, changedFields };
+  });
+  if (mutation.missing) return { ok: false, reason: 'ไม่พบนัดที่ใช้งานอยู่ในสาขานี้' };
+  if (mutation.noChange) {
+    const notificationState = Array.isArray(mutation.appointment.last_material_changed_fields)
+      ? await require('./appointmentNotificationService').notifyLifecycle({
+        eventType:'updated', appointment:mutation.appointment,
+        changedFields:mutation.appointment.last_material_changed_fields,
+      })
+      : { status:'not_needed' };
+    return { ok:true, appointment:mutation.appointment, noChange:true, notificationState };
   }
-  clean.updated_by = requesterLineId; clean.updated_at = now(); clean.version = Number(appointment.version || 1) + 1;
-  // เมื่อแก้วันนัด ให้สิทธิ์ระบบส่งการเตือนตามวันใหม่อีกครั้ง
-  if ('datetime' in patch) { clean.day_before_reminded = false; clean.same_day_reminded = false; }
-  const updated = await require('../db').Appointments.update((a) => a.appointment_id === appointmentId, clean);
   await require('./transportService').notifyAppointmentChanged(appointmentId, 'updated', requesterLineId);
-  await notifyFamilyAppointmentEvent(updated.care_profile_id, `⚠️ ศูนย์แก้ไขข้อมูลนัด\n${updated.hospital} · ${updated.datetime}`, `appointment-updated:${appointmentId}:${clean.version}`);
-  await audit('appointment.updated', requesterLineId, { centerId, appointmentId, changedFields: Object.keys(clean) });
-  return { ok: true, appointment: updated };
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({
+    eventType:'updated', appointment:mutation.appointment, changedFields:mutation.changedFields,
+  });
+  await audit('appointment.updated', requesterLineId, { centerId, appointmentId, changedFields:mutation.changedFields, version:mutation.appointment.version });
+  return { ok: true, appointment: mutation.appointment, notificationState };
 }
 
 async function cancelAppointment({ centerId, appointmentId, requesterLineId, reason = '' }) {
   const { Appointments, TransportPlans } = require('../db');
-  const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
-  const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
-  const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id));
-  if (!appointment) return { ok: false, reason: 'ไม่พบนัดในสาขานี้' };
-  if (appointment.status === 'cancelled') return { ok: true, appointment, alreadyCancelled: true };
-  const cancelled = await Appointments.update((a) => a.appointment_id === appointmentId, {
-    status: 'cancelled', cancelled_at: now(), cancelled_by: requesterLineId, cancellation_reason: reason || '',
+  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+    const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
+    const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
+    const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id));
+    if (!appointment) return { missing:true };
+    if (appointment.status === 'cancelled') return { appointment, alreadyCancelled:true };
+    const cancelled = await Appointments.update((a) => a.appointment_id === appointmentId, {
+      status:'cancelled', cancelled_at:now(), cancelled_by:requesterLineId, cancellation_reason:String(reason || '').trim(),
+    });
+    await TransportPlans.updateAll((p) => p.appointment_id === appointmentId, { status:'cancelled', cancelled_at:now() });
+    return { appointment:cancelled, alreadyCancelled:false };
   });
-  await TransportPlans.updateAll((p) => p.appointment_id === appointmentId, { status: 'cancelled', cancelled_at: now() });
+  if (mutation.missing) return { ok: false, reason: 'ไม่พบนัดในสาขานี้' };
+  if (mutation.alreadyCancelled) {
+    const notificationState = await require('./appointmentNotificationService').notifyLifecycle({ eventType:'cancelled', appointment:mutation.appointment });
+    return { ok:true, appointment:mutation.appointment, alreadyCancelled:true, notificationState };
+  }
   await require('./transportService').notifyAppointmentChanged(appointmentId, 'cancelled', requesterLineId);
-  await notifyFamilyAppointmentEvent(cancelled.care_profile_id, `❌ ศูนย์ยกเลิกนัด ${cancelled.hospital || ''}\nเหตุผล: ${reason || 'ไม่ระบุ'}`, `appointment-cancelled:${appointmentId}`);
+  const notificationState = await require('./appointmentNotificationService').notifyLifecycle({ eventType:'cancelled', appointment:mutation.appointment });
   await audit('appointment.cancelled', requesterLineId, { centerId, appointmentId, reason: reason || '' });
-  return { ok: true, appointment: cancelled };
-}
-
-async function notifyFamilyAppointmentEvent(careProfileId, text, dedupeKey) {
-  const profile = await require('../db').CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  const binding = await findActiveFamilyBinding(careProfileId);
-  const target = binding?.line_group_id || profile?.owner_line_id;
-  if (!target) return { ok:false, reason:'no_family_target' };
-  const identity = profile?.patient_name ? `${profile.patient_name} — ` : '';
-  return require('./notificationService').enqueueAndDeliver({ dedupeKey, to:target, kind:'appointment_changed', meta:{careProfileId}, messages:[{type:'text',text:`${identity}${text}`}] });
+  return { ok:true, appointment:mutation.appointment, notificationState };
 }
 
 // ── ข้อ J4/หมวดความปลอดภัย: หมุน API Key ของศูนย์ใหม่ (เพิกถอนของเดิมทันที) ──

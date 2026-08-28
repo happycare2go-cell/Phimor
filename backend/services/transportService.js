@@ -51,7 +51,18 @@ async function launchTransportChoice({ appointment, careProfileId, centerId, not
   const target = await resolveFamilyTarget(careProfileId, profile);
   if (target && notifyFamily) {
     const liffId = process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID';
-    await lineClient.pushMessage(target, [{ type:'text', text:`📅 ${profile?.patient_name || 'Care Profile'} — มีนัดใหม่ที่รอเลือกวิธีเดินทาง\n${appointment.hospital} — ${appointment.datetime}\n\nกรุณาเปิด Family LIFF เพื่อตรวจสอบและยืนยัน\nhttps://liff.line.me/${liffId}?view=transport` }]);
+    try {
+      await notificationService.enqueueAndDeliver({
+        dedupeKey:`transport-choice:${appointment.appointment_id}:family`,
+        to:target,
+        kind:'transport_choice_required',
+        meta:{ planId:plan.plan_id, appointmentId:appointment.appointment_id, careProfileId, audience:'family' },
+        messages:[{ type:'text', text:`📅 ${profile?.patient_name || 'Care Profile'} — กรุณาเลือกวิธีเดินทางสำหรับนัดนี้\n${appointment.hospital} — ${appointment.datetime}\n\nเปิด Family LIFF เพื่อตรวจสอบและยืนยัน\nhttps://liff.line.me/${liffId}?view=transport` }],
+      });
+    } catch (_error) {
+      // Transport Plan is authoritative. A temporary notification enqueue
+      // failure must not make appointment creation appear to have failed.
+    }
   }
   return plan;
 }

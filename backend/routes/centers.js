@@ -221,7 +221,7 @@ router.get('/residents/:residentId/clinical-summary', requireCenterStaff(['owner
 router.patch('/center/appointments/:appointmentId', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
   const result = await centerService.updateAppointment({ centerId:req.centerId, appointmentId:req.params.appointmentId, patch:req.body, requesterLineId:req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
-  res.json(result.appointment);
+  res.json({ ...result.appointment, notificationState:result.notificationState, noChange:result.noChange === true });
 }));
 
 router.post('/center/appointments/:appointmentId/cancel', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {

@@ -236,18 +236,19 @@ router.get('/appointments', requireFamilyAccess(), asyncHandler(async (req, res)
   res.json({ appointments: upcoming });
 }));
 router.post('/appointments', asyncHandler(async (req, res) => {
-  const { careProfileId, hospital, datetime, note } = req.body;
+  const { careProfileId, hospital, datetime, note, idempotencyKey } = req.body;
   if (!await familyService.hasPermission(careProfileId, req.user.lineUserId, 'manage_appointments')) return res.status(403).json({ error: 'forbidden' });
-  const result = await familyService.addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy: req.user.lineUserId });
+  const result = await familyService.addAppointmentByFamily({ careProfileId, hospital, datetime, note, createdBy: req.user.lineUserId, idempotencyKey });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason }); // ข้อ G2
-  res.status(201).json(result.appointment);
+  const { creation_idempotency_hash: _keyHash, creation_payload_hash: _payloadHash, ...appointment } = result.appointment;
+  res.status(result.duplicate ? 200 : 201).json({ ...appointment, notificationState:result.notificationState, duplicate:result.duplicate === true });
 }));
 
 router.patch('/care-profile/:careProfileId/appointments/:appointmentId', requireFamilyAccess(), asyncHandler(async (req, res) => {
   if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_appointments')) return res.status(403).json({ error:'forbidden' });
   const result = await familyService.updateFamilyAppointment({ careProfileId: req.params.careProfileId, appointmentId: req.params.appointmentId, patch: req.body, requesterLineId: req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.json(result.appointment);
+  res.json({ ...result.appointment, notificationState:result.notificationState, noChange:result.noChange === true });
 }));
 
 router.post('/care-profile/:careProfileId/appointments/:appointmentId/cancel', requireFamilyAccess(), asyncHandler(async (req, res) => {

@@ -1,9 +1,10 @@
 // services/reminderService.js — FR-G (แจ้งเตือนนัด 2 จังหวะ) FR-I (สรุปรายสัปดาห์ให้ศูนย์)
 
-const { Appointments, CareProfiles, Centers, Residents, now } = require('../db');
+const { Appointments, Centers, Residents, now } = require('../db');
 const { formatThaiDateTime } = require('../utils/thaiDate');
 const notificationService = require('./notificationService');
-const { findActiveFamilyBinding } = require('./groupBindingRepository');
+const { findActiveCenterBindingByCenter } = require('./groupBindingRepository');
+const appointmentNotificationService = require('./appointmentNotificationService');
 
 function bangkokDateKey(value) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -16,15 +17,6 @@ function isSameDay(a, b) {
     timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d);
   return key(a) === key(b);
-}
-
-async function resolveFamilyTargets(careProfileId) {
-  const gb = await findActiveFamilyBinding(careProfileId);
-  if (gb) return [gb.line_group_id];
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  if (!profile) return [];
-  const members = await require('../db').CareProfileMembers.findWhere((m) => m.care_profile_id === careProfileId && m.status === 'active' && m.notification_opt_out !== true);
-  return [...new Set([profile.owner_line_id, ...members.map((m) => m.line_user_id)].filter(Boolean))];
 }
 
 // ── FR-G1: เตือนล่วงหน้า 1 วัน และเช้าวันนัด ──
@@ -46,21 +38,23 @@ async function sendAppointmentReminders(referenceDate = new Date()) {
     const remindKey = `${kind}_reminded`;
     if (appt[remindKey]) continue; // กันเตือนซ้ำ
 
-    const targets = await resolveFamilyTargets(appt.care_profile_id);
-    if (targets.length) {
-      const profile = await CareProfiles.findOne((item) => item.care_profile_id === appt.care_profile_id);
-      const identity = profile?.patient_name ? `${profile.patient_name} — ` : '';
-      const label = kind === 'day_before' ? 'พรุ่งนี้มีนัด' : 'วันนี้มีนัด';
-      for (const target of targets) await require('./notificationService').enqueueAndDeliver({
-        dedupeKey:`appointment-reminder:${appt.appointment_id}:${kind}:${target}`,
-        to:target, kind:'appointment_reminder', meta:{appointmentId:appt.appointment_id,careProfileId:appt.care_profile_id,kind},
-        messages:[{ type: 'text', text: `⏰ ${identity}${label}: ${appt.hospital} — ${formatThaiDateTime(appt.datetime)}` }],
-      });
+    const delivery = await appointmentNotificationService.notifyReminder({
+      appointment:appt,
+      reminderKind:kind,
+      // The existing 18:00 Center tomorrow summary is the Center's one-day
+      // operational reminder. Add only the missing day-of Center intent here.
+      includeCenter:kind === 'same_day',
+      deliver:true,
+    });
+    const familyAccepted = delivery.family.some((item) => item.ok);
+    const createdIntent = delivery.family.some((item) => item.ok && !item.duplicate)
+      || Boolean(delivery.center?.ok && !delivery.center?.duplicate);
+    if (familyAccepted) {
       await Appointments.update((a) => a.appointment_id === appt.appointment_id && !a[remindKey], {
         [remindKey]: true, [`${kind}_reminded_at`]: now(),
       });
-      sent++;
     }
+    if (createdIntent) sent++;
   }
   return { sent };
 }
@@ -70,10 +64,12 @@ async function sendWeeklySummary(referenceDate = new Date()) {
   const weekStart = new Date(referenceDate);
   const weekEnd = new Date(referenceDate); weekEnd.setDate(weekEnd.getDate() + 7);
 
-  const centers = await Centers.findWhere((c) => c.status === 'active' && c.group_id);
+  const centers = await Centers.findWhere((c) => c.status === 'active');
   let sent = 0;
 
   for (const center of centers) {
+    const centerBinding = await findActiveCenterBindingByCenter(center.center_id);
+    if (!centerBinding) continue;
     const residents = await Residents.findWhere((r) => r.center_id === center.center_id && r.status === 'active');
     const residentProfileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
 
@@ -91,8 +87,8 @@ async function sendWeeklySummary(referenceDate = new Date()) {
       lines.push(`• ${resident?.full_name || 'ไม่ทราบชื่อ'} — ${a.hospital} · ${formatThaiDateTime(a.datetime)}`);
     }
     const delivery = await notificationService.enqueueAndDeliver({
-      dedupeKey:`appointment-weekly-summary:${center.center_id}:${bangkokDateKey(referenceDate)}:${center.group_id}`,
-      to:center.group_id, kind:'appointment_weekly_summary',
+      dedupeKey:`appointment-weekly-summary:${center.center_id}:${bangkokDateKey(referenceDate)}`,
+      to:centerBinding.line_group_id, kind:'appointment_weekly_summary',
       meta:{ centerId:center.center_id, summaryDate:bangkokDateKey(referenceDate) },
       messages:[{ type:'text', text:lines.join('\n') }],
     });
@@ -106,10 +102,12 @@ async function sendTomorrowSummaryToCenters(referenceDate = new Date()) {
   const { TransportPlans } = require('../db');
   const tomorrow = new Date(referenceDate); tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const centers = await Centers.findWhere((c) => c.status === 'active' && c.group_id);
+  const centers = await Centers.findWhere((c) => c.status === 'active');
   let sent = 0;
 
   for (const center of centers) {
+    const centerBinding = await findActiveCenterBindingByCenter(center.center_id);
+    if (!centerBinding) continue;
     const residents = await Residents.findWhere((r) => r.center_id === center.center_id && r.status === 'active');
     const profileToResident = new Map(residents.filter((r) => r.care_profile_id).map((r) => [r.care_profile_id, r]));
 
@@ -136,8 +134,8 @@ async function sendTomorrowSummaryToCenters(referenceDate = new Date()) {
 
     const summaryDate = bangkokDateKey(tomorrow);
     const delivery = await notificationService.enqueueAndDeliver({
-      dedupeKey:`appointment-tomorrow-summary:${center.center_id}:${summaryDate}:${center.group_id}`,
-      to:center.group_id, kind:'appointment_tomorrow_summary',
+      dedupeKey:`appointment-tomorrow-summary:${center.center_id}:${summaryDate}`,
+      to:centerBinding.line_group_id, kind:'appointment_tomorrow_summary',
       meta:{ centerId:center.center_id, summaryDate },
       messages:[{ type:'text', text:lines.join('\n') }],
     });

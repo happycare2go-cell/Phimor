@@ -207,7 +207,7 @@ async function patchCard(cardId, { residentId, appointment, medications, doctorN
 // ⚠️ เฉพาะเจ้าของศูนย์และผู้จัดการเท่านั้นที่ยืนยันได้ (พนักงานทั่วไปยืนยันไม่ได้)
 //    เหตุผล: ต้องมีผู้รับผิดชอบชัดเจนต่อข้อมูลที่ส่งถึงครอบครัว และป้องกันการกดยืนยันโดยไม่ตรวจสอบ
 async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
-  return require('../db').withTransaction(`card-confirm:${cardId}`, async () => {
+  const result = await require('../db').withTransaction(`card-confirm:${cardId}`, async () => {
   const card = await PendingCards.findOne((c) => c.card_id === cardId);
   if (!card) return { ok: false, reason: 'ไม่พบการ์ด' };
 
@@ -299,10 +299,11 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   // บันทึกลง Care Profile ถ้าผูกแล้ว
   let careProfile = null;
   let transportPlan = null;
+  let createdAppointment = null;
   if (resident.care_profile_id) {
     careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
     if (data.appointment) {
-      const appointment = await Appointments.insert({
+      createdAppointment = await Appointments.insert({
         appointment_id: id('APT'), care_profile_id: resident.care_profile_id,
         hospital: data.appointment.hospital, datetime: data.appointment.datetime, note: data.appointment.note || '',
         clinic_or_department: data.appointment.clinicOrDepartment || '',
@@ -314,7 +315,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
         status: 'confirmed', confirmed_from_card_id: cardId,
       });
       const transportService = require('./transportService');
-      transportPlan = await transportService.launchTransportChoice({ appointment, careProfileId:resident.care_profile_id, centerId:card.center_id, notifyFamily:false });
+      transportPlan = await transportService.launchTransportChoice({ appointment:createdAppointment, careProfileId:resident.care_profile_id, centerId:card.center_id, notifyFamily:false });
     }
     let medicationSnapshotId = null;
     if ((data.medications || []).length > 0) {
@@ -335,7 +336,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   }
 
   // ── FR-F: ส่งเข้ากลุ่มครอบครัว ──
-  let sentToFamily = false, queuedForLater = false;
+  let sentToFamily = false, queuedForLater = false, postCommitFamilyDelivery = null;
   if (resident.care_profile_id) {
     const groupBinding = await findActiveFamilyBinding(resident.care_profile_id);
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
@@ -352,8 +353,9 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
         },
       }];
       if (transportPlan && data.appointment) messages.push({ type:'text', text:`📅 ${resident.full_name} — กรุณาเปิด Family LIFF เพื่อเลือกวิธีเดินทางสำหรับนัดนี้\nhttps://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?view=transport` });
-      await lineClient.pushMessage(target, messages);
-      sentToFamily = true;
+      // Provider I/O happens only after the appointment/card transaction has
+      // committed. A LINE outage must not roll back authoritative care data.
+      postCommitFamilyDelivery = { target, messages, residentId:resident.resident_id, cardId };
     } else {
       queuedForLater = true; // ข้อ F3: เก็บไว้ส่งย้อนหลังเมื่อผูกสำเร็จ
     }
@@ -365,8 +367,28 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
     await require('./deliveryService').queueForResident({ residentId:resident.resident_id, cardId, messages:delayedMessages });
   }
 
-  return { ok: true, status: 'confirmed', confirmedBy: confirmedByLineId, confirmedAt: now(), sentToFamily, queuedForLater, submittedBy: card.submitted_by };
+  return { ok: true, status: 'confirmed', confirmedBy: confirmedByLineId, confirmedAt: now(), sentToFamily, queuedForLater, submittedBy: card.submitted_by, appointmentForLifecycle:createdAppointment, postCommitFamilyDelivery };
   });
+  if (result?.postCommitFamilyDelivery) {
+    const delivery = result.postCommitFamilyDelivery;
+    try {
+      await lineClient.pushMessage(delivery.target, delivery.messages);
+      result.sentToFamily = true;
+    } catch (_error) {
+      await require('./deliveryService').queueForResident({
+        residentId:delivery.residentId, cardId:delivery.cardId, messages:delivery.messages,
+      });
+      result.queuedForLater = true;
+    }
+    delete result.postCommitFamilyDelivery;
+  }
+  if (result?.appointmentForLifecycle) {
+    result.notificationState = await require('./appointmentNotificationService').notifyLifecycle({
+      eventType:'created', appointment:result.appointmentForLifecycle,
+    });
+    delete result.appointmentForLifecycle;
+  }
+  return result;
 }
 
 // ── ข้อ F2: ข้อความต้องระบุผู้ตรวจสอบ ──

@@ -384,7 +384,7 @@
       <input type="time" id="apTime">
       <label>หมายเหตุ</label>
       <textarea id="apNote" placeholder="เช่น งดน้ำงดอาหารก่อนตรวจ"></textarea>
-      <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveAppointment()">บันทึกนัด</button></div>
+      <div style="margin-top:12px"><button class="btn btn-primary" id="saveAppointmentButton" onclick="saveAppointment()">บันทึกนัด</button></div>
     </div>
     <div class="card family-section-anchor" id="medicationEntryCard">
       <h3>บันทึกยา</h3>
@@ -560,6 +560,7 @@ let PRIVACY_UI = null;
 let DASHBOARD_GENERATION = 0;
 let CURRENT_ACCESS_REQUESTS = [];
 let CURRENT_PENDING_TRANSPORT = [];
+let appointmentCreateRequest = null;
 const PHARMACIST_LINE_OA_URL = '';
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 let confirmResolver=null;
@@ -989,7 +990,7 @@ async function loadDashboard(preferredProfileId=null) {
   const previousId = currentProfile?.profile?.care_profile_id;
   currentProfile = allProfiles.find(x=>x.profile.care_profile_id===preferredProfileId)
     || allProfiles.find(x=>x.profile.care_profile_id===previousId) || allProfiles[0] || null;
-  if(previousId!==currentProfile?.profile?.care_profile_id)clearProfileScopedUi({returnHome:false});
+  if(previousId!==currentProfile?.profile?.care_profile_id){appointmentCreateRequest=null;clearProfileScopedUi({returnHome:false});}
   renderProfileAnchor();
   if(currentProfile)renderFamilyGroupStatus(currentProfile);
   document.getElementById('noProfileCard').style.display = currentProfile ? 'none' : 'block';
@@ -1034,6 +1035,7 @@ async function loadDashboard(preferredProfileId=null) {
 }
 function selectProfile(id){
   DASHBOARD_GENERATION+=1;
+  appointmentCreateRequest=null;
   currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null;
   clearProfileScopedUi();renderProfileAnchor();
   renderFamilyGroupStatus(currentProfile);
@@ -1140,12 +1142,28 @@ async function saveAppointment() {
   const time = document.getElementById('apTime').value || '09:00';
   const note = document.getElementById('apNote').value.trim();
   if (!hospital || !date) return toast('กรุณากรอกโรงพยาบาลและวันที่');
-  await api('/api/appointments', { method:'POST', body: JSON.stringify({
-    careProfileId: currentProfile.profile.care_profile_id, hospital, datetime: `${date}T${time}:00`, note,
-  })});
-  toast('บันทึกนัดแล้ว');
-  document.getElementById('apHospital').value=''; document.getElementById('apNote').value='';
-  await loadDashboard();
+  const careProfileId=currentProfile.profile.care_profile_id;
+  const payload={careProfileId,hospital,datetime:`${date}T${time}:00`,note};
+  const fingerprint=JSON.stringify(payload);
+  if(appointmentCreateRequest?.inFlight)return;
+  if(!appointmentCreateRequest||appointmentCreateRequest.fingerprint!==fingerprint){
+    const key=globalThis.crypto?.randomUUID?.()||`appt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    appointmentCreateRequest={fingerprint,key,inFlight:false};
+  }
+  const request=appointmentCreateRequest;
+  const button=document.getElementById('saveAppointmentButton');
+  request.inFlight=true;button.disabled=true;button.textContent='กำลังบันทึก...';
+  try{
+    await api('/api/appointments', { method:'POST', body: JSON.stringify({...payload,idempotencyKey:request.key})});
+    if(request!==appointmentCreateRequest||careProfileId!==currentProfile?.profile?.care_profile_id)return;
+    toast('บันทึกนัดแล้ว ระบบกำลังจัดคิวแจ้งผู้เกี่ยวข้อง');
+    appointmentCreateRequest=null;
+    document.getElementById('apHospital').value=''; document.getElementById('apNote').value='';
+    await loadDashboard(careProfileId);
+  }finally{
+    request.inFlight=false;
+    button.disabled=false;button.textContent='บันทึกนัด';
+  }
 }
 async function saveMedication() {
   if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
