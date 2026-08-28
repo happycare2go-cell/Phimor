@@ -68,6 +68,37 @@ test('Manager review controller loads, returns and finalizes through authoritati
   assert.throws(()=>staff.finalizeDaily('DCR-1'),/เฉพาะเจ้าของหรือผู้จัดการ/);
 });
 
+test('Center correction controllers use existing scoped routes and enforce reason and role locally',async()=>{
+  const calls=[];const controller=ui.createController({api:async(route,options={})=>{calls.push({route,options});return{items:[]};}});
+  controller.configure({centerId:'CTR-A',role:'manager',residents:[{resident_id:'RES-A',care_profile_id:'CP-A',full_name:'A'}],capabilities:{daily_care_v1:true,vital_signs_v1:true}});
+  await controller.listVitalHistory('RES-A');await controller.voidVital('VSET-1','ค่าผิด');
+  await controller.createDailyCorrection('DCR-1','แก้ไข');await controller.voidDaily('DCR-2','ยกเลิก');
+  await controller.listLabHistory('RES-A');await controller.createLabCorrection('RES-A','LABR-1','แก้ไข');await controller.voidLab('RES-A','LABR-2','ยกเลิก');
+  assert.deepEqual(calls.map((call)=>call.route),[
+    '/api/center/CTR-A/vital-signs/history?residentId=RES-A','/api/center/CTR-A/vital-signs/VSET-1/void',
+    '/api/center/CTR-A/daily-care/DCR-1/corrections','/api/center/CTR-A/daily-care/DCR-2/void',
+    '/api/care-profile/CP-A/lab-reports?includeHistory=true&limit=20&centerId=CTR-A',
+    '/api/care-profile/CP-A/lab-reports/LABR-1/corrections?centerId=CTR-A',
+    '/api/care-profile/CP-A/lab-reports/LABR-2/void?centerId=CTR-A',
+  ]);
+  const staff=ui.createController({api:async()=>({})});staff.configure({centerId:'CTR-A',role:'staff',residents:[{resident_id:'RES-A',care_profile_id:'CP-A'}],capabilities:{daily_care_v1:true,vital_signs_v1:true}});
+  assert.throws(()=>staff.voidVital('VSET-1','x'),/เฉพาะเจ้าของหรือผู้จัดการ/);
+  assert.throws(()=>staff.createDailyCorrection('DCR-1','x'),/เฉพาะเจ้าของหรือผู้จัดการ/);
+  assert.throws(()=>staff.voidLab('RES-A','LABR-1','x'),/เฉพาะเจ้าของหรือผู้จัดการ/);
+  assert.throws(()=>controller.voidVital('VSET-1','  '),/กรุณาระบุเหตุผล/);
+});
+
+test('Center correction response is discarded after Center switch and new Vital action never copies prior measurements',async()=>{
+  let release;const controller=ui.createController({api:()=>new Promise((resolve)=>{release=resolve;})});
+  controller.configure({centerId:'CTR-A',role:'manager',residents:[{resident_id:'RES-A',care_profile_id:'CP-A'}],capabilities:{vital_signs_v1:true,daily_care_v1:true}});
+  const pending=controller.voidVital('VSET-1','ค่าผิด');
+  controller.configure({centerId:'CTR-B',role:'manager',residents:[{resident_id:'RES-B',care_profile_id:'CP-B'}],capabilities:{vital_signs_v1:true,daily_care_v1:true}});
+  release({item:{vitalSetId:'VSET-1',privateValue:'CENTER-A'}});
+  assert.deepEqual(await pending,{stale:true});assert.equal(controller.snapshot().centerId,'CTR-B');
+  assert.match(uiSource,/บันทึกค่าใหม่/);assert.match(uiSource,/vitalForm\.reset\(\)/);
+  assert.doesNotMatch(uiSource,/prefillVital|copyVital|populateVital/);
+});
+
 test('finalization UX distinguishes queued notification from held or unavailable routing',()=>{
   assert.equal(ui.finalizationNotice({notification:{notificationStatus:'queued'}}),'ยืนยันรายงานแล้ว ระบบนำรายงานเข้าคิวแจ้งครอบครัว');
   assert.match(ui.finalizationNotice({notification:{notificationStatus:'recipient_missing'}}),/ยังไม่พบช่องทาง/);
@@ -107,4 +138,5 @@ test('Center LIFF mounts capability-gated mobile forms without browser persisten
   assert.match(uiSource, /inputmode="decimal"/);
   assert.doesNotMatch(uiSource, /localStorage|sessionStorage|location\.(?:search|hash)/);
   assert.doesNotMatch(uiSource, /lineUserId|LINE_USER_ID|phone|emergency/i);
+  assert.match(uiSource,/ข้อมูลจากระบบศูนย์/);assert.match(uiSource,/mutationCapabilities/);
 });

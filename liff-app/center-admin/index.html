@@ -7,9 +7,11 @@
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="../environment.js"></script>
 <script src="../runtime-config.js"></script>
+<script src="../shared/clinical-action-dialog.js"></script>
 <script src="./lab-review-runtime.js"></script>
 <script src="./care-recording-ui.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
+<link rel="stylesheet" href="../shared/clinical-action-dialog.css">
 <link rel="stylesheet" href="./care-recording-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --red:#D64545; --gray:#5A6580; }
@@ -733,6 +735,7 @@ const centerCareUi = centerCareRuntime.mount({
   root: document.getElementById('centerCareRoot'),
   api,
   notify: toast,
+  onOpenLabDraft: openLabCorrectionDraft,
   onVisibility(visible) {
     const tab = document.getElementById('careRecordTab');
     tab.hidden = !visible;
@@ -757,6 +760,7 @@ async function syncCenterCareContext() {
   }
 }
 let currentCard = null, currentCardOriginal = null, medRowSeq = 0, labObservationSeq = 0;
+let currentLabCorrectionContext = null;
 const editedFieldSet = new Set();
 
 function resetEditCardReviewState() {
@@ -797,6 +801,7 @@ function renderSourceImage(data) {
 async function loadEditCard(cardId) {
   const requestRevision = editCardRequestGuard.begin();
   resetEditCardReviewState();
+  currentLabCorrectionContext = null;
   const groupId = new URLSearchParams(location.search).get('groupId') || '';
   let data;
   let residentsData;
@@ -847,6 +852,32 @@ async function loadEditCard(cardId) {
   document.getElementById('ecMedList').innerHTML = '';
   (c.medications || []).forEach(m => addMedRow(m.name, m.dose));
   if (!c.medications || c.medications.length === 0) addMedRow();
+}
+
+function openLabCorrectionDraft({residentId,report}={}) {
+  if(!report?.reportId)return;
+  resetEditCardReviewState();
+  currentLabCorrectionContext={careProfileId:residentsCache.find((item)=>item.resident_id===residentId)?.care_profile_id||null,
+    centerId:CENTER_ID,reportId:report.reportId};
+  if(!currentLabCorrectionContext.careProfileId){currentLabCorrectionContext=null;return toast('ไม่พบ Care Profile สำหรับฉบับแก้ไขนี้');}
+  currentCard={card:{labExtractionStatus:'reviewed'},labDraft:report};
+  currentCardOriginal=JSON.parse(JSON.stringify(report));
+  const resident=residentsCache.find((item)=>item.resident_id===residentId);
+  const option=document.createElement('option');option.value=residentId;option.textContent=`${resident?.full_name||'ผู้รับการดูแล'}${resident?.room?` · ห้อง ${resident.room}`:''}`;
+  document.getElementById('ecResident').replaceChildren(option);document.getElementById('ecResident').disabled=true;
+  document.getElementById('editCardBanner').querySelector('h3').textContent='ตรวจและแก้ไขผล Lab ฉบับใหม่';
+  renderLabReview(currentCard);
+  document.querySelector('.tabs').style.display='none';document.querySelectorAll('.view').forEach((view)=>view.classList.remove('active'));
+  document.getElementById('view-edit-card').classList.add('active');
+  globalThis.scrollTo?.({top:0,behavior:'smooth'});
+}
+
+async function closeLabCorrectionEditor() {
+  currentLabCorrectionContext=null;document.getElementById('ecResident').disabled=false;
+  document.getElementById('editCardBanner').querySelector('h3').textContent='ตรวจสอบและแก้ไขก่อนส่ง';
+  document.querySelector('.tabs').style.display='flex';document.querySelectorAll('.view').forEach((view)=>view.classList.remove('active'));document.querySelectorAll('.tab').forEach((tab)=>tab.classList.remove('active'));
+  document.getElementById('view-care').classList.add('active');document.getElementById('careRecordTab').classList.add('active');
+  await syncCenterCareContext();
 }
 
 function toDateTimeLocal(value) {
@@ -956,6 +987,12 @@ function labReviewPayload() {
 }
 
 async function saveLabReview() {
+  if(currentLabCorrectionContext){
+    const context={...currentLabCorrectionContext};
+    const report=await api(`/api/care-profile/${encodeURIComponent(context.careProfileId)}/lab-reports/${encodeURIComponent(context.reportId)}/draft?centerId=${encodeURIComponent(context.centerId)}`,{method:'PATCH',body:JSON.stringify(labReviewPayload())});
+    if(!currentLabCorrectionContext||currentLabCorrectionContext.reportId!==context.reportId)return;
+    currentCard.labDraft=report;currentCard.card.labExtractionStatus='reviewed';renderLabReview(currentCard);toast('บันทึกฉบับรอตรวจแล้ว');return;
+  }
   const cardId = currentCard.card.cardId || currentCard.card.card_id;
   const report = await api(`/api/cards/${cardId}`, {
     method:'PATCH', body:JSON.stringify({ labReport:labReviewPayload(), editedFields:['labReport'] }),
@@ -971,6 +1008,12 @@ async function confirmLabReview() {
   if (extractionStatus !== 'reviewed') {
     toast('กรุณาตรวจภาพต้นฉบับและบันทึกฉบับร่างก่อนยืนยัน');
     return;
+  }
+  if(currentLabCorrectionContext){
+    const context={...currentLabCorrectionContext};
+    const report=await api(`/api/care-profile/${encodeURIComponent(context.careProfileId)}/lab-reports/${encodeURIComponent(context.reportId)}/confirm?centerId=${encodeURIComponent(context.centerId)}`,{method:'POST',body:'{}'});
+    if(!currentLabCorrectionContext||currentLabCorrectionContext.reportId!==context.reportId)return;
+    currentCard.labDraft=report;currentCard.card.labExtractionStatus='confirmed';renderLabReview(currentCard);toast('ยืนยันผล Lab ฉบับแก้ไขแล้ว');await closeLabCorrectionEditor();return;
   }
   const cardId = currentCard.card.cardId || currentCard.card.card_id;
   const result = await api(`/api/cards/${cardId}/confirm`, { method:'POST', body:JSON.stringify({}) });

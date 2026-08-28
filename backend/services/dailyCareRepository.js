@@ -92,6 +92,11 @@ function createDailyCareRepository({ queryFn = databaseQuery } = {}) {
       return one(`SELECT COALESCE(MAX(version_no),0)+1 AS next_version
         FROM daily_care_reports WHERE report_group_id=$1`, [reportGroupId]);
     },
+    findLatestVersionForUpdate(reportGroupId) {
+      return one(`SELECT * FROM daily_care_reports
+        WHERE report_group_id=$1 ORDER BY version_no DESC,daily_report_id DESC
+        LIMIT 1 FOR UPDATE`, [reportGroupId]);
+    },
     findSupersedingReport(reportId) {
       return one(`SELECT * FROM daily_care_reports
         WHERE supersedes_report_id=$1 ORDER BY version_no DESC,daily_report_id DESC LIMIT 1`, [reportId]);
@@ -126,9 +131,16 @@ function createDailyCareRepository({ queryFn = databaseQuery } = {}) {
       const where = ['d.center_id=$1', 'd.status=ANY($2::varchar[])'];
       if (actorReference) { params.push(actorReference); where.push(`d.recorded_by_actor_reference=$${params.length}`); }
       params.push(limit);
-      return many(`SELECT ${DETAIL_SELECT} FROM daily_care_reports d
+      return many(`SELECT ${DETAIL_SELECT},
+        (d.status='finalized' AND d.version_no=(
+          SELECT MAX(candidate.version_no) FROM daily_care_reports candidate
+          WHERE candidate.report_group_id=d.report_group_id
+            AND (candidate.status='finalized'
+              OR (candidate.status='voided' AND candidate.finalized_at IS NOT NULL))
+        )) AS is_authoritative
+        FROM daily_care_reports d
         WHERE ${where.join(' AND ')}
-        ORDER BY COALESCE(d.submitted_at,d.recorded_at) ASC,d.daily_report_id ASC
+        ORDER BY COALESCE(d.finalized_at,d.submitted_at,d.recorded_at) DESC,d.daily_report_id DESC
         LIMIT $${params.length}`, params);
     },
 

@@ -55,6 +55,7 @@ function fixture({ failEventType = null, serviceOverrides = {} } = {}) {
       return clone(state.records.filter((row) => row.record_group_id === groupId)
         .sort((a, b) => b.version_no - a.version_no)[0] || null);
     },
+    async findLatestVersion(groupId) { return this.findLatestVersionForUpdate(groupId); },
     async listItems(recordId) {
       return clone(state.items.filter((row) => row.visit_record_id === recordId)
         .sort((a, b) => a.source_ordinal - b.source_ordinal));
@@ -265,6 +266,18 @@ test('correction creates a new draft version without mutating prior confirmed hi
   assert.equal(correction.recordGroupId, confirmed.recordGroupId);
   assert.equal(correction.supersedesVisitRecordId, confirmed.visitRecordId);
   assert.equal(state().records.find((row) => row.visit_record_id === confirmed.visitRecordId).status, 'confirmed');
+  assert.deepEqual((await service.getRecord({careProfileId:'CP-1',visitRecordId:confirmed.visitRecordId,lineUserId:'OWNER'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
+});
+
+test('Doctor Visit capabilities are authoritative and never grant a view-only caregiver mutation', async () => {
+  const {service}=fixture();
+  const draftRecord=await service.createDraft({careProfileId:'CP-1',lineUserId:'OWNER',input:draft()});
+  await service.confirmDraft({careProfileId:'CP-1',visitRecordId:draftRecord.visitRecordId,lineUserId:'OWNER'});
+  assert.deepEqual((await service.getRecord({careProfileId:'CP-1',visitRecordId:draftRecord.visitRecordId,lineUserId:'OWNER'})).mutationCapabilities,
+    {canCreateCorrection:true,canVoid:true});
+  assert.deepEqual((await service.getRecord({careProfileId:'CP-1',visitRecordId:draftRecord.visitRecordId,lineUserId:'VIEW'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
 });
 
 test('correction and void require explicit reasons', async () => {
@@ -321,6 +334,10 @@ test('Center-authored Doctor Visit correction and void remain manager/owner-only
   await service.confirmDraft({
     careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'MANAGER', centerId:'CTR-1',
   });
+  assert.deepEqual((await service.getRecord({careProfileId:'CP-1',visitRecordId:first.visitRecordId,lineUserId:'STAFF',centerId:'CTR-1'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
+  assert.deepEqual((await service.getRecord({careProfileId:'CP-1',visitRecordId:first.visitRecordId,lineUserId:'CENTER_OWNER',centerId:'CTR-1'})).mutationCapabilities,
+    {canCreateCorrection:true,canVoid:true});
   await assert.rejects(service.createCorrectionDraft({
     careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'OWNER', reason:'ไม่ควรผ่าน',
   }), { code:'ACCESS_DENIED' });

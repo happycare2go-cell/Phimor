@@ -7,7 +7,9 @@
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="../environment.js"></script>
 <script src="../runtime-config.js"></script>
+<script src="../shared/clinical-action-dialog.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
+<link rel="stylesheet" href="../shared/clinical-action-dialog.css">
 <link rel="stylesheet" href="./plus-ui.css">
 <link rel="stylesheet" href="./plus-payment-ui.css">
 <link rel="stylesheet" href="./doctor-visit-ui.css">
@@ -319,6 +321,7 @@
           <button type="button" class="btn btn-primary" id="doctorVisitConfirm">ยืนยันบันทึกจากการพบแพทย์</button>
           <div class="doctor-visit-secondary-actions"><button type="button" class="btn btn-outline" id="doctorVisitSave">บันทึกร่าง</button><button type="button" class="btn btn-outline" id="doctorVisitOrganize">ช่วยจัดระเบียบด้วยพี่หมอ Plus</button></div>
         </div>
+        <div class="doctor-visit-mutation-actions" id="doctorVisitMutationActions" hidden></div>
       </section>
     </section>
 
@@ -557,6 +560,8 @@ let LAB_RESULTS_UI = null;
 let CARE_HISTORY_UI = null;
 let HOME_UI = null;
 let PRIVACY_UI = null;
+let CLINICAL_ACTION_DIALOG = null;
+function clinicalActionDialog(){if(!CLINICAL_ACTION_DIALOG&&window.PhimorClinicalActionDialog)CLINICAL_ACTION_DIALOG=window.PhimorClinicalActionDialog.createDialog({doc:document});return CLINICAL_ACTION_DIALOG;}
 let DASHBOARD_GENERATION = 0;
 let CURRENT_ACCESS_REQUESTS = [];
 let CURRENT_PENDING_TRANSPORT = [];
@@ -822,7 +827,7 @@ async function ensureDoctorVisitUI(){
   if(!DOCTOR_VISIT_UI){
     let controller=null;
     const session=window.PhimorDoctorVisitUI.createSession({request:doctorVisitApi,onChange:(state)=>controller?.render(state)});
-    controller=window.PhimorDoctorVisitUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onUpgradeRequired:()=>requestPlusCapability('doctor_visit_organization')});
+    controller=window.PhimorDoctorVisitUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onUpgradeRequired:()=>requestPlusCapability('doctor_visit_organization'),actionDialog:clinicalActionDialog()});
     DOCTOR_VISIT_UI={session,controller};
   }
   await DOCTOR_VISIT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
@@ -841,7 +846,7 @@ async function ensureLabResultsUI(){
   if(!LAB_RESULTS_UI){
     let controller=null;
     const session=window.PhimorFamilyLabResultsUI.createSession({request:labResultsApi,onChange:(state)=>controller?.render(state)});
-    controller=window.PhimorFamilyLabResultsUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onPrepareQuestions:openDoctorQuestionsFromLab,onUpgradeRequired:()=>requestPlusCapability('lab_explanation')});
+    controller=window.PhimorFamilyLabResultsUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onPrepareQuestions:openDoctorQuestionsFromLab,onUpgradeRequired:()=>requestPlusCapability('lab_explanation'),actionDialog:clinicalActionDialog()});
     LAB_RESULTS_UI={session,controller};
   }
   LAB_RESULTS_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);

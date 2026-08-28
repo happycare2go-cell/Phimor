@@ -92,6 +92,18 @@ function createDoctorVisitRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async findLatestVersion(recordGroupId) {
+      const result = await queryFn(
+        `SELECT *, CURRENT_TIMESTAMP AS database_now
+         FROM doctor_visit_records
+         WHERE record_group_id = $1
+         ORDER BY version_no DESC, visit_record_id DESC
+         LIMIT 1`,
+        [recordGroupId]
+      );
+      return result.rows[0] || null;
+    },
+
     async listItems(visitRecordId) {
       const result = await queryFn(
         `SELECT * FROM doctor_visit_guidance_items WHERE visit_record_id = $1

@@ -25,6 +25,9 @@ function createDailyCareRouter(){const router=express.Router();router.use(requir
       items:req.body.items,vitalSigns:req.body.vitalSigns||null});return res.status(201).json(result);}));
   router.post('/center/:centerId/daily-care/:dailyReportId/finalize',requireCenterStaff(['owner','manager']),action(async(req,res,service)=>res.json(await service.finalizeReport({
     lineUserId:req.user.lineUserId,centerId:req.params.centerId,dailyReportId:req.params.dailyReportId}))));
+  router.post('/center/:centerId/daily-care/:dailyReportId/corrections',requireCenterStaff(['owner','manager']),action(async(req,res,service)=>{
+    const result=await service.createCorrectionVersion({lineUserId:req.user.lineUserId,centerId:req.params.centerId,
+      dailyReportId:req.params.dailyReportId,reason:req.body.reason});return res.status(result.duplicate?200:201).json(result);}));
   router.post('/center/:centerId/daily-care/:dailyReportId/void',requireCenterStaff(['owner','manager']),action(async(req,res,service)=>res.json({item:await service.voidReport({
     lineUserId:req.user.lineUserId,centerId:req.params.centerId,dailyReportId:req.params.dailyReportId,reason:req.body.reason})})));
   return router;}

@@ -27,6 +27,7 @@ async function withApi(service, callback) {
 function service(overrides = {}) {
   return {
     async listHistory() { return { items:[], nextCursor:null }; },
+    async listCenterHistory() { return { items:[], role:'staff' }; },
     async recordNative() { return { duplicate:false, item:{ vitalSetId:'VSET-1' } }; },
     async voidVitalSet() { return { vitalSetId:'VSET-1', status:'voided' }; },
     ...overrides,
@@ -38,6 +39,14 @@ test('vital routes require LINE authentication and preserve backend authority', 
     assert.equal((await request('/api/care-profile/CP-A/vital-signs', {}, null)).status, 401);
     assert.equal((await request('/api/center/CTR-A/residents/RES-A/vital-signs', { method:'POST', body:'{}' }, null)).status, 401);
   });
+});
+
+test('Center operational history is staff-readable while void remains manager-only', async () => {
+  let seen;
+  await withApi(service({ async listCenterHistory(input) { seen=input; return {items:[],role:'staff'}; } }), async (request) => {
+    assert.equal((await request('/api/center/CTR-A/vital-signs/history?residentId=RES-A&limit=10', {}, 'U-STAFF')).status, 200);
+  });
+  assert.deepEqual(seen,{lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',limit:'10'});
 });
 
 test('history forwards only authenticated profile scope and bounded query inputs', async () => {

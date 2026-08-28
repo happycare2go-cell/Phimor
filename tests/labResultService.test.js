@@ -75,6 +75,7 @@ function fixture({ failEventType = null, serviceOverrides = {} } = {}) {
       return clone(state.reports.filter((row) => row.report_group_id === groupId)
         .sort((a, b) => b.version_no - a.version_no)[0] || null);
     },
+    async findLatestVersion(groupId) { return this.findLatestVersionForUpdate(groupId); },
     async listObservations(reportId) {
       return clone(state.observations.filter((row) => row.report_id === reportId)
         .sort((a, b) => a.source_ordinal - b.source_ordinal));
@@ -372,6 +373,18 @@ test('correction creates an incremented draft version and leaves prior confirmed
   assert.equal(correction.supersedesReportId, confirmed.reportId);
   const prior = state().reports.find((row) => row.report_id === confirmed.reportId);
   assert.equal(prior.status, 'confirmed'); assert.equal(prior.laboratory_name, confirmed.laboratoryName);
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:confirmed.reportId,lineUserId:'U-OWNER'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
+});
+
+test('Family Lab capabilities expose actions only to an authorized actor on the authoritative version', async () => {
+  const {service}=fixture();
+  const draft=await service.createDraft({careProfileId:'CP-1',lineUserId:'U-OWNER',input:draftInput()});
+  await service.confirmDraft({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-OWNER'});
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-OWNER'})).mutationCapabilities,
+    {canCreateCorrection:true,canVoid:true});
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-VIEW'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
 });
 
 test('concurrent correction requests serialize and only one next version is created', async () => {
@@ -451,6 +464,10 @@ test('Center-authored Lab correction and void remain manager/owner-only across t
   await service.confirmDraft({
     careProfileId:'CP-1', reportId:draft.reportId, lineUserId:'U-CENTER-MANAGER', centerId:'CTR-1',
   });
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-CENTER-STAFF',centerId:'CTR-1'})).mutationCapabilities,
+    {canCreateCorrection:false,canVoid:false});
+  assert.deepEqual((await service.getReport({careProfileId:'CP-1',reportId:draft.reportId,lineUserId:'U-CENTER-MANAGER',centerId:'CTR-1'})).mutationCapabilities,
+    {canCreateCorrection:true,canVoid:true});
   await assert.rejects(service.createCorrectionDraft({
     careProfileId:'CP-1', reportId:draft.reportId, lineUserId:'U-OWNER', reason:'ไม่ควรผ่าน',
   }), { code:'ACCESS_DENIED' });

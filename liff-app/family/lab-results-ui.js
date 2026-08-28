@@ -93,6 +93,18 @@
     };
   }
 
+  function toDateTimeLocalValue(value) {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '';
+    const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+  function buildCorrectionRequest(careProfileId,reportId,reason){return{path:`/api/care-profile/${encodeURIComponent(careProfileId)}/lab-reports/${encodeURIComponent(reportId)}/corrections`,options:{method:'POST',body:JSON.stringify({reason})}};}
+  function buildVoidRequest(careProfileId,reportId,reason){return{path:`/api/care-profile/${encodeURIComponent(careProfileId)}/lab-reports/${encodeURIComponent(reportId)}/void`,options:{method:'POST',body:JSON.stringify({reason})}};}
+  function buildDraftUpdateRequest(careProfileId,reportId,patch){return{path:`/api/care-profile/${encodeURIComponent(careProfileId)}/lab-reports/${encodeURIComponent(reportId)}/draft`,options:{method:'PATCH',body:JSON.stringify(patch)}};}
+  function buildDraftConfirmRequest(careProfileId,reportId){return{path:`/api/care-profile/${encodeURIComponent(careProfileId)}/lab-reports/${encodeURIComponent(reportId)}/confirm`,options:{method:'POST',body:JSON.stringify({})}};}
+
   function projectHistoryReport(report) {
     if (!report || typeof report.reportId !== 'string' || report.status !== 'confirmed') return null;
     return {
@@ -102,6 +114,9 @@
       specimenCollectedAt: safeText(report.specimenCollectedAt) || null,
       reportedAt: safeText(report.reportedAt) || null,
       confirmedAt: safeText(report.confirmedAt) || null,
+      versionNo:Number.isFinite(Number(report.versionNo))?Number(report.versionNo):1,
+      isCurrent:report.isCurrent!==false,
+      mutationCapabilities:{canCreateCorrection:report.mutationCapabilities?.canCreateCorrection===true,canVoid:report.mutationCapabilities?.canVoid===true},
     };
   }
 
@@ -135,6 +150,41 @@
     };
   }
 
+  function projectCorrectionDraft(report) {
+    if (!report || typeof report.reportId !== 'string' || report.status !== 'draft') return null;
+    return {
+      reportId: report.reportId, status: 'draft',
+      laboratoryName: safeText(report.laboratoryName) || '',
+      hospitalName: safeText(report.hospitalName) || '',
+      specimenCollectedAt: safeText(report.specimenCollectedAt) || null,
+      reportedAt: safeText(report.reportedAt) || null,
+      observations: safeArray(report.observations).map(projectObservation).filter(Boolean),
+    };
+  }
+
+  function correctionDraftPatch(draft) {
+    return {
+      laboratoryName: safeText(draft?.laboratoryName) || null,
+      hospitalName: safeText(draft?.hospitalName) || null,
+      specimenCollectedAt: safeText(draft?.specimenCollectedAt) || null,
+      reportedAt: safeText(draft?.reportedAt) || null,
+      observations: safeArray(draft?.observations, 100).map((observation,index) => {
+        const sourceValueText=safeText(observation?.sourceValueText);
+        const numeric=/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(sourceValueText.trim())?Number(sourceValueText):null;
+        return {
+        sourceOrdinal:index+1,
+        analyteNameSource: safeText(observation?.analyteNameSource),
+        sourceValueText,
+        valueType:numeric===null?'text':'numeric',numericValue:numeric,textValue:numeric===null?sourceValueText:null,
+        sourceUnit: safeText(observation?.sourceUnit) || null,
+        referenceRangeText: safeText(observation?.referenceRangeText) || null,
+        abnormalFlagSource: safeText(observation?.abnormalFlagSource) || null,
+        specimenSource: safeText(observation?.specimenSource) || null,
+        methodSource: safeText(observation?.methodSource) || null,
+      };}),
+    };
+  }
+
   function mergeReports(existing, incoming) {
     const seen = new Set();
     return [...safeArray(existing), ...safeArray(incoming)].map(projectHistoryReport).filter((report) => {
@@ -159,6 +209,7 @@
       selectedReport: null, detailLoading: false, detailError: null,
       selectedObservationId: null, trend: null, trendLoading: false, trendError: null,
       explanation: null, explanationLoading: false, explanationError: null,
+      actionNotice:null, correctionDraft:null, correctionBusy:false, correctionError:null,
     };
   }
 
@@ -173,6 +224,10 @@
     const snapshot = () => ({
       ...state, reports: [...state.reports],
       selectedReport: state.selectedReport ? { ...state.selectedReport } : null,
+      correctionDraft: state.correctionDraft ? {
+        ...state.correctionDraft,
+        observations: safeArray(state.correctionDraft.observations).map((item) => ({ ...item })),
+      } : null,
     });
     const notify = () => onChange(snapshot());
     const send = (descriptor) => request(descriptor.path, descriptor.options);
@@ -181,6 +236,7 @@
     function clearSelection() {
       detailRevision += 1; trendRevision += 1; explanationRevision += 1;
       state.selectedReport = null; state.detailLoading = false; state.detailError = null;
+      state.correctionDraft = null; state.correctionBusy = false; state.correctionError = null;
       state.selectedObservationId = null; state.trend = null; state.trendLoading = false; state.trendError = null;
       state.explanation = null; state.explanationLoading = false; state.explanationError = null;
     }
@@ -269,6 +325,48 @@
       }
     }
 
+    async function mutate(kind,reportId,reason){
+      if(!state.profileId||state.detailLoading||state.correctionBusy)return{ignored:true};
+      const token=generation;const profileId=state.profileId;const requestRevision=++detailRevision;
+      state.detailLoading=true;state.detailError=null;state.actionNotice=null;notify();
+      try{
+        const result=await send(kind==='correction'?buildCorrectionRequest(profileId,reportId,reason):buildVoidRequest(profileId,reportId,reason));
+        if(!isCurrent(token,profileId)||requestRevision!==detailRevision)return{ignored:true,stale:true};
+        state.selectedReport=kind==='void'?null:state.selectedReport;
+        if(kind==='correction'){
+          state.correctionDraft=projectCorrectionDraft(result);
+          if(!state.correctionDraft)throw Object.assign(new Error('INVALID_CORRECTION_DRAFT'),{errorCode:'INVALID_CORRECTION_DRAFT'});
+          state.selectedReport=null;
+        }
+        state.actionNotice=kind==='correction'?'สร้างฉบับแก้ไขแล้ว กรุณาตรวจข้อมูลก่อนยืนยัน':'ยกเลิกรายการแล้ว ประวัติเดิมยังถูกเก็บไว้';
+        await loadHistory();return result;
+      }catch(error){if(isCurrent(token,profileId)&&requestRevision===detailRevision)state.detailError=safeError(error);throw error;}
+      finally{if(isCurrent(token,profileId)&&requestRevision===detailRevision){state.detailLoading=false;notify();}}
+    }
+
+    async function saveCorrection(draft,{confirm=false}={}){
+      if(!state.profileId||!state.correctionDraft||state.correctionBusy)return{ignored:true};
+      const token=generation;const profileId=state.profileId;const reportId=state.correctionDraft.reportId;
+      state.correctionBusy=true;state.correctionError=null;notify();
+      try{
+        const updated=await send(buildDraftUpdateRequest(profileId,reportId,correctionDraftPatch(draft)));
+        if(!isCurrent(token,profileId)||state.correctionDraft?.reportId!==reportId)return{ignored:true,stale:true};
+        const projected=projectCorrectionDraft(updated);
+        if(!projected)throw Object.assign(new Error('INVALID_CORRECTION_DRAFT'),{errorCode:'INVALID_CORRECTION_DRAFT'});
+        state.correctionDraft=projected;
+        if(!confirm){state.actionNotice='บันทึกฉบับรอตรวจแล้ว';return updated;}
+        const confirmed=await send(buildDraftConfirmRequest(profileId,reportId));
+        if(!isCurrent(token,profileId)||state.correctionDraft?.reportId!==reportId)return{ignored:true,stale:true};
+        state.correctionBusy=false;state.correctionDraft=null;state.actionNotice='ยืนยันผลตรวจฉบับแก้ไขแล้ว';
+        await loadHistory();return confirmed;
+      }catch(error){
+        if(isCurrent(token,profileId)&&state.correctionDraft?.reportId===reportId)state.correctionError=safeError(error);
+        throw error;
+      }finally{
+        if(isCurrent(token,profileId)&&state.correctionDraft?.reportId===reportId){state.correctionBusy=false;notify();}
+      }
+    }
+
     async function generateExplanation(observationId = state.selectedObservationId) {
       const observation = selectedObservation(observationId);
       if (!state.profileId || !observation || state.explanationLoading) return { ignored: true };
@@ -326,6 +424,10 @@
       closeReport() { clearSelection(); notify(); },
       loadTrend,
       generateExplanation,
+      createCorrection:(reportId,reason)=>mutate('correction',reportId,reason),
+      voidReport:(reportId,reason)=>mutate('void',reportId,reason),
+      saveCorrection:(draft)=>saveCorrection(draft),
+      confirmCorrection:(draft)=>saveCorrection(draft,{confirm:true}),
     };
   }
 
@@ -385,6 +487,64 @@
     actionRow.querySelectorAll?.('button').forEach((button) => { button.disabled = actions.disabled; });
     if (!actionRow.querySelectorAll) { trendButton.disabled = actions.disabled; explainButton.disabled = actions.disabled; }
     card.appendChild(actionRow); container.appendChild(card);
+  }
+
+  function renderCorrectionEditor(doc, container, draft, { busy = false, error = null, onSave, onConfirm } = {}) {
+    const form = doc.createElement('form'); form.className = 'lab-correction-editor';
+    appendText(doc, form, 'h4', 'lab-detail-title', 'ตรวจฉบับแก้ไข');
+    appendText(doc, form, 'p', 'lab-correction-editor__note', 'ตรวจข้อมูลให้ถูกต้องก่อนยืนยัน ฉบับเดิมจะยังคงอยู่ในประวัติ');
+    const field = (labelText, name, value, type = 'text', maxLength = 500) => {
+      const label = doc.createElement('label'); label.className = 'lab-correction-field';
+      appendText(doc, label, 'span', '', labelText);
+      const input = doc.createElement('input'); input.type = type; input.name = name;
+      input.value = type === 'datetime-local' ? toDateTimeLocalValue(value) : safeText(value);
+      if (maxLength) input.maxLength = maxLength; input.disabled = busy; label.appendChild(input); form.appendChild(label);
+      return input;
+    };
+    const hospital = field('โรงพยาบาล', 'hospitalName', draft.hospitalName);
+    const laboratory = field('ห้องปฏิบัติการ', 'laboratoryName', draft.laboratoryName);
+    const collected = field('วันเวลาเก็บตัวอย่าง', 'specimenCollectedAt', draft.specimenCollectedAt, 'datetime-local', 0);
+    const reported = field('วันเวลารายงานผล', 'reportedAt', draft.reportedAt, 'datetime-local', 0);
+    const observations = doc.createElement('div'); observations.className = 'lab-correction-observations';
+    safeArray(draft.observations).forEach((observation, index) => {
+      const card = doc.createElement('fieldset'); card.className = 'lab-correction-observation'; card.disabled = busy;
+      appendText(doc, card, 'legend', '', `รายการตรวจ ${index + 1}`);
+      const observationField = (labelText, name, value) => {
+        const label = doc.createElement('label'); label.className = 'lab-correction-field';
+        appendText(doc, label, 'span', '', labelText);
+        const input = doc.createElement('input'); input.type = 'text'; input.name = name; input.value = safeText(value); input.maxLength = 500;
+        label.appendChild(input); card.appendChild(label); return input;
+      };
+      const inputs = {
+        analyteNameSource: observationField('รายการตรวจ', 'analyteNameSource', observation.analyteNameSource),
+        sourceValueText: observationField('ผลตามต้นฉบับ', 'sourceValueText', observation.sourceValueText),
+        sourceUnit: observationField('หน่วย', 'sourceUnit', observation.sourceUnit),
+        referenceRangeText: observationField('ช่วงอ้างอิง', 'referenceRangeText', observation.referenceRangeText),
+        abnormalFlagSource: observationField('ธงจากแหล่งข้อมูล', 'abnormalFlagSource', observation.abnormalFlagSource),
+        specimenSource: observationField('ชนิดตัวอย่าง', 'specimenSource', observation.specimenSource),
+        methodSource: observationField('วิธีตรวจ', 'methodSource', observation.methodSource),
+      };
+      card.__draftInputs = inputs; observations.appendChild(card);
+    });
+    form.appendChild(observations);
+    if (error) {
+      const view = errorView(error, 'correction');
+      appendText(doc, form, 'p', `lab-error lab-error--${view.kind}`, view.message);
+    }
+    const payload = () => ({
+      hospitalName: hospital.value, laboratoryName: laboratory.value,
+      specimenCollectedAt: collected.value || null, reportedAt: reported.value || null,
+      observations: Array.from(observations.children || []).map((card) => Object.fromEntries(
+        Object.entries(card.__draftInputs || {}).map(([key, input]) => [key, input.value])
+      )),
+    });
+    const actions = doc.createElement('div'); actions.className = 'lab-correction-editor__actions';
+    const save = appendText(doc, actions, 'button', 'btn btn-outline', busy ? 'กำลังบันทึก...' : 'บันทึกฉบับรอตรวจ');
+    save.type = 'button'; save.disabled = busy; save.addEventListener('click', () => onSave(payload()));
+    const confirm = appendText(doc, actions, 'button', 'btn btn-primary', busy ? 'กำลังยืนยัน...' : 'ยืนยันฉบับแก้ไข');
+    confirm.type = 'button'; confirm.disabled = busy; confirm.addEventListener('click', () => onConfirm(payload()));
+    form.appendChild(actions); container.appendChild(form);
+    return form;
   }
 
   function renderTrend(doc, container, trend, selectedName) {
@@ -469,11 +629,13 @@
       kind: 'unavailable',
       message: area === 'explanation'
         ? 'ตอนนี้พี่หมอยังช่วยอธิบายผลตรวจไม่ได้ กรุณาลองใหม่ภายหลัง'
-        : 'โหลดข้อมูลผลตรวจไม่สำเร็จ กรุณาลองใหม่',
+        : area === 'correction'
+          ? 'ดำเนินการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองอีกครั้ง'
+          : 'โหลดข้อมูลผลตรวจไม่สำเร็จ กรุณาลองใหม่',
     };
   }
 
-  function createController({ doc, session, getCurrentProfile, onPrepareQuestions = null, onUpgradeRequired = null }) {
+  function createController({ doc, session, getCurrentProfile, onPrepareQuestions = null, onUpgradeRequired = null, actionDialog = null }) {
     const panel = doc.getElementById('labResultsPanel');
     const patient = doc.getElementById('labResultsPatient');
     const entry = doc.getElementById('labResultsEntry');
@@ -517,6 +679,7 @@
       close.disabled = state.historyLoading || state.detailLoading;
 
       clearNode(live);
+      if(state.actionNotice)appendText(doc,live,'p','lab-action-notice',state.actionNotice);
       if (state.historyLoading && !state.reports.length) appendText(doc, live, 'p', 'lab-loading', 'กำลังโหลดผลตรวจที่ยืนยันแล้ว...');
       renderError(live, state.historyError, 'history', () => session.loadHistory());
 
@@ -531,15 +694,28 @@
       }
 
       clearNode(detail); clearNode(trendBox); clearNode(explanationBox);
-      detail.hidden = !(state.detailLoading || state.detailError || state.selectedReport);
+      detail.hidden = !(state.detailLoading || state.detailError || state.selectedReport || state.correctionDraft);
       trendBox.hidden = true; explanationBox.hidden = true;
       if (state.detailLoading) appendText(doc, detail, 'p', 'lab-loading', 'กำลังโหลดรายละเอียดผลตรวจ...');
       renderError(detail, state.detailError, 'detail', null);
+      if (state.correctionDraft) {
+        renderCorrectionEditor(doc, detail, state.correctionDraft, {
+          busy: state.correctionBusy, error: state.correctionError,
+          onSave: (draft) => session.saveCorrection(draft),
+          onConfirm: (draft) => session.confirmCorrection(draft),
+        });
+      }
       if (state.selectedReport) {
         const back = appendText(doc, detail, 'button', 'lab-detail-back', '← กลับไปประวัติผลตรวจ');
         back.type = 'button'; back.addEventListener('click', () => session.closeReport());
         appendText(doc, detail, 'h4', 'lab-detail-title', 'รายละเอียดผลตรวจที่ยืนยันแล้ว');
         appendText(doc, detail, 'p', 'lab-detail-meta', `${reportPlace(state.selectedReport)} · ${formatDate(reportDate(state.selectedReport))}`);
+        if(state.selectedReport.mutationCapabilities?.canCreateCorrection||state.selectedReport.mutationCapabilities?.canVoid){
+          const actionRow=doc.createElement('div');actionRow.className='lab-record-actions';
+          if(state.selectedReport.mutationCapabilities.canCreateCorrection){const correction=appendText(doc,actionRow,'button','btn btn-outline','สร้างฉบับแก้ไข');correction.type='button';correction.addEventListener('click',()=>runMutation('correction',state.selectedReport));}
+          if(state.selectedReport.mutationCapabilities.canVoid){const voidButton=appendText(doc,actionRow,'button','btn lab-record-void','ยกเลิกรายการ');voidButton.type='button';voidButton.addEventListener('click',()=>runMutation('void',state.selectedReport));}
+          detail.appendChild(actionRow);
+        }
         const observations = doc.createElement('div'); observations.className = 'lab-observations';
         safeArray(state.selectedReport.observations).forEach((observation) => renderObservation(doc, observations, observation, {
           disabled: state.trendLoading || state.explanationLoading,
@@ -569,6 +745,14 @@
       }
     }
 
+    function runMutation(kind,report){if(!actionDialog)return null;const correction=kind==='correction';return actionDialog.open({
+      title:correction?'สร้างฉบับแก้ไข':'ยกเลิกผลตรวจรายการนี้?',
+      explanation:correction?'ระบบจะสร้างฉบับใหม่ให้ตรวจแก้ไข โดยเก็บผลตรวจฉบับเดิมไว้':'รายการจะไม่ถูกใช้เป็นข้อมูลปัจจุบันอีกต่อไป แต่ประวัติเดิมจะยังถูกเก็บไว้',
+      confirmLabel:correction?'สร้างฉบับแก้ไข':'ยืนยันยกเลิกรายการ',danger:!correction,
+      reasonRequired:correction?'กรุณาระบุเหตุผลที่สร้างฉบับแก้ไข':'กรุณาระบุเหตุผลที่ยกเลิกรายการ',
+      onConfirm:(reason)=>correction?session.createCorrection(report.reportId,reason):session.voidReport(report.reportId,reason),
+    });}
+
     entry.addEventListener('click', () => session.open());
     close.addEventListener('click', () => session.close());
     return { render };
@@ -578,8 +762,9 @@
     HISTORY_LIMIT, TREND_LIMIT, SAFE_TREND_MESSAGE, TREND_REASON_LABELS, DIRECTION_LABELS,
     safeText, formatDate, reportDate, reportPlace, observationIdentity, identityQuery,
     buildHistoryRequest, buildDetailRequest, buildTrendRequest, buildExplanationRequest,
-    projectHistoryReport, projectObservation, projectConfirmedDetail, mergeReports,
-    safeError, errorView, createSession, appendText, renderHistory,
+    buildCorrectionRequest,buildVoidRequest,buildDraftUpdateRequest,buildDraftConfirmRequest,
+    projectHistoryReport, projectObservation, projectConfirmedDetail,projectCorrectionDraft,correctionDraftPatch, mergeReports,
+    safeError, errorView, createSession, appendText, renderHistory,renderCorrectionEditor,
     renderObservation, renderTrend, renderExplanation, createController,
   };
 }));

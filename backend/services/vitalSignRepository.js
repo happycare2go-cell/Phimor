@@ -73,6 +73,23 @@ function createVitalSignRepository({ queryFn = databaseQuery } = {}) {
       );
     },
 
+    async listCenterHistory({ centerId, residentId = null, limit = 20 }) {
+      const params = [centerId];
+      const where = ['v.center_id = $1'];
+      if (residentId) { params.push(residentId); where.push(`v.resident_id = $${params.length}`); }
+      params.push(limit);
+      return many(
+        `SELECT v.*,
+          COALESCE((SELECT jsonb_agg(to_jsonb(o) ORDER BY o.source_ordinal,o.vital_observation_id)
+            FROM vital_sign_observations o WHERE o.vital_set_id=v.vital_set_id),'[]'::jsonb) observations
+         FROM vital_sign_sets v
+         WHERE ${where.join(' AND ')}
+         ORDER BY v.occurred_at DESC,v.vital_set_id DESC
+         LIMIT $${params.length}`,
+        params
+      );
+    },
+
     async listHistory({ careProfileId, centerId = null, from = null, to = null, cursor = null, limit }) {
       const params = [careProfileId];
       const conditions = ["v.status = 'recorded'", 'v.care_profile_id = $1', `(

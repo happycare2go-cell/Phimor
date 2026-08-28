@@ -75,6 +75,7 @@ function createDailyCareMemoryRepository() {
     async listVitalLinks(id){return state.links.filter((row)=>row.daily_report_id===id).map(clone);},
     async getReportDetail(id){return detail(state.reports.find((row)=>row.daily_report_id===id));},
     async nextVersion(groupId){return{next_version:Math.max(0,...state.reports.filter((row)=>row.report_group_id===groupId).map((row)=>Number(row.version_no)))+1};},
+    async findLatestVersionForUpdate(groupId){return clone(state.reports.filter((row)=>row.report_group_id===groupId).sort((a,b)=>Number(b.version_no)-Number(a.version_no)||String(b.daily_report_id).localeCompare(String(a.daily_report_id)))[0]);},
     async findSupersedingReport(reportId){return clone(state.reports.filter((row)=>row.supersedes_report_id===reportId).sort((a,b)=>Number(b.version_no)-Number(a.version_no))[0]);},
     async markReturned({dailyReportId,actorReference,reason}){
       const row=state.reports.find((item)=>item.daily_report_id===dailyReportId&&item.status==='submitted');
@@ -96,7 +97,7 @@ function createDailyCareMemoryRepository() {
       return state.reports.filter((row)=>row.center_id===centerId&&statuses.includes(row.status)
         &&(!actorReference||row.recorded_by_actor_reference===actorReference))
         .sort((a,b)=>String(a.submitted_at||a.recorded_at).localeCompare(String(b.submitted_at||b.recorded_at)))
-        .slice(0,limit).map(detail);
+        .slice(0,limit).map((row)=>{const projected=detail(row);const latest=Math.max(...state.reports.filter((item)=>item.report_group_id===row.report_group_id&&(item.status==='finalized'||(item.status==='voided'&&item.finalized_at))).map((item)=>Number(item.version_no)),0);projected.is_authoritative=row.status==='finalized'&&Number(row.version_no)===latest;return projected;});
     },
     async listHistory({careProfileId,centerId,from,to,cursor,limit}){
       return state.reports.filter((row)=>row.status==='finalized'&&row.care_profile_id===careProfileId

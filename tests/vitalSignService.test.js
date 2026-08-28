@@ -41,6 +41,7 @@ async function seed() {
   await db.Centers.insert({ center_id:'CTR-B', status:'active' });
   await db.CenterStaff.insert({ staff_id:'STF-A', center_id:'CTR-A', line_user_id:'U-STAFF', display_name:'ผู้ดูแลเอ', role:'staff', status:'active' });
   await db.CenterStaff.insert({ staff_id:'STF-M', center_id:'CTR-A', line_user_id:'U-MANAGER', role:'manager', status:'active' });
+  await db.CenterStaff.insert({ staff_id:'STF-O', center_id:'CTR-A', line_user_id:'U-CENTER-OWNER', role:'owner', status:'active' });
   await db.Residents.insert({ resident_id:'RES-A', center_id:'CTR-A', care_profile_id:'CP-A', full_name:'คุณยายเอ', room:'A-1', status:'active' });
   await db.Residents.insert({ resident_id:'RES-B', center_id:'CTR-B', care_profile_id:'CP-B', status:'active' });
 }
@@ -142,6 +143,22 @@ test('manager can explicitly void without deleting observations and void is idem
   assert.equal(repository.state.events.filter((row) => row.event_type === 'voided').length, 1);
   assert.equal((await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A' })).items.length, 0);
   await assert.rejects(service.voidVitalSet({ lineUserId:'U-STAFF', centerId:'CTR-A', vitalSetId:created.item.vitalSetId, reason:'x' }), { code:'CENTER_ACCESS_DENIED' });
+});
+
+test('Center Vital history projects role- and provenance-safe void capabilities', async () => {
+  const { service } = fixture(); await seed();
+  const native = await service.recordNative({ lineUserId:'U-STAFF', centerId:'CTR-A', residentId:'RES-A', occurredAt:'2026-08-27T01:00:00Z', observations });
+  await service.recordCanonical({ tenant:{organizationId:'ORG-A'}, subject:{centerId:'CTR-A',residentId:'RES-A',careProfileId:'CP-A'},
+    occurredAt:'2026-08-27T02:00:00Z', observations,
+    provenance:{sourceType:'external_integration',sourceSystem:'trusted',integrationClientId:'INT-A',externalRecordId:'EXT-HISTORY',actorReference:'integration_client:INT-A'} });
+  const staff = await service.listCenterHistory({ lineUserId:'U-STAFF', centerId:'CTR-A' });
+  assert.equal(staff.items.every((item) => item.mutationCapabilities.canVoid === false), true);
+  const manager = await service.listCenterHistory({ lineUserId:'U-MANAGER', centerId:'CTR-A' });
+  assert.equal(manager.items.find((item) => item.vitalSetId === native.item.vitalSetId).mutationCapabilities.canVoid, true);
+  assert.equal(manager.items.find((item) => item.sourceType === 'external_integration').mutationCapabilities.canVoid, false);
+  const owner = await service.listCenterHistory({ lineUserId:'U-CENTER-OWNER', centerId:'CTR-A' });
+  assert.equal(owner.items.find((item) => item.vitalSetId === native.item.vitalSetId).mutationCapabilities.canVoid, true);
+  await assert.rejects(service.listCenterHistory({ lineUserId:'U-MANAGER', centerId:'CTR-B', residentId:'RES-A' }), { code:'CENTER_ACCESS_DENIED' });
 });
 
 test('Family Vital history derives Daily-linked authority from the parent lifecycle without hiding standalone Vital', async () => {

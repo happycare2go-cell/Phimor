@@ -240,6 +240,26 @@ function createLabResultService(overrides = {}) {
     return projectReport(report, { observations, sources, events });
   }
 
+  async function mutationCapabilities({ report, access, careProfileId, centerId }) {
+    const denied = Object.freeze({ canCreateCorrection:false, canVoid:false });
+    if (!report || report.status !== 'confirmed' || report.is_authoritative === false) return denied;
+    const latest = typeof repository.findLatestVersion === 'function'
+      ? await repository.findLatestVersion(report.report_group_id) : report;
+    if (!latest || latest.report_id !== report.report_id || latest.status !== 'confirmed') return denied;
+    try {
+      requireConfirmation(access);
+      await mutationAuthority.assertMutationAllowed({
+        record:report, access, careProfileId, requestedCenterId:centerId, fail,
+      });
+      return Object.freeze({ canCreateCorrection:true, canVoid:true });
+    } catch (_) { return denied; }
+  }
+
+  async function projectWithCapabilities(report, access, careProfileId, centerId, detail = false) {
+    const projected = detail ? await loadDetail(report) : projectReport(report);
+    return { ...projected, mutationCapabilities:await mutationCapabilities({ report, access, careProfileId, centerId }) };
+  }
+
   async function createDraft({ careProfileId, lineUserId, centerId = null, input } = {}) {
     validateIdentity({ careProfileId, lineUserId });
     rejectFrontendTrustMetadata(input);
@@ -360,7 +380,7 @@ function createLabResultService(overrides = {}) {
     const report = await repository.findReport(reportId);
     if (!report || report.care_profile_id !== careProfileId) fail('REPORT_NOT_FOUND');
     if (report.status === 'draft' && !canEditDraft(access)) fail('REPORT_NOT_FOUND');
-    return loadDetail(report);
+    return projectWithCapabilities(report, access, careProfileId, centerId, true);
   }
 
   async function listReports({
@@ -379,7 +399,7 @@ function createLabResultService(overrides = {}) {
     const hasMore = rows.length > parsedLimit;
     const visible = rows.slice(0, parsedLimit);
     return {
-      items: visible.map((row) => projectReport(row)),
+      items: await Promise.all(visible.map((row) => projectWithCapabilities(row, access, careProfileId, centerId))),
       nextCursor: hasMore ? encodeCursor(visible[visible.length - 1]) : null,
     };
   }

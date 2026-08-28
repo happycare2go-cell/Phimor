@@ -152,6 +152,18 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
       return result.rows[0] || null;
     },
 
+    async findLatestVersion(reportGroupId) {
+      const result = await queryFn(
+        `SELECT *, CURRENT_TIMESTAMP AS database_now
+         FROM lab_reports
+         WHERE report_group_id = $1
+         ORDER BY version_no DESC, report_id DESC
+         LIMIT 1`,
+        [reportGroupId]
+      );
+      return result.rows[0] || null;
+    },
+
     async listObservations(reportId) {
       const result = await queryFn(
         `SELECT * FROM lab_observations WHERE report_id = $1

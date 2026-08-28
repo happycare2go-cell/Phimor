@@ -187,6 +187,26 @@ function createDoctorVisitService(overrides = {}) {
     return projectRecord(row, { items, events });
   }
 
+  async function mutationCapabilities({ record, access, careProfileId, centerId }) {
+    const denied = Object.freeze({ canCreateCorrection:false, canVoid:false });
+    if (!record || record.status !== 'confirmed' || record.is_authoritative === false) return denied;
+    const latest = typeof repository.findLatestVersion === 'function'
+      ? await repository.findLatestVersion(record.record_group_id) : record;
+    if (!latest || latest.visit_record_id !== record.visit_record_id || latest.status !== 'confirmed') return denied;
+    try {
+      requireConfirmation(access);
+      await mutationAuthority.assertMutationAllowed({
+        record, access, careProfileId, requestedCenterId:centerId, fail,
+      });
+      return Object.freeze({ canCreateCorrection:true, canVoid:true });
+    } catch (_) { return denied; }
+  }
+
+  async function projectWithCapabilities(record, access, careProfileId, centerId, detail = false) {
+    const projected = detail ? await loadDetail(record) : projectRecord(record, { includeSourceText:false });
+    return Object.freeze({ ...projected, mutationCapabilities:await mutationCapabilities({ record, access, careProfileId, centerId }) });
+  }
+
   async function createDraft({ careProfileId, lineUserId, centerId = null, input = {} } = {}) {
     validateIdentity({ careProfileId, lineUserId });
     const normalized = normalizeVisitInput(input || {});
@@ -291,7 +311,7 @@ function createDoctorVisitService(overrides = {}) {
     const record = await repository.findRecord(visitRecordId);
     if (!record || record.care_profile_id !== careProfileId) fail('RECORD_NOT_FOUND');
     if (record.status === 'draft' && !canEditDraft(access)) fail('RECORD_NOT_FOUND');
-    return loadDetail(record);
+    return projectWithCapabilities(record, access, careProfileId, centerId, true);
   }
 
   async function listRecords({
@@ -309,7 +329,7 @@ function createDoctorVisitService(overrides = {}) {
     const hasMore = rows.length > parsedLimit;
     const visible = rows.slice(0, parsedLimit);
     return Object.freeze({
-      items: Object.freeze(visible.map((row) => projectRecord(row, { includeSourceText: false }))),
+      items: Object.freeze(await Promise.all(visible.map((row) => projectWithCapabilities(row, access, careProfileId, centerId)))),
       nextCursor: hasMore ? encodeCursor(visible[visible.length - 1]) : null,
     });
   }

@@ -39,6 +39,10 @@ const FAMILY_CARE_HISTORY_SOURCE = fs.readFileSync(path.resolve(__dirname, '..',
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
 const FAMILY_MEDICATION_OPERATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'medication-operation.js'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
+const CLINICAL_ACTION_DIALOG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.js'), 'utf8');
+const CLINICAL_ACTION_DIALOG_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.css'), 'utf8');
+const FAMILY_LAB_RESULTS_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.css'), 'utf8');
+const CENTER_CARE_RECORDING_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'center-admin', 'care-recording-ui.css'), 'utf8');
 
 function localHtml(name) {
   return fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', name, 'index.html'), 'utf8')
@@ -55,7 +59,11 @@ function localHtml(name) {
     .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
-    .replace('<script src="./medication-operation.js"></script>', `<script>${FAMILY_MEDICATION_OPERATION_SOURCE}</script>`);
+    .replace('<script src="./medication-operation.js"></script>', `<script>${FAMILY_MEDICATION_OPERATION_SOURCE}</script>`)
+    .replace('<script src="../shared/clinical-action-dialog.js"></script>', `<script>${CLINICAL_ACTION_DIALOG_SOURCE}</script>`)
+    .replace('<link rel="stylesheet" href="../shared/clinical-action-dialog.css">', `<style>${CLINICAL_ACTION_DIALOG_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./lab-results-ui.css">', `<style>${FAMILY_LAB_RESULTS_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`);
 }
 
 async function mockBackend(page, handler) {
@@ -222,6 +230,8 @@ async function familyConsultationJourney(browser) {
 async function familyLabResultsJourney(browser) {
   const page=await browser.newPage({viewport:{width:390,height:844}});
   const profile={profile:{care_profile_id:'CP-LAB',patient_name:'คุณแม่ผลตรวจ'},familyRole:'owner',canUseAi:false,upcomingAppointments:[]};
+  const correctionDraft={reportId:'LABR-SIM-V2',status:'draft',hospitalName:'โรงพยาบาลจำลอง',laboratoryName:'ห้องตรวจตัวอย่าง',specimenCollectedAt:'2026-08-20T08:00:00Z',reportedAt:'2026-08-20T09:00:00Z',observations:[{observationId:'LABO-SIM-V2',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC'}]};
+  let correctionConfirmed=false;
   await mockBackend(page,async(url,request)=>{
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
     if(url.pathname==='/api/consent/check')return {hasConsent:true};
@@ -230,8 +240,11 @@ async function familyLabResultsJourney(browser) {
     if(url.pathname==='/api/transport/family/pending')return {pending:[]};
     if(url.pathname==='/api/care-profile/CP-LAB/caregivers')return {members:[]};
     if(url.pathname==='/api/plus/entitlement')return {status:'basic',plus:false};
-    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports'&&request.method()==='GET')return {items:[{reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z'}],nextCursor:null};
-    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM')return {reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',observations:[{observationId:'LABO-SIM',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC',comparisonKey:'hba1c'}]};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports'&&request.method()==='GET')return {items:[{reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',mutationCapabilities:{canCreateCorrection:true,canVoid:true}}],nextCursor:null};
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM/corrections'&&request.method()==='POST')return correctionDraft;
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM-V2/draft'&&request.method()==='PATCH')return correctionDraft;
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM-V2/confirm'&&request.method()==='POST'){correctionConfirmed=true;return {...correctionDraft,status:'confirmed',versionNo:2,isCurrent:true};}
+    if(url.pathname==='/api/care-profile/CP-LAB/lab-reports/LABR-SIM')return {reportId:'LABR-SIM',status:'confirmed',hospitalName:'โรงพยาบาลจำลอง',specimenCollectedAt:'2026-08-20T08:00:00Z',mutationCapabilities:{canCreateCorrection:true,canVoid:true},observations:[{observationId:'LABO-SIM',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0',abnormalFlagSource:'H',specimenSource:'Whole blood',methodSource:'HPLC',comparisonKey:'hba1c'}]};
     if(url.pathname==='/api/care-profile/CP-LAB/lab-trends')return {status:'available',sourceDisplayName:'HbA1c',direction:'increased',rangesDiffer:false,observations:[{specimenCollectedAt:'2026-01-20T08:00:00Z',sourceValueText:'6.1',sourceUnit:'%',referenceRangeText:'4.0-6.0'},{specimenCollectedAt:'2026-08-20T08:00:00Z',sourceValueText:'6.5',sourceUnit:'%',referenceRangeText:'4.0-6.0'}]};
     if(url.pathname==='/api/care-profile/CP-LAB/lab-explanations'&&request.method()==='POST')return {status:'answer',summary:'สรุปค่าที่ได้รับการยืนยัน',testExplanation:'การตรวจนี้ใช้ติดตามค่าตามรายงาน',confirmedFacts:[{observedAt:'2026-08-20T08:00:00Z',analyteNameSource:'HbA1c',sourceValueText:'6.5',sourceUnit:'%'}],trendExplanation:'ค่าตัวเลขเพิ่มขึ้นตามลำดับเวลา',rangeCaveat:null,questionsForClinician:['ควรติดตามเมื่อใด'],safetyNotice:'ควรพิจารณาร่วมกับข้อมูลอื่น',disclaimer:'ไม่ใช่การวินิจฉัย'};
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
@@ -252,6 +265,18 @@ async function familyLabResultsJourney(browser) {
   await page.getByRole('button',{name:'ให้พี่หมอช่วยอธิบาย'}).click();
   await page.waitForFunction(()=>document.querySelector('#labExplanationResult').textContent.includes('สรุปค่าที่ได้รับการยืนยัน'));
   assert.match(await page.locator('#labExplanationResult').textContent(),/ไม่ใช่การวินิจฉัย/);
+  await page.getByRole('button',{name:'สร้างฉบับแก้ไข'}).click();
+  await page.waitForFunction(()=>document.querySelector('.clinical-action-dialog')?.hidden===false);
+  const target=await page.locator('.clinical-action-dialog__actions button:last-child').evaluate((button)=>{const box=button.getBoundingClientRect();const hit=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);return{hit:hit===button,height:box.height,z:Number(getComputedStyle(document.querySelector('.clinical-action-dialog')).zIndex),toastPointer:getComputedStyle(document.querySelector('#toast')).pointerEvents};});
+  assert.equal(target.hit,true);assert.ok(target.height>=44);assert.ok(target.z>99);assert.equal(target.toastPointer,'none');
+  await page.locator('.clinical-action-dialog__reason').fill('แก้ไขค่าตามรายงานที่ตรวจทานแล้ว');
+  await page.locator('.clinical-action-dialog__actions button:last-child').click();
+  await page.waitForFunction(()=>document.querySelector('.lab-correction-editor'));
+  assert.match(await page.locator('.lab-correction-editor').textContent(),/ตรวจฉบับแก้ไข/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.getByRole('button',{name:'ยืนยันฉบับแก้ไข'}).click();
+  await page.waitForFunction(()=>document.querySelector('#labResultsLive').textContent.includes('ยืนยันผลตรวจฉบับแก้ไขแล้ว'));
+  assert.equal(correctionConfirmed,true);
   await page.close();
 }
 
@@ -330,6 +355,40 @@ async function adminSubscriptionJourney(browser) {
   await page.locator('#subscriptionSaveButton').click();
   await page.waitForFunction(() => !document.querySelector('#subscriptionDialog').open);
   assert.strictEqual(saved, true);
+  await page.close();
+}
+
+async function clinicalCorrectionVoidJourney(browser) {
+  const page=await browser.newPage({viewport:{width:390,height:844}});
+  await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{--navy:#17315d;--teal:#237b78;--gray:#667085}*{box-sizing:border-box}body{margin:0;padding:12px;font-family:Arial,sans-serif}.btn{min-height:44px;border-radius:10px;padding:10px 12px}</style><style>${CLINICAL_ACTION_DIALOG_CSS}</style><style>${CENTER_CARE_RECORDING_CSS}</style><div id="centerCareRoot"></div><div id="toast" style="position:fixed;z-index:99;pointer-events:none"></div><script>${CLINICAL_ACTION_DIALOG_SOURCE}</script><script>${CENTER_CARE_RECORDING_SOURCE}</script>`);
+  await page.evaluate(()=>{
+    const nativeVital={vitalSetId:'VS-NATIVE',status:'recorded',careRecipientName:'คุณยายตัวอย่าง',occurredAt:'2026-08-27T07:30:00+07:00',sourceType:'center_native',observations:[{measurementType:'temperature',sourceValueText:'36.7',sourceUnit:'Cel'}],mutationCapabilities:{canVoid:true}};
+    const externalVital={vitalSetId:'VS-EXTERNAL',status:'recorded',careRecipientName:'คุณตาตัวอย่าง',occurredAt:'2026-08-27T08:00:00+07:00',sourceType:'external_integration',observations:[{measurementType:'pulse',sourceValueText:'72',sourceUnit:'/min'}],mutationCapabilities:{canVoid:false}};
+    const lab={reportId:'LAB-NATIVE',status:'confirmed',isCurrent:true,hospitalName:'โรงพยาบาลตัวอย่าง',specimenCollectedAt:'2026-08-26T09:00:00+07:00',mutationCapabilities:{canCreateCorrection:true,canVoid:true}};
+    const daily={dailyReportId:'DAILY-NATIVE',status:'finalized',isCurrent:true,careRecipientName:'คุณยายตัวอย่าง',careDate:'2026-08-27',shift:{code:'day',sourceLabel:'กลางวัน'},sourceType:'center_native',mutationCapabilities:{canCreateCorrection:true,canVoid:true}};
+    const api=async(path)=>{
+      if(path.includes('/lab-reports'))return{items:[lab],nextCursor:null};
+      if(path.includes('/vital-signs/history'))return{items:[nativeVital,externalVital],nextCursor:null};
+      if(path.includes('status=finalized'))return{items:[daily]};
+      if(path.includes('/daily-care/review'))return{items:[]};
+      return{};
+    };
+    const view=window.PhimorCenterCareUI.mount({root:document.querySelector('#centerCareRoot'),api,notify:()=>{},onVisibility:()=>{}});
+    view.setContext({centerId:'CTR-1',role:'manager',residents:[{resident_id:'RES-1',care_profile_id:'CP-1',full_name:'คุณยายตัวอย่าง',room:'A101'}],capabilities:{vital_signs_v1:true,daily_care_v1:true}});
+    const labResident=document.querySelector('#centerLabResident');labResident.value='RES-1';labResident.dispatchEvent(new Event('change'));
+  });
+  await page.waitForFunction(()=>document.querySelector('#centerLabHistory')?.textContent.includes('โรงพยาบาลตัวอย่าง')&&document.querySelector('#centerVitalHistory')?.textContent.includes('คุณยายตัวอย่าง')&&document.querySelector('#centerDailyHistory')?.textContent.includes('ฉบับปัจจุบัน'));
+  assert.equal(await page.locator('[data-clinical-action="void-vital"]').count(),1);
+  assert.match(await page.locator('#centerVitalHistory').textContent(),/ข้อมูลจากระบบศูนย์/);
+  assert.equal(await page.locator('[data-clinical-action="correct-lab"]').count(),1);
+  assert.equal(await page.locator('[data-clinical-action="correct-daily"]').count(),1);
+  const targetButton=page.locator('[data-clinical-action="void-vital"]');
+  assert.ok((await targetButton.boundingBox()).height>=44);
+  await targetButton.click();
+  await page.waitForFunction(()=>document.querySelector('.clinical-action-dialog')?.hidden===false);
+  const targeting=await page.locator('.clinical-action-dialog__actions button:last-child').evaluate((button)=>{const box=button.getBoundingClientRect();return{hit:document.elementFromPoint(box.left+box.width/2,box.top+box.height/2)===button,height:box.height,textarea:document.querySelector('.clinical-action-dialog__reason').getBoundingClientRect().height,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth};});
+  assert.deepEqual(targeting,{hit:true,height:46,textarea:112,overflow:true});
+  await page.locator('.clinical-action-dialog__actions button:first-child').click();
   await page.close();
 }
 
@@ -469,7 +528,7 @@ async function pharmacistConsoleJourney(browser) {
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
   const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
-  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
   for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
