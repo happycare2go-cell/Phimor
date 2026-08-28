@@ -37,9 +37,15 @@ const { createConsultationRealtimeGateway } = require('./realtime/consultationRe
 const { createConsultationLifecycleSchedulerService } = require('./services/consultationLifecycleSchedulerService');
 const { createSchedulerCoordinatorService } = require('./services/schedulerCoordinatorService');
 const sharedRateLimiter = require('./utils/rateLimiter');
+const { createPlusPaymentSchedulerService } = require('./services/plusPaymentSchedulerService');
+const { createPlusPaymentRepository } = require('./services/plusPaymentRepository');
+const { loadFeatureFlags } = require('./config/featureFlags');
+const { paymentAvailable } = require('./services/plusPaymentOrderService');
 
 const consultationLifecycleScheduler = createConsultationLifecycleSchedulerService();
 const schedulerCoordinator = createSchedulerCoordinatorService();
+const plusPaymentScheduler = createPlusPaymentSchedulerService();
+const plusPaymentRepository = createPlusPaymentRepository();
 
 const app = express();
 app.locals.schedulerHealth = () => schedulerCoordinator.health();
@@ -120,10 +126,13 @@ app.get('/ready', async (req, res) => {
   try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
   const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
   const rateLimits = await sharedRateLimiter.getHealth();
+  const plusPaymentStorage = paymentAvailable(loadFeatureFlags())
+    ? await plusPaymentRepository.getHealth()
+    : { available: true, configured: false };
   const consultationRealtime = app.locals.consultationRealtimeHealth?.() || { configured:false, started:false };
   const scheduler = schedulerCoordinator.health();
-  const ready = database && rateLimits.available && missing.length === 0;
-  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, rateLimits, schedulerHeartbeatAt, scheduler, notifications, consultationRealtime });
+  const ready = database && rateLimits.available && plusPaymentStorage.available && missing.length === 0;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, rateLimits, plusPaymentStorage, schedulerHeartbeatAt, scheduler, notifications, consultationRealtime });
 });
 app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 
@@ -164,6 +173,7 @@ function startScheduler() {
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('webhookInbox', () => webhookRouter.processPendingWebhookEvents?.()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('integrationInbox', () => integrationEventService.processDue()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('consultationLifecycle', () => consultationLifecycleScheduler.runDueWork()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('*/1 * * * *', () => run('plusPaymentReconciliation', () => plusPaymentScheduler.runDueWork()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('15 2 * * *', () => run('centerStaffReconciliation', () => require('./services/centerService').reconcileAllCenterStaff()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('45 2 * * *', () => run('sourceImageRetention', () => require('./services/retentionService').purgeExpiredSourceImages()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('10 * * * *', () => run('sharedRateLimitCleanup', () => sharedRateLimiter.cleanupExpired()), { timezone: TZ }));

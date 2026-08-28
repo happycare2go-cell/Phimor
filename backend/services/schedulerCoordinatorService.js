@@ -12,6 +12,7 @@ const JOB_LOCK_KEYS = Object.freeze({
   webhookInbox: 'phimor:scheduler:webhook-inbox:v1',
   integrationInbox: 'phimor:scheduler:integration-inbox:v1',
   consultationLifecycle: 'phimor:scheduler:consultation-lifecycle:v1',
+  plusPaymentReconciliation: 'phimor:scheduler:plus-payment-reconciliation:v1',
   centerStaffReconciliation: 'phimor:scheduler:center-staff-reconciliation:v1',
   sourceImageRetention: 'phimor:scheduler:source-image-retention:v1',
   sharedRateLimitCleanup: 'phimor:scheduler:shared-rate-limit-cleanup:v1',

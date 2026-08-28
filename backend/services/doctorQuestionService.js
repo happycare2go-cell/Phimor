@@ -173,7 +173,8 @@ function createDoctorQuestionService(overrides = {}) {
     }
 
     await entitlement({
-      lineUserId, feature: 'ai_explanation', flags, queryFn: overrides.entitlementQueryFn,
+      lineUserId, feature: 'ai_explanation', capability: 'doctor_question_prep', flags,
+      queryFn: overrides.entitlementQueryFn,
     });
     const prepared = await buildContext({
       careProfileId, lineUserId, centerId, appointmentId, now,

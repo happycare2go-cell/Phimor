@@ -50,7 +50,7 @@ test('ทุก production cron เข้าผ่าน job-scoped distributed 
   for (const job of [
     'cardExpiry', 'pendingCardReminders', 'appointmentReminders', 'appointmentWeeklySummary',
     'centerTomorrowSummary', 'transportReminders', 'subscriptionExpiry', 'notificationRetry',
-    'webhookInbox', 'integrationInbox', 'consultationLifecycle', 'centerStaffReconciliation',
+    'webhookInbox', 'integrationInbox', 'consultationLifecycle', 'plusPaymentReconciliation', 'centerStaffReconciliation',
     'sourceImageRetention', 'sharedRateLimitCleanup',
   ]) assert.match(source, new RegExp(`run\\('${job}'`));
   assert.match(source, /schedulerCoordinator\.run\(jobName, task\)/);
@@ -60,6 +60,8 @@ test('ทุก production cron เข้าผ่าน job-scoped distributed 
 test('/ready surfaces scheduler diagnostics without treating lock ownership as readiness failure', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'backend', 'server.js'), 'utf8');
   assert.match(source, /const scheduler = schedulerCoordinator\.health\(\)/);
-  assert.match(source, /const ready = database && rateLimits\.available && missing\.length === 0/);
+  assert.match(source, /const ready = database && rateLimits\.available && plusPaymentStorage\.available && missing\.length === 0/);
+  assert.match(source, /paymentAvailable\(loadFeatureFlags\(\)\)/);
+  assert.match(source, /plusPaymentStorage/);
   assert.doesNotMatch(source, /ready\s*=.*skipped_due_to_lock/);
 });

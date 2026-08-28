@@ -4,7 +4,7 @@ process.env.NODE_ENV = 'test';
 
 const migration = require('../backend/migrations/0002_create_plus_entitlements');
 const {
-  getPlusEntitlement, requirePlusFeature,
+  getPlusEntitlement, requirePlusFeature, canUseCapability, PLUS_CAPABILITY_REGISTRY,
 } = require('../backend/services/plusEntitlementService');
 
 const NOW = new Date('2026-08-24T10:00:00.000Z');
@@ -135,4 +135,25 @@ test('entitlement database failure denies safely without exposing database error
     lineUserId: 'U-1', feature: 'care_profile_summary', at: NOW, flags: flags(),
     queryFn: async () => { throw new Error('secret database connection details'); },
   }), (error) => error.code === 'ENTITLEMENT_UNAVAILABLE' && !error.message.includes('database'));
+});
+
+test('central capability registry exposes only implemented Plus intelligence', async () => {
+  assert.equal(PLUS_CAPABILITY_REGISTRY.ai_lab_explanation.status, 'LIVE');
+  assert.equal(PLUS_CAPABILITY_REGISTRY.doctor_question_prep.status, 'LIVE');
+  assert.equal(PLUS_CAPABILITY_REGISTRY.doctor_visit_organization.status, 'LIVE');
+  assert.equal(PLUS_CAPABILITY_REGISTRY.monthly_health_summary.status, 'FUTURE');
+  const decision = await canUseCapability({
+    lineUserId: 'U-1', capability: 'ai_lab_explanation', flags: flags({ internalEntitlementOnly: false, aiExplanation: true }),
+    queryFn: queryRows([entitlement({ source: 'payment', features: ['ai_explanation'] })]),
+  });
+  assert.equal(decision.allowed, true);
+});
+
+test('future Plus capability is denied without querying clinical or entitlement data', async () => {
+  let calls = 0;
+  const decision = await canUseCapability({
+    lineUserId: 'U-1', capability: 'smart_reminders', flags: flags(),
+    queryFn: async () => { calls += 1; return { rows: [] }; },
+  });
+  assert.equal(decision.allowed, false); assert.equal(decision.reasonCode, 'PLUS_CAPABILITY_NOT_AVAILABLE'); assert.equal(calls, 0);
 });

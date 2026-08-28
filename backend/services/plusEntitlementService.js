@@ -1,5 +1,6 @@
 const { databaseQuery } = require('../db');
 const { loadFeatureFlags } = require('../config/featureFlags');
+const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 
 const PLUS_FEATURES = Object.freeze([
   'care_profile_summary', 'medication_summary', 'appointment_summary', 'doctor_visit_preparation',
@@ -10,6 +11,16 @@ const FEATURE_FLAG_KEYS = Object.freeze({
   ai_explanation: 'aiExplanation',
   medication_diff: 'medicationDiff',
   pharmacist_escalation: 'pharmacistEscalation',
+});
+
+const PLUS_CAPABILITY_REGISTRY = Object.freeze({
+  ai_lab_explanation: Object.freeze({ status: 'LIVE', feature: 'ai_explanation', flag: 'aiExplanation' }),
+  doctor_question_prep: Object.freeze({ status: 'LIVE', feature: 'ai_explanation', flag: 'aiExplanation' }),
+  doctor_visit_organization: Object.freeze({ status: 'LIVE', feature: 'ai_explanation', flag: 'aiExplanation' }),
+  care_profile_ai_assistant: Object.freeze({ status: 'LIVE', feature: 'ai_explanation', flag: 'aiExplanation' }),
+  care_change_summary: Object.freeze({ status: 'LIVE', feature: 'medication_diff', flag: 'medicationDiff' }),
+  monthly_health_summary: Object.freeze({ status: 'FUTURE', feature: null, flag: null }),
+  smart_reminders: Object.freeze({ status: 'FUTURE', feature: null, flag: null }),
 });
 
 class PlusEntitlementError extends Error {
@@ -79,7 +90,12 @@ async function getPlusEntitlement({ lineUserId, at = new Date(), flags = loadFea
   return basicResult(firstDenied?.reasonCode || 'ENTITLEMENT_INACTIVE');
 }
 
-async function requirePlusFeature({ lineUserId, feature, at, flags = loadFeatureFlags(), queryFn = databaseQuery } = {}) {
+async function requirePlusFeature({ lineUserId, feature, capability = null, at, flags = loadFeatureFlags(), queryFn = databaseQuery } = {}) {
+  const definition = capability ? PLUS_CAPABILITY_REGISTRY[capability] : null;
+  if (capability && (!definition || definition.status !== 'LIVE')) {
+    throw new PlusEntitlementError('PLUS_CAPABILITY_NOT_AVAILABLE');
+  }
+  feature = definition?.feature || feature;
   if (!PLUS_FEATURES.includes(feature)) throw new PlusEntitlementError('PLUS_FEATURE_NOT_SUPPORTED');
   const featureFlag = FEATURE_FLAG_KEYS[feature];
   if (featureFlag && !flags.plus[featureFlag]) throw new PlusEntitlementError('PLUS_FEATURE_DISABLED');
@@ -91,7 +107,40 @@ async function requirePlusFeature({ lineUserId, feature, at, flags = loadFeature
   return entitlement;
 }
 
+async function canUseCapability({
+  lineUserId, careProfileId = null, capability, at,
+  flags = loadFeatureFlags(), queryFn = databaseQuery,
+  authorize = authorizeCareProfileAccess,
+} = {}) {
+  const definition = PLUS_CAPABILITY_REGISTRY[capability];
+  if (!definition || definition.status !== 'LIVE') {
+    return Object.freeze({ allowed: false, capability, reasonCode: 'PLUS_CAPABILITY_NOT_AVAILABLE' });
+  }
+  if (careProfileId) {
+    try {
+      await authorize({ lineUserId, careProfileId, permission: 'view', requireActiveCenter: true });
+    } catch (_) {
+      return Object.freeze({ allowed: false, capability, reasonCode: 'ACCESS_DENIED' });
+    }
+  }
+  try {
+    const entitlement = await requirePlusFeature({
+      lineUserId, capability, at, flags, queryFn,
+    });
+    return Object.freeze({ allowed: true, capability, entitlement });
+  } catch (error) {
+    return Object.freeze({ allowed: false, capability, reasonCode: error?.code || 'ENTITLEMENT_UNAVAILABLE' });
+  }
+}
+
+async function requirePlusCapability(input = {}) {
+  const decision = await canUseCapability(input);
+  if (!decision.allowed) throw new PlusEntitlementError(decision.reasonCode);
+  return decision.entitlement;
+}
+
 module.exports = {
-  PLUS_FEATURES, FEATURE_FLAG_KEYS, PlusEntitlementError,
+  PLUS_FEATURES, FEATURE_FLAG_KEYS, PLUS_CAPABILITY_REGISTRY, PlusEntitlementError,
   normalizeFeatures, evaluateRecord, getPlusEntitlement, requirePlusFeature,
+  canUseCapability, requirePlusCapability,
 };

@@ -17,8 +17,10 @@ const subscriptionService = require('../services/subscriptionService');
 const { createConsultationPaymentSupportService } = require('../services/consultationPaymentSupportService');
 const privacyService = require('../services/privacyService');
 const { displayIdentity } = require('../utils/safeIdentity');
+const { createPlusPaymentSupportService } = require('../services/plusPaymentSupportService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
+const plusPaymentSupport = createPlusPaymentSupportService();
 const { createPlatformAdminRouter } = require('./platformAdmin');
 
 // Bootstrap ครั้งแรกต้องมีทั้ง LINE identity และ ADMIN_API_KEY ปัจจุบัน
@@ -79,6 +81,25 @@ router.get('/consultation-payments/lookup', asyncHandler(async (req, res) => {
       errorCode:error?.code || 'PAYMENT_LOOKUP_FAILED',
       message:status === 404 ? 'ไม่พบรายการจากเลขอ้างอิงนี้'
         : status === 400 ? 'เลขอ้างอิงไม่ถูกต้อง' : 'ตรวจสอบรายการชำระเงินไม่สำเร็จ',
+    });
+  }
+}));
+
+// Safe exact-reference support lookup. No provider identifiers, clinical data,
+// full LINE identity or stored payment payload is projected.
+router.get('/plus-payments/lookup', asyncHandler(async (req, res) => {
+  try {
+    const result = await plusPaymentSupport.lookup({ reference: req.query.reference });
+    await audit('admin.plus_payment_lookup', req.admin.actor, { found: true });
+    return res.json(result);
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    if (status < 500) await audit('admin.plus_payment_lookup', req.admin.actor, { found: false, errorCode: error.code });
+    return res.status(status).json({
+      error: status === 404 ? 'not_found' : status === 400 ? 'bad_request' : 'internal_error',
+      errorCode: error?.code || 'PLUS_PAYMENT_LOOKUP_FAILED',
+      message: status === 404 ? 'ไม่พบรายการพี่หมอ Plus จากเลขอ้างอิงนี้'
+        : status === 400 ? 'เลขอ้างอิงไม่ถูกต้อง' : 'ตรวจสอบรายการพี่หมอ Plus ไม่สำเร็จ',
     });
   }
 }));

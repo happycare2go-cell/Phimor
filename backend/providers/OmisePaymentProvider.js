@@ -5,6 +5,7 @@ const {OMISE_API_BASE_URL}=require('../config/consultationPaymentConfig');
 
 const STATUS_EVENT=Object.freeze({successful:'payment_succeeded',failed:'payment_failed',expired:'payment_failed',pending:'payment_pending'});
 const CHARGE_ID=/^chrg_test_[0-9a-z]+$/;
+const PAYMENT_PURPOSES=new Set(['phimor_consultation','phimor_plus']);
 
 function providerError(code,status=502){return new ConsultationDomainError(code,status,'ระบบชำระเงินยังไม่พร้อมใช้งาน');}
 function validBase64Secret(value){if(typeof value!=='string'||!/^[A-Za-z0-9+/]+={0,2}$/.test(value))return false;try{return Buffer.from(value,'base64').length>=16;}catch(_){return false;}}
@@ -25,6 +26,7 @@ function mapCharge(charge,{providerEventId=null,payloadHash=null}={}){
     providerEventId:providerEventId||`reconcile:${charge.id}:${status||'unknown'}`,
     providerPaymentId:charge.id,providerCheckoutId:charge.id,
     orderId:typeof charge.metadata?.order_id==='string'?charge.metadata.order_id:'',
+    purpose:typeof charge.metadata?.purpose==='string'?charge.metadata.purpose:'',
     amountMinor:charge.amount,currency:String(charge.currency||'').toUpperCase(),
     eventType:STATUS_EVENT[status]||'payment_unknown',
     paidAt:charge.paid_at||null,payloadHash,
@@ -42,9 +44,10 @@ class OmisePaymentProvider extends PaymentProvider{
       const data=await response.json().catch(()=>null);if(!response.ok)throw providerError(response.status===429?'OMISE_RATE_LIMITED':'OMISE_API_ERROR',response.status===429?503:502);return data;
     }catch(error){if(error instanceof ConsultationDomainError)throw error;if(error?.name==='AbortError')throw providerError('OMISE_TIMEOUT',503);throw providerError('OMISE_UNAVAILABLE',503);}finally{clearTimeout(timeout);}
   }
-  async createCheckout({orderId,amountMinor,currency,durationMinutes}){
+  async createCheckout({orderId,amountMinor,currency,durationMinutes,purpose='phimor_consultation'}){
     if(typeof orderId!=='string'||!orderId)throw providerError('OMISE_ORDER_REQUIRED',400);
-    const form=new URLSearchParams();form.set('amount',String(amountMinor));form.set('currency',String(currency).toLowerCase());form.set('source[type]','promptpay');form.set('metadata[order_id]',orderId);form.set('metadata[purpose]','phimor_consultation');
+    if(!PAYMENT_PURPOSES.has(purpose))throw providerError('OMISE_PAYMENT_PURPOSE_INVALID',400);
+    const form=new URLSearchParams();form.set('amount',String(amountMinor));form.set('currency',String(currency).toLowerCase());form.set('source[type]','promptpay');form.set('metadata[order_id]',orderId);form.set('metadata[purpose]',purpose);
     const charge=await this.request('/charges',{method:'POST',form});const mapped=mapCharge(charge);const qrImageUrl=safeQrUrl(charge);
     if(charge.status!=='pending'||charge.source?.type!=='promptpay'||!qrImageUrl)throw providerError('OMISE_PROMPTPAY_CHECKOUT_INVALID');
     if(mapped.orderId!==orderId||mapped.amountMinor!==amountMinor||mapped.currency!==currency)throw providerError('OMISE_CHECKOUT_MISMATCH',409);
@@ -66,4 +69,4 @@ class OmisePaymentProvider extends PaymentProvider{
   }
 }
 
-module.exports={OmisePaymentProvider,STATUS_EVENT,CHARGE_ID,assertTestConfig,safeQrUrl,mapCharge};
+module.exports={OmisePaymentProvider,STATUS_EVENT,CHARGE_ID,PAYMENT_PURPOSES,assertTestConfig,safeQrUrl,mapCharge};

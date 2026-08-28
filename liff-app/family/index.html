@@ -9,6 +9,7 @@
 <script src="../runtime-config.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
 <link rel="stylesheet" href="./plus-ui.css">
+<link rel="stylesheet" href="./plus-payment-ui.css">
 <link rel="stylesheet" href="./doctor-visit-ui.css">
 <link rel="stylesheet" href="./consultation-ui.css">
 <link rel="stylesheet" href="./lab-results-ui.css">
@@ -320,12 +321,20 @@
       </section>
     </section>
 
-    <section class="card plus-panel" data-family-module="plus" id="plusPanel" aria-labelledby="plusTitle" hidden>
+    <section class="card plus-commerce-panel" data-family-module="plus-commerce" id="plusCommercePanel" aria-labelledby="plusCommerceTitle" hidden>
+      <div class="plus-commerce-heading">
+        <img src="../assets/mascot/phimor-review.png" alt="">
+        <div><h2 id="plusCommerceTitle">พี่หมอ Plus</h2><p>ฟีเจอร์ช่วยสรุปและเตรียมข้อมูลสุขภาพที่บันทึกไว้</p></div>
+      </div>
+      <div id="plusCommerceContent" class="plus-commerce-content" aria-live="polite"></div>
+    </section>
+
+    <section class="card plus-panel" data-family-module="plus-ai" id="plusPanel" aria-labelledby="plusTitle" hidden>
       <div class="plus-heading">
         <img class="plus-heading__mascot" src="../assets/mascot/phimor-review.png" alt="">
         <div>
-          <span class="plus-badge">INTERNAL TEST</span>
-          <h3 id="plusTitle">พี่หมอ Plus — ทดสอบภายใน</h3>
+          <span class="plus-badge">PLUS</span>
+          <h3 id="plusTitle">พี่หมอ Plus</h3>
           <p>ถามจากข้อมูลที่บันทึกไว้ใน Care Profile นี้ พี่หมอจะไม่เดาข้อมูลสุขภาพที่ไม่มี</p>
         </div>
       </div>
@@ -519,6 +528,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="./plus-ui.js"></script>
+<script src="./plus-payment-ui.js"></script>
 <script src="../consultation-realtime-client.js"></script>
 <script src="./consultation-ui.js"></script>
 <script src="./doctor-visit-ui.js"></script>
@@ -537,6 +547,7 @@ let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
 let PLUS_UI = null;
+let PLUS_PAYMENT_UI = null;
 let CONSULTATION_UI = null;
 let DOCTOR_VISIT_UI = null;
 let LAB_RESULTS_UI = null;
@@ -639,6 +650,7 @@ async function plusApi(path, opts={}) {
   try {
     const res = await fetch(BACKEND_URL + path, { ...opts, headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) } });
     const data = await res.json().catch(()=>({}));
+    if (res.ok && data && typeof data === 'object') return data;
     if (data && typeof data.status === 'string') return data;
     return { status:'unavailable', errorCode:res.ok?'INVALID_RESPONSE':'PLUS_REQUEST_FAILED' };
   } catch (_) {
@@ -659,6 +671,42 @@ async function ensurePlusUI() {
   }
   PLUS_UI.setProfile(currentProfile);
   await PLUS_UI.checkVisibility();
+}
+
+async function handlePlusReturn(target){
+  if(target==='lab_explanation'){
+    await ensureLabResultsUI();activateServiceModule('lab','วิเคราะห์ผลตรวจ & AI');
+    await LAB_RESULTS_UI.session.open();
+    if(LAB_RESULTS_UI.session.snapshot().selectedObservationId)await LAB_RESULTS_UI.session.generateExplanation();
+    return;
+  }
+  if(target==='doctor_question_prep'){
+    await ensurePlusUI();activateServiceModule('plus-ai','ถามหมออะไรดี');
+    if(PLUS_UI&&!document.getElementById('plusPanel').hidden)await PLUS_UI.runQuickAction('doctor-questions');return;
+  }
+  if(target==='doctor_visit_organization'){
+    await ensureDoctorVisitUI();activateServiceModule('doctor-visit','หมอว่าไง');
+    await DOCTOR_VISIT_UI?.controller.organizeCurrent?.();return;
+  }
+  await openFamilyDestination('plus');
+}
+async function ensurePlusPaymentUI({reload=false}={}){
+  if(!window.PhimorPlusPaymentUI)return null;
+  if(!PLUS_PAYMENT_UI){
+    let controller=null;
+    const session=window.PhimorPlusPaymentUI.createSession({request:plusApi,onChange:(state)=>controller?.render(state),onReturn:handlePlusReturn});
+    controller=window.PhimorPlusPaymentUI.createController({doc:document,session});
+    PLUS_PAYMENT_UI={session,controller};
+  }
+  PLUS_PAYMENT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
+  if(reload||!PLUS_PAYMENT_UI.session.snapshot().offer)await PLUS_PAYMENT_UI.session.load();
+  return PLUS_PAYMENT_UI;
+}
+async function requestPlusCapability(target){
+  const plus=await ensurePlusPaymentUI();if(!plus)return {allowed:false};
+  const result=await plus.session.requestCapability(target);
+  if(!result.allowed)activateServiceModule('plus-commerce','พี่หมอ Plus');
+  return result;
 }
 
 function ensureHomeUI(){
@@ -705,7 +753,7 @@ async function ensureDoctorVisitUI(){
   if(!DOCTOR_VISIT_UI){
     let controller=null;
     const session=window.PhimorDoctorVisitUI.createSession({request:doctorVisitApi,onChange:(state)=>controller?.render(state)});
-    controller=window.PhimorDoctorVisitUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile});
+    controller=window.PhimorDoctorVisitUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onUpgradeRequired:()=>requestPlusCapability('doctor_visit_organization')});
     DOCTOR_VISIT_UI={session,controller};
   }
   await DOCTOR_VISIT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
@@ -724,7 +772,7 @@ async function ensureLabResultsUI(){
   if(!LAB_RESULTS_UI){
     let controller=null;
     const session=window.PhimorFamilyLabResultsUI.createSession({request:labResultsApi,onChange:(state)=>controller?.render(state)});
-    controller=window.PhimorFamilyLabResultsUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onPrepareQuestions:openDoctorQuestionsFromLab});
+    controller=window.PhimorFamilyLabResultsUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile,onPrepareQuestions:openDoctorQuestionsFromLab,onUpgradeRequired:()=>requestPlusCapability('lab_explanation')});
     LAB_RESULTS_UI={session,controller};
   }
   LAB_RESULTS_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
@@ -786,13 +834,16 @@ async function openFamilyDestination(destination){
     if(document.getElementById('consultationPanel').hidden){activateView('home');toast('บริการปรึกษาเภสัชกรยังไม่พร้อมสำหรับ Care Profile นี้');}return;
   }
   if(destination==='doctor-questions'){
-    await ensurePlusUI();activateServiceModule('plus','ถามหมออะไรดี');
-    if(!PLUS_UI||document.getElementById('plusPanel').hidden){activateView('home');return toast('การช่วยเตรียมคำถามใช้สิทธิ์พี่หมอ Plus');}
-    await PLUS_UI.runQuickAction('doctor-questions');return;
+    const decision=await requestPlusCapability('doctor_question_prep');
+    if(decision.allowed){
+      await ensurePlusUI();activateServiceModule('plus-ai','ถามหมออะไรดี');
+      if(PLUS_UI&&!document.getElementById('plusPanel').hidden)await PLUS_UI.runQuickAction('doctor-questions');
+    }
+    return;
   }
   if(destination==='plus'){
-    await ensurePlusUI();activateServiceModule('plus','พี่หมอ Plus');
-    if(!PLUS_UI||document.getElementById('plusPanel').hidden){activateView('home');toast('ฟีเจอร์นี้ใช้สิทธิ์พี่หมอ Plus');}
+    const plus=await ensurePlusPaymentUI({reload:true});activateServiceModule('plus-commerce','พี่หมอ Plus');
+    if(!plus){activateView('home');toast('พี่หมอ Plus ยังไม่พร้อมใช้งาน');}
   }
 }
 document.querySelectorAll('[data-family-destination]').forEach(button=>button.addEventListener('click',()=>openFamilyDestination(button.dataset.familyDestination)));
@@ -805,6 +856,7 @@ async function acceptConsent() {
   ensureHomeUI();
   await loadDashboard();
   await ensurePlusUI();
+  await ensurePlusPaymentUI();
   await ensureConsultationUI();
   await ensureDoctorVisitUI();
   await ensureLabResultsUI();
@@ -888,6 +940,7 @@ async function loadDashboard() {
   if(token!==DASHBOARD_GENERATION)return {ignored:true,stale:true};
   renderHealthProfile(currentProfile);
   PLUS_UI?.setProfile(currentProfile);
+  PLUS_PAYMENT_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   if(CONSULTATION_UI)await CONSULTATION_UI.session.setProfile(currentProfile);
   if(DOCTOR_VISIT_UI)await DOCTOR_VISIT_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   LAB_RESULTS_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
@@ -903,6 +956,7 @@ function selectProfile(id){
   clearProfileScopedUi();renderProfileAnchor();
   renderHealthProfile(currentProfile);
   PLUS_UI?.setProfile(currentProfile);
+  PLUS_PAYMENT_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   CONSULTATION_UI?.session.setProfile(currentProfile);
   DOCTOR_VISIT_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   LAB_RESULTS_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
@@ -1150,6 +1204,7 @@ async function main() {
     ensureHomeUI();
     await loadDashboard();
     await ensurePlusUI();
+    await ensurePlusPaymentUI();
     await ensureConsultationUI();
     await ensureDoctorVisitUI();
     await ensureLabResultsUI();

@@ -1,0 +1,26 @@
+.plus-commerce-panel{border:1px solid #d8c78d;background:linear-gradient(180deg,#fffdf6,#fff);overflow:hidden}
+.plus-commerce-heading{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.plus-commerce-heading img{width:58px;height:58px;border-radius:16px;object-fit:cover;background:#fff5cf}
+.plus-commerce-heading h2{margin:0;color:var(--navy);font-size:19px}
+.plus-commerce-heading p{margin:3px 0 0;color:var(--gray);font-size:12px;line-height:1.55}
+.plus-commerce-content{display:flex;flex-direction:column;gap:11px;overflow-wrap:anywhere}
+.plus-commerce-content h3,.plus-commerce-content p{margin:0}
+.plus-commerce-content .btn{min-height:44px;width:100%}
+.plus-plan-chip{align-self:flex-start;padding:5px 10px;border-radius:999px;background:#eef1f7;color:#4a5264;font-size:11px;font-weight:800}
+.plus-plan-chip--active{background:#fff1bd;color:#654900}
+.plus-commerce__lead{color:#31394c;font-size:13px;line-height:1.65}
+.plus-context-label{padding:11px;border-radius:12px;background:#eef3ff;color:var(--navy);font-weight:800;line-height:1.55}
+.plus-offer-title{text-align:center;font-size:20px!important}
+.plus-offer-price{text-align:center;color:#8a6200;font-size:25px;font-weight:900}
+.plus-benefits{margin:0;padding:11px 12px 11px 31px;border-radius:14px;background:#fff9e7;color:#30384b;font-size:13px;line-height:1.75}
+.plus-plan-rule{color:#4b5364;font-size:12px;line-height:1.55}
+.plus-no-renew{padding:9px 11px;border-radius:10px;background:#f2f4f8;color:#343c4e;font-size:12px;font-weight:800;text-align:center}
+.plus-payment-state{padding:11px;border-radius:12px;background:#fff5ce;color:#604a00;font-size:13px;font-weight:800;line-height:1.55}
+.plus-payment-state--active{background:#e8f8ef;color:#165a37}
+.plus-payment-state--failed,.plus-payment-state--expired,.plus-payment-state--cancelled{background:#f3f4f7;color:#535b6c}
+.plus-payment-reference{color:#697186;font-size:11px;word-break:break-all}
+.plus-payment-qr{display:block;width:min(230px,100%);height:auto;margin:0 auto;border:1px solid #d9deea;border-radius:14px;background:#fff;padding:10px}
+.plus-history-row{display:flex;flex-direction:column;gap:4px;padding:12px 2px;border-bottom:1px solid #e7eaf1}
+.plus-history-row strong{color:var(--navy);font-size:14px}.plus-history-row span{font-size:12px}.plus-history-row small{color:var(--gray);font-size:11px}
+.plus-commerce__error{padding:10px;border-radius:10px;background:#fff0f0;color:#772f35;font-size:12px;line-height:1.55}
+@media(max-width:390px){.plus-commerce-panel{padding:14px}.plus-commerce-heading{align-items:flex-start}.plus-offer-price{font-size:23px}}

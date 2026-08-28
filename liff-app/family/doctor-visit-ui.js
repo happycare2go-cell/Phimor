@@ -176,7 +176,7 @@
       : parsed.toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' });
   }
 
-  function createController({ doc, session, getCurrentProfile }) {
+  function createController({ doc, session, getCurrentProfile, onUpgradeRequired = null }) {
     const panel = doc.getElementById('doctorVisitPanel');
     const list = doc.getElementById('doctorVisitList');
     const editor = doc.getElementById('doctorVisitEditor');
@@ -292,9 +292,16 @@
       }, itemDrafts.length)); renderItems(false);
     });
     saveButton.addEventListener('click', () => session.save(inputValue()));
-    aiButton.addEventListener('click', () => session.organize(inputValue()));
+    async function organizeCurrent() {
+      const result = await session.organize(inputValue());
+      if (result?.status === 'unavailable'
+          && /^(?:PLUS_|NO_PLUS_|ENTITLEMENT_|INTERNAL_ENTITLEMENT)/.test(result.errorCode || '')
+          && typeof onUpgradeRequired === 'function') onUpgradeRequired();
+      return result;
+    }
+    aiButton.addEventListener('click', organizeCurrent);
     confirmButton.addEventListener('click', () => session.confirm(inputValue()));
-    return { render };
+    return { render, organizeCurrent };
   }
 
   return {

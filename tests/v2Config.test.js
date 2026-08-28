@@ -8,6 +8,7 @@ test('V2 Plus flags default safely and internal entitlement defaults true', () =
   assert.deepStrictEqual(flags.plus, {
     enabled: false,
     internalEntitlementOnly: true,
+    paymentEnabled: false,
     aiExplanation: false,
     medicationDiff: false,
     pharmacistEscalation: false,
@@ -17,11 +18,12 @@ test('V2 Plus flags default safely and internal entitlement defaults true', () =
 test('V2 feature flags parse explicit true and false values', () => {
   const flags = loadFeatureFlags({
     PLUS_ENABLED: ' true ', PLUS_INTERNAL_ENTITLEMENT_ONLY: 'false',
-    PLUS_AI_EXPLANATION_ENABLED: 'TRUE', PLUS_MEDICATION_DIFF_ENABLED: 'false',
+    PLUS_PAYMENT_ENABLED: 'true', PLUS_AI_EXPLANATION_ENABLED: 'TRUE', PLUS_MEDICATION_DIFF_ENABLED: 'false',
     PLUS_PHARMACIST_ESCALATION_ENABLED: 'true',
   });
   assert.strictEqual(flags.plus.enabled, true);
   assert.strictEqual(flags.plus.internalEntitlementOnly, false);
+  assert.strictEqual(flags.plus.paymentEnabled, true);
   assert.strictEqual(flags.plus.aiExplanation, true);
   assert.strictEqual(flags.plus.medicationDiff, false);
   assert.strictEqual(flags.plus.pharmacistEscalation, true);

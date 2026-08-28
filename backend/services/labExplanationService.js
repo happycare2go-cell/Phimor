@@ -94,7 +94,7 @@ function createLabExplanationService(overrides = {}) {
   } = {}) {
     const normalizedQuestion = validateQuestion(question);
     await entitlement({
-      lineUserId, feature: 'ai_explanation', flags,
+      lineUserId, feature: 'ai_explanation', capability: 'ai_lab_explanation', flags,
       queryFn: overrides.entitlementQueryFn,
     });
     const trend = await getTrend({ careProfileId, lineUserId, centerId, identity, limit: 20 });

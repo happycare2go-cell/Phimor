@@ -51,6 +51,18 @@ services:
         sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
       - key: GEMINI_API_KEY
         sync: false
+      # Plus payment V1 is manual renewal only. Keep disabled until migration
+      # 0015 and controlled Omise test/production configuration are verified.
+      - key: PLUS_PAYMENT_ENABLED
+        value: "false"
+      - key: CONSULTATION_PAYMENT_PROVIDER
+        sync: false
+      - key: OMISE_PUBLIC_KEY
+        sync: false
+      - key: OMISE_SECRET_KEY
+        sync: false
+      - key: OMISE_WEBHOOK_SECRET
+        sync: false
       - key: AI_NAME_MATCH_THRESHOLD
         value: "0.82"
       - key: CARD_EXPIRY_HOURS
