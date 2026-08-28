@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 const { NotificationOutbox, id, now, withTransaction } = require('../db');
 const lineClient = require('../providers/lineClient');
+const { createNotificationDeliveryPolicyService } = require('./notificationDeliveryPolicyService');
 
 const MAX_ATTEMPTS = 5;
 const DELIVERY_LEASE_MS = 2 * 60 * 1000;
@@ -18,6 +19,18 @@ function createNotificationService(overrides = {}) {
   const retryKeyFactory = overrides.retryKeyFactory || randomUUID;
   const clock = overrides.now || now;
   const transact = overrides.withTransaction || withTransaction;
+  const deliveryPolicy = overrides.deliveryPolicy || createNotificationDeliveryPolicyService(
+    overrides.deliveryPolicyOptions
+  );
+
+  function deliveryLockKey(notification) {
+    if (notification?.kind === 'family_daily_care_finalized'
+      && notification?.meta?.resourceType === 'daily_care'
+      && typeof notification.meta.resourceId === 'string') {
+      return `notification-resource:daily_care:${notification.meta.resourceId}`;
+    }
+    return `notification-delivery:${notification.notification_id}`;
+  }
 
   async function enqueue({ dedupeKey, to, messages, kind, meta = {} }) {
     if (!to) return { ok:false, reason:'missing_recipient' };
@@ -37,12 +50,23 @@ function createNotificationService(overrides = {}) {
     });
   }
 
-  async function deliver(notification) {
+  async function deliverClaimed(notification, { alreadyLocked = false } = {}) {
     if (!notification?.notification_id) return { ok:false, reason:'missing_notification' };
-    const lockKey = `notification-delivery:${notification.notification_id}`;
-    const claim = await transact(lockKey, async () => {
+    const lockKey = deliveryLockKey(notification);
+    const underLock = (callback) => alreadyLocked ? callback() : transact(lockKey, callback);
+    const claim = await underLock(async () => {
       const current = await outbox.findOne((item) => item.notification_id === notification.notification_id);
-      if (!current || current.status === 'sent' || current.status === 'dead_letter') return { terminal:true, current };
+      if (!current || ['sent', 'dead_letter', 'suppressed'].includes(current.status)) return { terminal:true, current };
+      let policy;
+      try { policy = await deliveryPolicy.validate(current); }
+      catch (_) { return { validationUnavailable:true, current }; }
+      if (!policy?.allowed) {
+        const suppressed = await outbox.update((item) => item.notification_id === current.notification_id, {
+          status:'suppressed', last_error:policy?.reason || 'AUTHORITATIVE_RESOURCE_UNAVAILABLE',
+          next_attempt_at:null, delivery_lease_until:null,
+        });
+        return { terminal:true, current:suppressed, suppressed:true };
+      }
       const currentTime = new Date(clock()).getTime();
       if (current.status === 'sending' && new Date(current.delivery_lease_until || 0).getTime() > currentTime) {
         return { inProgress:true, current };
@@ -70,15 +94,17 @@ function createNotificationService(overrides = {}) {
         return { ok:false, notification:claim.current, retryWindowExpired:true,
           reason:'retry_window_expired' };
       }
-      return { ok:true, notification:claim.current, duplicate:true,
-      };
+      return { ok:true, notification:claim.current, duplicate:true, suppressed:claim.suppressed === true };
+    }
+    if (claim.validationUnavailable) {
+      return { ok:false, notification:claim.current, reason:'delivery_validation_unavailable' };
     }
     if (claim.inProgress) return { ok:true, notification:claim.current, duplicate:true, inProgress:true };
     const claimed = claim.claimed;
     try {
       const provider = await line.pushMessage(claimed.to, claimed.messages, { retryKey:claimed.provider_retry_key });
       const acceptedByConflict = provider?.retryKeyConflict === true;
-      const updated = await transact(lockKey, () => outbox.update(
+      const updated = await underLock(() => outbox.update(
         (item) => item.notification_id === claimed.notification_id,
         {
           status:'sent', sent_at:clock(), attempts:Number(claimed.attempts || 0) + 1,
@@ -92,7 +118,7 @@ function createNotificationService(overrides = {}) {
       const attempts = Number(claimed.attempts || 0) + 1;
       const terminal = attempts >= MAX_ATTEMPTS;
       const retryMinutes = Math.min(60, 2 ** attempts);
-      const updated = await transact(lockKey, () => outbox.update(
+      const updated = await underLock(() => outbox.update(
         (item) => item.notification_id === claimed.notification_id,
         {
           status:terminal ? 'dead_letter' : 'retrying', attempts,
@@ -104,6 +130,20 @@ function createNotificationService(overrides = {}) {
       ));
       return { ok:false, notification:updated, reason:'delivery_failed' };
     }
+  }
+
+  async function deliver(notification) {
+    if (!notification?.notification_id) return { ok:false, reason:'missing_notification' };
+    const persisted = await outbox.findOne((item) => item.notification_id === notification.notification_id);
+    const candidate = persisted || notification;
+    const lockKey = deliveryLockKey(candidate);
+    if (lockKey.startsWith('notification-resource:daily_care:')) {
+      // The authoritative-state check and provider attempt share the same resource lock
+      // as Daily Care void. This intentionally serializes only this one report's brief
+      // provider attempt so a void cannot commit between validation and delivery.
+      return transact(lockKey, () => deliverClaimed(candidate, { alreadyLocked:true }));
+    }
+    return deliverClaimed(candidate);
   }
 
   async function enqueueAndDeliver(input) {
@@ -119,13 +159,28 @@ function createNotificationService(overrides = {}) {
         && new Date(item.next_attempt_at || 0).getTime() <= currentTime
     ) || (item.status === 'sending'
       && new Date(item.delivery_lease_until || 0).getTime() <= currentTime));
-    let sent = 0; let failed = 0;
+    let sent = 0; let failed = 0; let suppressed = 0;
     for (const notification of due.slice(0, limit)) {
       const result = await deliver(notification);
-      if (result.ok && !result.inProgress) sent += 1;
+      if (result.suppressed) suppressed += 1;
+      else if (result.ok && !result.inProgress) sent += 1;
       else if (!result.ok) failed += 1;
     }
-    return { processed:sent + failed, sent, failed };
+    return { processed:sent + failed + suppressed, sent, failed };
+  }
+
+  async function suppressByResource({ resourceType, resourceId, reason = 'AUTHORITATIVE_RESOURCE_VOIDED' }) {
+    if (resourceType !== 'daily_care' || typeof resourceId !== 'string' || !resourceId.trim()) {
+      return { suppressed:0 };
+    }
+    return transact(`notification-resource:daily_care:${resourceId}`, async () => {
+      const rows = await outbox.updateAll((item) => item.kind === 'family_daily_care_finalized'
+        && item.meta?.resourceType === 'daily_care' && item.meta?.resourceId === resourceId
+        && ['pending', 'retrying'].includes(item.status), {
+        status:'suppressed', last_error:reason, next_attempt_at:null, delivery_lease_until:null,
+      });
+      return { suppressed:rows.length };
+    });
   }
 
   async function getHealth() {
@@ -136,7 +191,7 @@ function createNotificationService(overrides = {}) {
       oldestPendingAt:oldest ? new Date(oldest).toISOString() : null };
   }
 
-  return { enqueue, deliver, enqueueAndDeliver, processPending, getHealth };
+  return { enqueue, deliver, enqueueAndDeliver, processPending, suppressByResource, getHealth };
 }
 
 const notificationService = createNotificationService();

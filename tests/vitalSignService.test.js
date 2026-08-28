@@ -6,9 +6,9 @@ const { createVitalSignService } = require('../backend/services/vitalSignService
 const { normalizeObservations } = require('../backend/domain/vitalSigns');
 const { createVitalSignMemoryRepository } = require('./helpers/vitalSignMemoryRepository');
 
-function fixture({ capability = true, familyNotifications = null } = {}) {
+function fixture({ capability = true, familyNotifications = null, dailyCareState = null } = {}) {
   db.resetAll();
-  const repository = createVitalSignMemoryRepository();
+  const repository = createVitalSignMemoryRepository({ dailyCareState });
   let sequence = 0;
   const platformService = {
     async getOrganizationForCenter(centerId) {
@@ -142,4 +142,48 @@ test('manager can explicitly void without deleting observations and void is idem
   assert.equal(repository.state.events.filter((row) => row.event_type === 'voided').length, 1);
   assert.equal((await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A' })).items.length, 0);
   await assert.rejects(service.voidVitalSet({ lineUserId:'U-STAFF', centerId:'CTR-A', vitalSetId:created.item.vitalSetId, reason:'x' }), { code:'CENTER_ACCESS_DENIED' });
+});
+
+test('Family Vital history derives Daily-linked authority from the parent lifecycle without hiding standalone Vital', async () => {
+  const dailyCareState = { reports:[], links:[] };
+  const { service } = fixture({ dailyCareState }); await seed();
+  const standalone = await service.recordNative({
+    lineUserId:'U-STAFF', centerId:'CTR-A', residentId:'RES-A', occurredAt:'2026-08-27T00:30:00Z', observations,
+  });
+  const first = await service.recordNative({
+    lineUserId:'U-STAFF', centerId:'CTR-A', residentId:'RES-A', occurredAt:'2026-08-27T01:00:00Z', observations,
+  });
+  dailyCareState.reports.push({ daily_report_id:'DCR-1', report_group_id:'DCG-1', version_no:1, status:'submitted' });
+  dailyCareState.links.push({ daily_report_id:'DCR-1', vital_set_id:first.item.vitalSetId });
+  let history = await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A' });
+  assert.deepEqual(history.items.map((item) => item.vitalSetId), [standalone.item.vitalSetId]);
+
+  dailyCareState.reports[0].status = 'changes_requested';
+  const second = await service.recordNative({
+    lineUserId:'U-STAFF', centerId:'CTR-A', residentId:'RES-A', occurredAt:'2026-08-27T02:00:00Z', observations,
+  });
+  dailyCareState.reports.push({ daily_report_id:'DCR-2', report_group_id:'DCG-1', version_no:2, status:'submitted' });
+  dailyCareState.links.push({ daily_report_id:'DCR-2', vital_set_id:second.item.vitalSetId });
+  history = await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A' });
+  assert.deepEqual(history.items.map((item) => item.vitalSetId), [standalone.item.vitalSetId]);
+
+  dailyCareState.reports[1].status = 'finalized';
+  history = await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A' });
+  assert.deepEqual(history.items.map((item) => item.vitalSetId), [second.item.vitalSetId, standalone.item.vitalSetId]);
+  dailyCareState.reports[1].status = 'voided';
+  history = await service.listHistory({ lineUserId:'U-OWNER', careProfileId:'CP-A' });
+  assert.deepEqual(history.items.map((item) => item.vitalSetId), [standalone.item.vitalSetId]);
+});
+
+test('local void rejects an externally sourced Vital while duplicate integration ingestion remains unchanged', async () => {
+  const { service, repository } = fixture(); await seed();
+  const input = { tenant:{organizationId:'ORG-A'}, subject:{centerId:'CTR-A',residentId:'RES-A',careProfileId:'CP-A'},
+    occurredAt:'2026-08-27T01:00:00Z', observations,
+    provenance:{sourceType:'external_integration',sourceSystem:'trusted',integrationClientId:'INT-A',
+      externalRecordId:'EXT-LOCAL-MUTATION',actorReference:'integration_client:INT-A'} };
+  const first = await service.recordCanonical(input); const duplicate = await service.recordCanonical(input);
+  await assert.rejects(service.voidVitalSet({
+    lineUserId:'U-MANAGER', centerId:'CTR-A', vitalSetId:first.item.vitalSetId, reason:'local',
+  }), { code:'EXTERNAL_RECORD_LOCAL_MUTATION_DENIED' });
+  assert.equal(duplicate.duplicate, true); assert.equal(repository.state.sets[0].status, 'recorded');
 });

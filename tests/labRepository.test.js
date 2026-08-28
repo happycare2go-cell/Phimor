@@ -86,16 +86,16 @@ test('Pending Card provenance lookup and purge updates are relational and parame
   assert.deepEqual(calls[1].params,['CARD-1','2026-08-26T00:00:00.000Z']);
 });
 
-test('trend history query uses only latest confirmed versions and exact verified identity', async () => {
+test('trend history query uses only the latest authoritative confirmed version and exact verified identity', async () => {
   const {repository,calls}=recorder([]);
   await repository.listConfirmedObservationHistory({
     careProfileId:'CP-SECRET',identityType:'loinc_code',identityValue:'4548-4',limit:20,offset:0,
   });
-  assert.match(calls[0].sql,/MAX\(version_no\).*status = 'confirmed'/s);
+  assert.match(calls[0].sql,/MAX\(version_no\).*status IN \('confirmed', 'voided'\)/s);
   assert.match(calls[0].sql,/r\.status = 'confirmed'/);
   assert.match(calls[0].sql,/o\.loinc_code = \$2/);
   assert.match(calls[0].sql,/o\.loinc_verification_source IS NOT NULL/);
-  assert.doesNotMatch(calls[0].sql,/draft|voided|CP-SECRET|4548-4/i);
+  assert.doesNotMatch(calls[0].sql,/draft|CP-SECRET|4548-4/i);
   assert.deepEqual(calls[0].params,['CP-SECRET','4548-4',21,0]);
 
   await repository.listConfirmedObservationHistory({
@@ -106,15 +106,15 @@ test('trend history query uses only latest confirmed versions and exact verified
   assert.doesNotMatch(calls[1].sql,/analyte_name_source\s*=|similarity|levenshtein/i);
 });
 
-test('doctor-question Lab context query is bounded to recent latest confirmed reports', async () => {
+test('doctor-question Lab context is bounded and cannot resurrect a superseded version after latest void', async () => {
   const { repository, calls } = recorder([]);
   await repository.listRecentConfirmedObservations({
     careProfileId: 'CP-PRIVATE', reportLimit: 5, observationLimit: 24,
   });
-  assert.match(calls[0].sql, /MAX\(version_no\).*status = 'confirmed'/s);
+  assert.match(calls[0].sql, /MAX\(version_no\).*status IN \('confirmed', 'voided'\)/s);
   assert.match(calls[0].sql, /r\.status = 'confirmed'/);
   assert.match(calls[0].sql, /LIMIT \$2/);
   assert.match(calls[0].sql, /LIMIT \$3/);
-  assert.doesNotMatch(calls[0].sql, /draft|voided|CP-PRIVATE/i);
+  assert.doesNotMatch(calls[0].sql, /draft|CP-PRIVATE/i);
   assert.deepEqual(calls[0].params, ['CP-PRIVATE', 5, 24]);
 });

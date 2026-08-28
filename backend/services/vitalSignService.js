@@ -194,6 +194,9 @@ function createVitalSignService(overrides = {}) {
     return transact(`vital-void:${setId}`, async () => {
       const current = await repository.findSet(setId);
       if (!current || current.center_id !== centerKey) throw new VitalSignsError('VITAL_SET_NOT_FOUND', 'ไม่พบรายการ', 404);
+      if (current.source_type === 'external_integration') {
+        throw new VitalSignsError('EXTERNAL_RECORD_LOCAL_MUTATION_DENIED', 'รายการจากระบบภายนอกต้องแก้ไขที่ระบบต้นทาง', 409);
+      }
       if (current.status === 'voided') return projectSet(current, await repository.listObservations(setId));
       const actor = `center_staff:${staff.staff_id}`;
       const updated = await repository.voidSet({ vitalSetId:setId, actorReference:actor, reason:cleanReason });

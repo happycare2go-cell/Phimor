@@ -35,6 +35,7 @@ const ERROR_DEFINITIONS = Object.freeze({
   ITEM_NOT_GROUNDED: { status: 400, message: 'รายการสรุปต้องตรวจสอบย้อนกลับไปยังข้อความต้นทางได้' },
   CORRECTION_REASON_REQUIRED: { status: 400, message: 'กรุณาระบุเหตุผลในการแก้ไข' },
   VOID_REASON_REQUIRED: { status: 400, message: 'กรุณาระบุเหตุผลในการยกเลิกบันทึก' },
+  RECORD_PROVENANCE_AMBIGUOUS: { status: 409, message: 'ไม่สามารถยืนยันแหล่งอำนาจของบันทึกนี้ได้' },
   VERSION_CONFLICT: { status: 409, message: 'มีการสร้างฉบับแก้ไขพร้อมกัน กรุณาลองใหม่' },
 });
 

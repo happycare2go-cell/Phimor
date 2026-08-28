@@ -49,6 +49,8 @@ test('confirmed list is Care Profile scoped, bounded and never uses generic JSON
   } });
   await repository.listRecords({ careProfileId: 'CP-1', includeDrafts: false, includeHistory: false, cursor: null, limit: 20 });
   assert.match(seen.sql, /FROM doctor_visit_records WHERE care_profile_id = \$1/);
+  assert.match(seen.sql, /status IN \('confirmed', 'voided'\)/);
+  assert.match(seen.sql, /version_no = latest_authoritative_version/);
   assert.match(seen.sql, /LIMIT \$4/);
   assert.deepEqual(seen.params, ['CP-1', false, false, 21]);
   assert.doesNotMatch(seen.sql, /data\s*->|SELECT data|makeTable/i);

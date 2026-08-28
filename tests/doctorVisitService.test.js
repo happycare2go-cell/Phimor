@@ -5,10 +5,11 @@ const path = require('node:path');
 
 process.env.NODE_ENV = 'test';
 
+const db = require('../backend/db');
 const { createDoctorVisitService, deriveFollowUpSuggestions } = require('../backend/services/doctorVisitService');
 const { DoctorVisitDomainError } = require('../backend/domain/doctorVisit');
 
-function fixture({ failEventType = null } = {}) {
+function fixture({ failEventType = null, serviceOverrides = {} } = {}) {
   let sequence = 0;
   let state = { records: [], items: [], events: [] };
   const locks = new Map();
@@ -96,15 +97,21 @@ function fixture({ failEventType = null } = {}) {
     async listRecords({ careProfileId, includeDrafts, includeHistory, cursor, limit }) {
       let rows = state.records.filter((row) => row.care_profile_id === careProfileId);
       if (!includeHistory) {
-        const latest = new Map();
-        for (const row of rows.filter((item) => item.status === 'confirmed')) {
-          if (!latest.has(row.record_group_id) || latest.get(row.record_group_id).version_no < row.version_no) {
-            latest.set(row.record_group_id, row);
+        const latestAuthoritative = new Map();
+        for (const row of rows.filter((item) => ['confirmed', 'voided'].includes(item.status))) {
+          if (!latestAuthoritative.has(row.record_group_id)
+            || latestAuthoritative.get(row.record_group_id).version_no < row.version_no) {
+            latestAuthoritative.set(row.record_group_id, row);
           }
         }
-        rows = [...latest.values(), ...(includeDrafts ? rows.filter((row) => row.status === 'draft') : [])];
+        rows = [...latestAuthoritative.values()].filter((row) => row.status === 'confirmed')
+          .concat(includeDrafts ? rows.filter((row) => row.status === 'draft') : []);
       } else rows = rows.filter((row) => row.status !== 'draft' || includeDrafts);
-      rows = rows.map((row) => ({ ...row, sort_time: row.visit_at || row.created_at }))
+      rows = rows.map((row) => ({ ...row,
+        is_authoritative: row.status === 'confirmed'
+          && !state.records.some((item) => item.record_group_id === row.record_group_id
+            && ['confirmed', 'voided'].includes(item.status) && item.version_no > row.version_no),
+        sort_time: row.visit_at || row.created_at }))
         .sort((a, b) => b.sort_time.localeCompare(a.sort_time) || b.visit_record_id.localeCompare(a.visit_record_id));
       if (cursor) rows = rows.filter((row) => row.sort_time < cursor.sortTime
         || (row.sort_time === cursor.sortTime && row.visit_record_id < cursor.visitRecordId));
@@ -141,6 +148,7 @@ function fixture({ failEventType = null } = {}) {
     repository, authorizeCareProfileAccess: authorize, withTransaction: transaction,
     idFactory: (prefix) => `${prefix}-${String(++sequence).padStart(4, '0')}`,
     findAppointment: async ({ appointmentId, careProfileId }) => appointmentId === 'APT-1' && careProfileId === 'CP-1',
+    ...serviceOverrides,
   });
   return { service, state: () => clone(state) };
 }
@@ -274,6 +282,61 @@ test('void preserves confirmed source and event history without hard delete', as
   const voided = await service.voidRecord({ careProfileId: 'CP-1', visitRecordId: record.visitRecordId, lineUserId: 'OWNER', reason: 'บันทึกผิดคน' });
   assert.equal(voided.status, 'voided'); assert.equal(voided.sourceText, draft().sourceText);
   assert.equal(state().records.length, 1); assert.equal(state().events.some((event) => event.event_type === 'voided'), true);
+});
+
+test('voiding the latest Doctor Visit correction never resurrects V1 and duplicate void is idempotent', async () => {
+  const { service, state } = fixture();
+  const first = await service.createDraft({ careProfileId:'CP-1', lineUserId:'OWNER', input:draft() });
+  await service.confirmDraft({ careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'OWNER' });
+  const second = await service.createCorrectionDraft({
+    careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'OWNER', reason:'แก้ไข',
+  });
+  await service.confirmDraft({ careProfileId:'CP-1', visitRecordId:second.visitRecordId, lineUserId:'OWNER' });
+  await service.voidRecord({
+    careProfileId:'CP-1', visitRecordId:second.visitRecordId, lineUserId:'OWNER', reason:'ฉบับแก้ไขผิด',
+  });
+  await service.voidRecord({
+    careProfileId:'CP-1', visitRecordId:second.visitRecordId, lineUserId:'OWNER', reason:'retry',
+  });
+  assert.equal((await service.listRecords({ careProfileId:'CP-1', lineUserId:'OWNER' })).items.length, 0);
+  const history = await service.listRecords({ careProfileId:'CP-1', lineUserId:'OWNER', includeHistory:true });
+  assert.deepEqual(history.items.map((item) => [item.versionNo, item.status, item.isCurrent]), [
+    [2, 'voided', false], [1, 'confirmed', false],
+  ]);
+  assert.equal(state().events.filter((event) => event.visit_record_id === second.visitRecordId
+    && event.event_type === 'voided').length, 1);
+  assert.equal(state().records.length, 2);
+});
+
+test('Center-authored Doctor Visit correction and void remain manager/owner-only', async () => {
+  db.resetAll();
+  await db.Residents.insert({ resident_id:'RES-1', care_profile_id:'CP-1', center_id:'CTR-1', status:'active' });
+  for (const [staffId, lineUserId, role] of [
+    ['STF-1', 'STAFF', 'staff'], ['STF-2', 'MANAGER', 'manager'], ['STF-3', 'CENTER_OWNER', 'owner'],
+  ]) await db.CenterStaff.insert({ staff_id:staffId, line_user_id:lineUserId, center_id:'CTR-1', role, status:'active' });
+  const { service } = fixture();
+  const first = await service.createDraft({
+    careProfileId:'CP-1', lineUserId:'STAFF', centerId:'CTR-1', input:draft(),
+  });
+  await service.confirmDraft({
+    careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'MANAGER', centerId:'CTR-1',
+  });
+  await assert.rejects(service.createCorrectionDraft({
+    careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'OWNER', reason:'ไม่ควรผ่าน',
+  }), { code:'ACCESS_DENIED' });
+  const correction = await service.createCorrectionDraft({
+    careProfileId:'CP-1', visitRecordId:first.visitRecordId, lineUserId:'MANAGER', centerId:'CTR-1', reason:'แก้ไข',
+  });
+  await assert.rejects(service.confirmDraft({
+    careProfileId:'CP-1', visitRecordId:correction.visitRecordId, lineUserId:'OWNER',
+  }), { code:'ACCESS_DENIED' });
+  await service.confirmDraft({
+    careProfileId:'CP-1', visitRecordId:correction.visitRecordId, lineUserId:'MANAGER', centerId:'CTR-1',
+  });
+  assert.equal((await service.voidRecord({
+    careProfileId:'CP-1', visitRecordId:correction.visitRecordId, lineUserId:'CENTER_OWNER',
+    centerId:'CTR-1', reason:'ยกเลิก',
+  })).status, 'voided');
 });
 
 test('confirmed item kinds create deterministic review suggestions but no automatic writes', () => {

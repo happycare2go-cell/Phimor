@@ -209,10 +209,11 @@ function createDailyCareService(overrides={}) {
 
   async function enqueueFinalizedNotificationByReport({dailyReportId,expectedLineGroupId=null}) {
     const reportId=requiredId(dailyReportId,'Daily Report ID');
-    const row=await repository.getReportDetail(reportId);
-    if(!row||row.status!=='finalized') {
+    const authoritative=await repository.findAuthoritativeFinalized(reportId);
+    if(!authoritative) {
       throw new DailyCareError('FINALIZED_REPORT_NOT_FOUND','ไม่พบรายงานที่ยืนยันแล้ว',404);
     }
+    const row=await repository.getReportDetail(reportId);
     const resident=await residents.findOne((item)=>item.resident_id===row.resident_id
       && item.center_id===row.center_id&&item.care_profile_id===row.care_profile_id&&item.status==='active');
     const center=await centers.findOne((item)=>item.center_id===row.center_id&&item.status==='active');
@@ -389,14 +390,20 @@ function createDailyCareService(overrides={}) {
     const cleanReason=optionalText(reason,500);
     if(!cleanReason)throw new DailyCareError('VOID_REASON_REQUIRED','กรุณาระบุเหตุผล',400);
     const staff=await requireStaff({lineUserId,centerId:centerKey,roles:['owner','manager']});
-    return transact(`daily-void:${reportId}`,async()=>{
+    return transact(`notification-resource:daily_care:${reportId}`,async()=>{
       const current=await repository.findReportForUpdate(reportId);
       if(!current||current.center_id!==centerKey)throw new DailyCareError('DAILY_REPORT_NOT_FOUND','ไม่พบรายการ',404);
+      if(current.source_type==='external_integration') {
+        throw new DailyCareError('EXTERNAL_RECORD_LOCAL_MUTATION_DENIED','รายการจากระบบภายนอกต้องแก้ไขที่ระบบต้นทาง',409);
+      }
       if(current.status==='voided')return projectReport(await repository.getReportDetail(reportId));
       const actor=`center_staff:${staff.staff_id}`;
       const updated=await repository.voidReport({dailyReportId:reportId,actorReference:actor,reason:cleanReason});
       await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId:reportId,eventType:'voided',
         actorType:'center_staff',actorReference:actor,metadata:{reasonCode:'human_void'}});
+      if(current.status==='finalized'&&typeof familyNotifications.suppressFinalized==='function') {
+        await familyNotifications.suppressFinalized({kind:'daily_care',resourceId:reportId});
+      }
       return projectReport(updated,await repository.listItems(reportId),[]);
     });
   }

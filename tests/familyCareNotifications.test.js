@@ -19,6 +19,14 @@ function table(rows = []) {
       const index = rows.findIndex(predicate); if (index < 0) return null;
       rows[index] = { ...rows[index], ...patch }; return rows[index];
     },
+    async updateAll(predicate, patch) {
+      const updated = [];
+      for (let index = 0; index < rows.length; index += 1) {
+        if (!predicate(rows[index])) continue;
+        rows[index] = { ...rows[index], ...patch }; updated.push(rows[index]);
+      }
+      return updated;
+    },
   };
 }
 
@@ -316,4 +324,60 @@ test('concurrent workers claim one delivery lease and do not push the same outbo
   const second = await notifications.deliver(queued.notification);
   assert.equal(second.inProgress, true); release(); await first;
   assert.equal(pushes, 1); assert.equal(outbox.rows[0].status, 'sent');
+});
+
+test('voided Daily Care suppresses its queued finalized notification before provider delivery', async () => {
+  const outbox=table([]);let pushes=0;
+  const notifications=createNotificationService({NotificationOutbox:outbox,
+    deliveryPolicy:{async validate(){return {allowed:false,reason:'AUTHORITATIVE_RESOURCE_NOT_FINALIZED'};}},
+    lineClient:{async pushMessage(){pushes+=1;}},idFactory:()=> 'N-DAILY-1',
+    retryKeyFactory:retryKeys(),now:()=> '2026-08-27T00:00:00Z'});
+  const queued=await notifications.enqueue({dedupeKey:'DAILY-1',to:'G-1',
+    kind:'family_daily_care_finalized',meta:{resourceType:'daily_care',resourceId:'DCR-1'},
+    messages:[{type:'text',text:'finalized'}]});
+  const result=await notifications.deliver(queued.notification);
+  assert.equal(result.suppressed,true);assert.equal(pushes,0);
+  assert.equal(outbox.rows[0].status,'suppressed');
+  assert.equal(outbox.rows[0].last_error,'AUTHORITATIVE_RESOURCE_NOT_FINALIZED');
+});
+
+test('Daily Care suppression is durable for pending intents but never falsely retracts an already sent message', async () => {
+  const outbox=table([]);let authoritative=true;let pushes=0;
+  const notifications=createNotificationService({NotificationOutbox:outbox,
+    deliveryPolicy:{async validate(){return authoritative
+      ?{allowed:true}:{allowed:false,reason:'AUTHORITATIVE_RESOURCE_NOT_FINALIZED'};}},
+    lineClient:{async pushMessage(){pushes+=1;}},idFactory:()=>`N-${outbox.rows.length+1}`,
+    retryKeyFactory:retryKeys(),now:()=> '2026-08-27T00:00:00Z'});
+  const sent=await notifications.enqueue({dedupeKey:'DAILY-SENT',to:'G-1',
+    kind:'family_daily_care_finalized',meta:{resourceType:'daily_care',resourceId:'DCR-SENT'},
+    messages:[{type:'text',text:'sent'}]});
+  await notifications.deliver(sent.notification);
+  authoritative=false;
+  assert.deepEqual(await notifications.suppressByResource({
+    resourceType:'daily_care',resourceId:'DCR-SENT',
+  }),{suppressed:0});
+  assert.equal(outbox.rows[0].status,'sent');assert.equal(pushes,1);
+
+  await notifications.enqueue({dedupeKey:'DAILY-PENDING',to:'G-1',
+    kind:'family_daily_care_finalized',meta:{resourceType:'daily_care',resourceId:'DCR-PENDING'},
+    messages:[{type:'text',text:'pending'}]});
+  assert.deepEqual(await notifications.suppressByResource({
+    resourceType:'daily_care',resourceId:'DCR-PENDING',
+  }),{suppressed:1});
+  assert.equal(outbox.rows[1].status,'suppressed');assert.equal(pushes,1);
+});
+
+test('Daily Care authority lookup failure is fail-closed and never leaks database detail to the provider path', async () => {
+  const outbox=table([]);let pushes=0;
+  const notifications=createNotificationService({NotificationOutbox:outbox,
+    deliveryPolicy:{async validate(){throw new Error('SQL SECRET clinical payload');}},
+    lineClient:{async pushMessage(){pushes+=1;}},idFactory:()=> 'N-FAIL-CLOSED',
+    retryKeyFactory:retryKeys(),now:()=> '2026-08-27T00:00:00Z'});
+  const queued=await notifications.enqueue({dedupeKey:'DAILY-FAIL-CLOSED',to:'G-1',
+    kind:'family_daily_care_finalized',meta:{resourceType:'daily_care',resourceId:'DCR-FAIL'},
+    messages:[{type:'text',text:'safe'}]});
+  const result=await notifications.deliver(queued.notification);
+  assert.equal(result.ok,false);assert.equal(result.reason,'delivery_validation_unavailable');
+  assert.equal(pushes,0);assert.equal(outbox.rows[0].status,'pending');
+  assert.doesNotMatch(JSON.stringify(result),/SQL SECRET|clinical payload/);
 });

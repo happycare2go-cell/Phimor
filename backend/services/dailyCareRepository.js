@@ -78,6 +78,16 @@ function createDailyCareRepository({ queryFn = databaseQuery } = {}) {
     getReportDetail(id) {
       return one(`SELECT ${DETAIL_SELECT} FROM daily_care_reports d WHERE d.daily_report_id=$1`, [id]);
     },
+    findAuthoritativeFinalized(id) {
+      return one(`SELECT d.* FROM daily_care_reports d
+        WHERE d.daily_report_id=$1 AND d.status='finalized'
+          AND d.version_no=(
+            SELECT MAX(candidate.version_no) FROM daily_care_reports candidate
+            WHERE candidate.report_group_id=d.report_group_id
+              AND (candidate.status='finalized'
+                OR (candidate.status='voided' AND candidate.finalized_at IS NOT NULL))
+          )`, [id]);
+    },
     nextVersion(reportGroupId) {
       return one(`SELECT COALESCE(MAX(version_no),0)+1 AS next_version
         FROM daily_care_reports WHERE report_group_id=$1`, [reportGroupId]);
@@ -124,6 +134,11 @@ function createDailyCareRepository({ queryFn = databaseQuery } = {}) {
 
     async listHistory({careProfileId,centerId,from,to,cursor,limit}) {
       const params=[careProfileId]; const where=["d.status='finalized'",'d.care_profile_id=$1'];
+      where.push(`d.version_no=(SELECT MAX(candidate.version_no)
+        FROM daily_care_reports candidate
+        WHERE candidate.report_group_id=d.report_group_id
+          AND (candidate.status='finalized'
+            OR (candidate.status='voided' AND candidate.finalized_at IS NOT NULL)))`);
       if(centerId){params.push(centerId);where.push(`d.center_id=$${params.length}`);}
       if(from){params.push(from);where.push(`d.occurred_at >= $${params.length}`);}
       if(to){params.push(to);where.push(`d.occurred_at <= $${params.length}`);}

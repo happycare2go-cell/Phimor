@@ -154,6 +154,7 @@ function createFamilyCareNotificationService(overrides = {}) {
   const profiles = overrides.CareProfiles || CareProfiles;
   const bindings = overrides.GroupBindings || GroupBindings;
   const enqueue = overrides.enqueue || notificationService.enqueue;
+  const suppressByResource = overrides.suppressByResource || notificationService.suppressByResource;
 
   async function resolveRecipient(careProfileId, { expectedLineGroupId = null } = {}) {
     const profileId = validId(careProfileId);
@@ -207,9 +208,15 @@ function createFamilyCareNotificationService(overrides = {}) {
       verifiedLineGroupId:reconciliation.verifiedLineGroupId };
   }
 
+  async function suppressFinalized({ kind, resourceId }) {
+    if (kind !== 'daily_care' || !validId(resourceId)) return { suppressed:0 };
+    return suppressByResource({ resourceType:'daily_care', resourceId,
+      reason:'AUTHORITATIVE_RESOURCE_VOIDED' });
+  }
+
   // Compatibility alias for internal callers while all new Daily Care paths use finalized semantics.
   const enqueueRecorded = enqueueFinalized;
-  return { resolveRecipient, enqueueFinalized, enqueueRecorded };
+  return { resolveRecipient, enqueueFinalized, enqueueRecorded, suppressFinalized };
 }
 
 const familyCareNotificationService = createFamilyCareNotificationService();

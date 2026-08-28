@@ -62,6 +62,14 @@ function createDailyCareMemoryRepository() {
     },
     async findReport(id){return clone(state.reports.find((row)=>row.daily_report_id===id));},
     async findReportForUpdate(id){return clone(state.reports.find((row)=>row.daily_report_id===id));},
+    async findAuthoritativeFinalized(id){
+      const row=state.reports.find((item)=>item.daily_report_id===id);
+      if(!row||row.status!=='finalized')return null;
+      const latest=Math.max(...state.reports.filter((item)=>item.report_group_id===row.report_group_id
+        &&(item.status==='finalized'||(item.status==='voided'&&item.finalized_at)))
+        .map((item)=>Number(item.version_no)));
+      return Number(row.version_no)===latest?clone(row):null;
+    },
     async findByExternalRecord(clientId,externalId){return clone(state.reports.find((row)=>row.integration_client_id===clientId&&row.external_record_id===externalId));},
     async listItems(id){return state.items.filter((row)=>row.daily_report_id===id).sort((a,b)=>a.source_ordinal-b.source_ordinal).map(clone);},
     async listVitalLinks(id){return state.links.filter((row)=>row.daily_report_id===id).map(clone);},
@@ -92,6 +100,9 @@ function createDailyCareMemoryRepository() {
     },
     async listHistory({careProfileId,centerId,from,to,cursor,limit}){
       return state.reports.filter((row)=>row.status==='finalized'&&row.care_profile_id===careProfileId
+        &&Number(row.version_no)===Math.max(...state.reports.filter((item)=>item.report_group_id===row.report_group_id
+          &&(item.status==='finalized'||(item.status==='voided'&&item.finalized_at)))
+          .map((item)=>Number(item.version_no)))
         &&(!centerId||row.center_id===centerId)&&(!from||row.occurred_at>=from)&&(!to||row.occurred_at<=to)
         &&(!cursor||row.occurred_at<cursor.occurredAt||(row.occurred_at===cursor.occurredAt&&row.daily_report_id<cursor.dailyReportId)))
         .sort((a,b)=>b.occurred_at.localeCompare(a.occurred_at)||b.daily_report_id.localeCompare(a.daily_report_id))

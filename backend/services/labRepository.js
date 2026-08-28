@@ -244,18 +244,21 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
         `WITH ranked AS (
           SELECT *,
             COALESCE(specimen_collected_at, reported_at, created_at) AS sort_time,
-            MAX(version_no) FILTER (WHERE status = 'confirmed')
-              OVER (PARTITION BY report_group_id) AS latest_confirmed_version
+            MAX(version_no) FILTER (WHERE status IN ('confirmed', 'voided'))
+              OVER (PARTITION BY report_group_id) AS latest_authoritative_version
           FROM lab_reports
           WHERE care_profile_id = $1
         ), visible AS (
           SELECT * FROM ranked
           WHERE
             ($3::boolean = TRUE AND status IN ('confirmed', 'voided'))
-            OR ($3::boolean = FALSE AND status = 'confirmed' AND version_no = latest_confirmed_version)
+            OR ($3::boolean = FALSE AND status = 'confirmed' AND version_no = latest_authoritative_version)
             OR ($2::boolean = TRUE AND status = 'draft')
         )
-        SELECT *, CURRENT_TIMESTAMP AS database_now FROM visible
+        SELECT *,
+          (status = 'confirmed' AND version_no = latest_authoritative_version) AS is_authoritative,
+          CURRENT_TIMESTAMP AS database_now
+        FROM visible
         WHERE TRUE
         ${cursorClause}
         ORDER BY sort_time DESC, report_id DESC
@@ -275,10 +278,10 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
            AND o.loinc_verified_at IS NOT NULL`
         : 'o.comparison_key = $2';
       const result = await queryFn(
-        `WITH latest_confirmed AS (
+        `WITH latest_authoritative AS (
            SELECT report_group_id, MAX(version_no) AS version_no
            FROM lab_reports
-           WHERE care_profile_id = $1 AND status = 'confirmed'
+           WHERE care_profile_id = $1 AND status IN ('confirmed', 'voided')
            GROUP BY report_group_id
          )
          SELECT
@@ -288,7 +291,7 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
            r.confirmed_at, r.laboratory_name, r.hospital_name
          FROM lab_observations o
          INNER JOIN lab_reports r ON r.report_id = o.report_id
-         INNER JOIN latest_confirmed lc
+         INNER JOIN latest_authoritative lc
            ON lc.report_group_id = r.report_group_id AND lc.version_no = r.version_no
          WHERE r.care_profile_id = $1 AND r.status = 'confirmed'
            AND ${identityClause}
@@ -303,15 +306,15 @@ function createLabRepository({ queryFn = databaseQuery } = {}) {
 
     async listRecentConfirmedObservations({ careProfileId, reportLimit = 5, observationLimit = 24 }) {
       const result = await queryFn(
-        `WITH latest_confirmed AS (
+        `WITH latest_authoritative AS (
            SELECT report_group_id, MAX(version_no) AS version_no
            FROM lab_reports
-           WHERE care_profile_id = $1 AND status = 'confirmed'
+           WHERE care_profile_id = $1 AND status IN ('confirmed', 'voided')
            GROUP BY report_group_id
          ), recent_reports AS (
            SELECT r.*
            FROM lab_reports r
-           INNER JOIN latest_confirmed lc
+           INNER JOIN latest_authoritative lc
              ON lc.report_group_id = r.report_group_id AND lc.version_no = r.version_no
            WHERE r.care_profile_id = $1 AND r.status = 'confirmed'
            ORDER BY

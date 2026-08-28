@@ -75,7 +75,26 @@ function createVitalSignRepository({ queryFn = databaseQuery } = {}) {
 
     async listHistory({ careProfileId, centerId = null, from = null, to = null, cursor = null, limit }) {
       const params = [careProfileId];
-      const conditions = ["v.status = 'recorded'", 'v.care_profile_id = $1'];
+      const conditions = ["v.status = 'recorded'", 'v.care_profile_id = $1', `(
+        NOT EXISTS (
+          SELECT 1 FROM daily_care_vital_links link
+          WHERE link.vital_set_id = v.vital_set_id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM daily_care_vital_links link
+          JOIN daily_care_reports report ON report.daily_report_id = link.daily_report_id
+          WHERE link.vital_set_id = v.vital_set_id
+            AND report.status = 'finalized'
+            AND report.version_no = (
+              SELECT MAX(candidate.version_no)
+              FROM daily_care_reports candidate
+              WHERE candidate.report_group_id = report.report_group_id
+                AND (candidate.status = 'finalized'
+                  OR (candidate.status = 'voided' AND candidate.finalized_at IS NOT NULL))
+            )
+        )
+      )`];
       if (centerId) { params.push(centerId); conditions.push(`v.center_id = $${params.length}`); }
       if (from) { params.push(from); conditions.push(`v.occurred_at >= $${params.length}`); }
       if (to) { params.push(to); conditions.push(`v.occurred_at <= $${params.length}`); }
