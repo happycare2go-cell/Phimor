@@ -29,12 +29,13 @@ test('/api/center/me never returns external_api_key to active Center staff', asy
   assert.doesNotMatch(JSON.stringify(body), /external_api_key|EXT-/i);
 });
 
-test('registration and Admin detail projections explicitly redact the legacy key', () => {
+test('registration and minimized Admin detail projections explicitly redact the legacy key', () => {
   const externalRoute = fs.readFileSync(path.join(__dirname,'..','backend','routes','external.js'),'utf8');
   const subscription = fs.readFileSync(path.join(__dirname,'..','backend','services','subscriptionService.js'),'utf8');
   assert.match(externalRoute, /projectCenter\(duplicate\)/);
   assert.match(externalRoute, /projectCenter\(newCenter\)/);
-  assert.match(subscription, /center:\s*projectCenter\(center\)/);
+  assert.match(subscription, /ownerIdentity:displayIdentity/);
+  assert.doesNotMatch(subscription, /center:\s*\{[^}]*external_api_key/s);
 });
 
 test('System Admin Center detail does not accidentally serialize the stored legacy key', async () => {
@@ -44,8 +45,9 @@ test('System Admin Center detail does not accidentally serialize the stored lega
   });
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.center.center_id, center.center_id);
+  assert.equal(body.center.centerId, center.center_id);
   assert.doesNotMatch(JSON.stringify(body.center), /external_api_key|EXT-/i);
+  assert.doesNotMatch(JSON.stringify(body), /blood_group|chronic_conditions|drug_allergies/i);
 });
 
 test('legacy vitals remains available but source_system is server-derived and route is deprecated', () => {

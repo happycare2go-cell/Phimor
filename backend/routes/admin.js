@@ -12,9 +12,11 @@ const { requireAdminKey, validAdminKey } = require('../middleware/adminAuth');
 const { requireAuth } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const centerService = require('../services/centerService');
-const { Centers, Residents, CareProfiles, AuditLog, DataSubjectRequests, AdminUsers, audit, id, now } = require('../db');
+const { Centers, Residents, CareProfiles, AuditLog, AdminUsers, audit, id, now } = require('../db');
 const subscriptionService = require('../services/subscriptionService');
 const { createConsultationPaymentSupportService } = require('../services/consultationPaymentSupportService');
+const privacyService = require('../services/privacyService');
+const { displayIdentity } = require('../utils/safeIdentity');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
 const { createPlatformAdminRouter } = require('./platformAdmin');
@@ -100,8 +102,10 @@ router.get('/centers', asyncHandler(async (req, res) => {
   const rows = [];
   for (const c of centers) {
     const residents = await Residents.findWhere((r) => r.center_id === c.center_id && r.status === 'active');
+    const owner = await require('../db').CenterStaff.findOne((staff) => staff.center_id === c.center_id && staff.line_user_id === c.owner_line_id && staff.role === 'owner');
     rows.push({
-      centerId: c.center_id, name: c.name, ownerLineId: c.owner_line_id,
+      centerId: c.center_id, name: c.name,
+      ownerIdentity:displayIdentity({ displayName:owner?.display_name, lineUserId:c.owner_line_id }),
       status: c.status, groupBound: !!c.group_id, createdAt: c.created_at,
       address: c.address || '', contactPhone: c.contact_phone || '', activeResidentCount: residents.length,
       subscriptionStartAt: c.subscription_start_at || null, subscriptionEndAt: c.subscription_end_at || null,
@@ -148,7 +152,10 @@ router.get('/centers/:centerId/care-profiles', asyncHandler(async (req, res) => 
   const rows = [];
   for (const resident of residents) {
     const profile = resident.care_profile_id && await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
-    rows.push({ resident, profile: profile || null });
+    rows.push({
+      resident:{ residentId:resident.resident_id, displayName:resident.full_name, room:resident.room || null, status:resident.status },
+      careProfile:profile ? { careProfileId:profile.care_profile_id, displayName:profile.patient_name, status:profile.status, linked:true } : null,
+    });
   }
   await audit('admin.care_profiles_viewed', req.admin.actor, { centerId: center.center_id, count: rows.length });
   res.json({ center: { centerId: center.center_id, name: center.name }, rows });
@@ -161,15 +168,21 @@ router.get('/audit', asyncHandler(async (req, res) => {
 }));
 
 router.get('/data-requests', asyncHandler(async (req, res) => {
-  res.json({ requests: await DataSubjectRequests.findAll() });
+  res.json({ requests:await privacyService.listAdminRequests(req.admin.actor), fulfillmentMode:'manual_review' });
 }));
 
 router.patch('/data-requests/:requestId', asyncHandler(async (req, res) => {
-  if (!['in_progress', 'completed', 'rejected'].includes(req.body.status)) return res.status(400).json({ error: 'bad_request' });
-  const request = await DataSubjectRequests.update((r) => r.request_id === req.params.requestId, { status: req.body.status, admin_note: String(req.body.note || '').slice(0, 1000), updated_at: now(), updated_by: req.admin.actor });
-  if (!request) return res.status(404).json({ error: 'not_found' });
-  await audit('privacy.data_request_updated', req.admin.actor, { requestId: request.request_id, status: request.status });
-  res.json(request);
+  try {
+    res.json({ request:await privacyService.updateRequest({
+      requestId:req.params.requestId, status:req.body?.status,
+      publicNote:req.body?.publicNote, adminNote:req.body?.adminNote,
+      manualFulfillmentConfirmed:req.body?.manualFulfillmentConfirmed === true,
+      actorReference:req.admin.actor,
+    }) });
+  } catch (error) {
+    if (error instanceof privacyService.PrivacyRequestError) return res.status(error.status).json({ error:error.code, message:error.message });
+    throw error;
+  }
 }));
 
 // GET /api/admin/centers/:centerId/staff — ดูรายชื่อทีมงานของศูนย์
@@ -182,7 +195,8 @@ router.get('/centers/:centerId/staff', asyncHandler(async (req, res) => {
   res.json({
     centerId: center.center_id, centerName: center.name,
     staff: staff.map((s) => ({
-      lineUserId: s.line_user_id,
+      staffId:s.staff_id,
+      displayIdentity:displayIdentity({ displayName:s.display_name, lineUserId:s.line_user_id }),
       role: s.role,
       roleLabel: { owner: 'เจ้าของศูนย์', manager: 'ผู้จัดการ', staff: 'พนักงาน' }[s.role] || s.role,
       autoRegistered: !!s.auto_registered,

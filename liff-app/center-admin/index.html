@@ -638,13 +638,13 @@ async function loadStaff() {
   const labels = { owner:'เจ้าของศูนย์', manager:'ผู้จัดการ', staff:'พนักงาน' };
   document.getElementById('staffList').innerHTML = data.staff.map(s => `
     <div class="resident-item">
-      <div><div class="resident-name">${esc(s.display_name || s.line_user_id)}</div><div class="resident-meta">${labels[s.role] || s.role}${s.status==='pending'?' · รออนุมัติ':''}${s.status==='revoked'?' · ถอนสิทธิ์แล้ว':''}</div></div>
-      ${s.status==='pending' ? `<button class="btn btn-outline btn-sm" onclick="approveStaff('${s.line_user_id}','staff')">อนุมัติ</button>` : ''}
-      ${s.role !== 'owner' && s.status!=='revoked' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.line_user_id}')">ถอนสิทธิ์</button>` : ''}
+      <div><div class="resident-name">${esc(s.display_identity)}</div><div class="resident-meta">${labels[s.role] || s.role}${s.status==='pending'?' · รออนุมัติ':''}${s.status==='revoked'?' · ถอนสิทธิ์แล้ว':''}</div></div>
+      ${s.status==='pending' ? `<button class="btn btn-outline btn-sm" onclick="approveStaff('${s.staff_id}','staff')">อนุมัติ</button>` : ''}
+      ${s.role !== 'owner' && s.status!=='revoked' ? `<button class="btn btn-danger btn-sm" onclick="removeManager('${s.staff_id}')">ถอนสิทธิ์</button>` : ''}
     </div>`).join('');
   document.getElementById('newManagerId').innerHTML = '<option value="">เลือกพนักงาน</option>' + data.staff
     .filter(s => s.role === 'staff' && (!s.status || s.status === 'active'))
-    .map(s => `<option value="${esc(s.line_user_id)}">${esc(s.display_name || s.line_user_id)}</option>`).join('');
+    .map(s => `<option value="${esc(s.staff_id)}">${esc(s.display_identity)}</option>`).join('');
 }
 async function saveCenterSettings() {
   const updated = await api('/api/center/settings?centerId=' + CENTER_ID, { method:'PATCH', body:JSON.stringify({
@@ -656,15 +656,15 @@ async function saveCenterSettings() {
   toast('บันทึกข้อมูลสาขาแล้ว');
 }
 async function appointManager() {
-  const targetLineId = document.getElementById('newManagerId').value.trim();
-  if (!targetLineId) return toast('กรุณากรอก LINE User ID');
-  await api('/api/center/staff', { method:'POST', body: JSON.stringify({ centerId: CENTER_ID, targetLineId }) });
+  const targetStaffId = document.getElementById('newManagerId').value.trim();
+  if (!targetStaffId) return toast('กรุณาเลือกพนักงาน');
+  await api('/api/center/staff', { method:'POST', body: JSON.stringify({ centerId: CENTER_ID, targetStaffId }) });
   document.getElementById('newManagerId').value = '';
   toast('แต่งตั้งแล้ว');
   loadStaff();
 }
 async function approveStaff(id, role) {
-  await api(`/api/center/staff/${id}/approve`, { method:'POST', body:JSON.stringify({ centerId:CENTER_ID, role }) });
+  await api(`/api/center/staff-records/${encodeURIComponent(id)}/approve`, { method:'POST', body:JSON.stringify({ centerId:CENTER_ID, role }) });
   toast('อนุมัติพนักงานแล้ว'); loadStaff();
 }
 
@@ -703,7 +703,7 @@ async function selectCenter(centerId) {
 }
 async function removeManager(id) {
   if (!await askConfirm('ถอนสิทธิ์บุคลากร','บุคคลนี้จะไม่สามารถเข้าถึงข้อมูลของสาขาได้ทันที หากกลับมาทำงาน สามารถเข้ากลุ่มและรออนุมัติใหม่ได้','ถอนสิทธิ์')) return;
-  await api(`/api/center/staff/${id}?centerId=${CENTER_ID}`, { method:'DELETE' });
+  await api(`/api/center/staff-records/${encodeURIComponent(id)}?centerId=${encodeURIComponent(CENTER_ID)}`, { method:'DELETE' });
   toast('ถอดถอนแล้ว');
   loadStaff();
 }

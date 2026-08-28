@@ -11,9 +11,23 @@ const transportService = require('../services/transportService');
 const { CenterStaff, Centers } = require('../db');
 const { projectCenter } = require('../services/centerProjection');
 const { platformService: defaultPlatformService } = require('../services/platformService');
+const { displayIdentity } = require('../utils/safeIdentity');
 
 function platformServiceFor(req) {
   return req.app.locals.platformService || defaultPlatformService;
+}
+
+function staffProjection(row) {
+  return {
+    staff_id:row.staff_id,
+    display_identity:displayIdentity({ displayName:row.display_name, lineUserId:row.line_user_id }),
+    role:row.role, status:row.status || 'active', auto_registered:Boolean(row.auto_registered),
+    assigned_at:row.assigned_at || null,
+  };
+}
+
+async function staffRecordInCenter(centerId, staffId) {
+  return CenterStaff.findOne((row) => row.center_id === centerId && row.staff_id === staffId);
 }
 
 router.use(requireAuth);
@@ -52,16 +66,36 @@ router.patch('/center/settings', requireCenterStaff(['owner']), asyncHandler(asy
 // GET /api/center/staff — รายชื่อผู้มีสิทธิ์จัดการ (เจ้าของเท่านั้น)
 router.get('/center/staff', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
   const staff = await centerService.listStaff(req.centerId);
-  res.json({ staff });
+  res.json({ staff:staff.map(staffProjection) });
 }));
 
 // POST /api/center/staff — แต่งตั้งผู้จัดการ (เจ้าของเท่านั้น)
 router.post('/center/staff', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
-  const { targetLineId } = req.body;
+  let { targetLineId } = req.body;
+  if (!targetLineId && req.body?.targetStaffId) {
+    const target = await staffRecordInCenter(req.centerId, req.body.targetStaffId);
+    targetLineId = target?.line_user_id;
+  }
   if (!targetLineId) return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุผู้ใช้ที่จะแต่งตั้ง' });
   const result = await centerService.appointManager({ centerId: req.centerId, targetLineId, requesterLineId: req.user.lineUserId });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.status(201).json(result.staff);
+  res.status(201).json(staffProjection(result.staff));
+}));
+
+router.delete('/center/staff-records/:staffId', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
+  const target = await staffRecordInCenter(req.centerId, req.params.staffId);
+  if (!target) return res.status(404).json({ error:'not_found', message:'ไม่พบสมาชิกทีม' });
+  const result = await centerService.revokeStaff({ centerId:req.centerId, targetLineId:target.line_user_id, requesterLineId:req.user.lineUserId, reason:req.body?.reason || '' });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json({ ok:true });
+}));
+
+router.post('/center/staff-records/:staffId/approve', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
+  const target = await staffRecordInCenter(req.centerId, req.params.staffId);
+  if (!target) return res.status(404).json({ error:'not_found', message:'ไม่พบสมาชิกทีม' });
+  const result = await centerService.approveStaff({ centerId:req.centerId, targetLineId:target.line_user_id, requesterLineId:req.user.lineUserId, role:req.body.role || 'staff' });
+  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
+  res.json(staffProjection(result.staff));
 }));
 
 // DELETE /api/center/staff/:id — ถอดถอนผู้จัดการ (เจ้าของเท่านั้น)
@@ -74,7 +108,7 @@ router.delete('/center/staff/:targetLineId', requireCenterStaff(['owner']), asyn
 router.post('/center/staff/:targetLineId/approve', requireCenterStaff(['owner']), asyncHandler(async (req, res) => {
   const result = await centerService.approveStaff({ centerId: req.centerId, targetLineId: req.params.targetLineId, requesterLineId: req.user.lineUserId, role: req.body.role || 'staff' });
   if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.json(result.staff);
+  res.json(staffProjection(result.staff));
 }));
 
 // GET /api/residents — รายชื่อผู้พักของศูนย์ (เจ้าของ/ผู้จัดการ)

@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="./lab-results-ui.css">
 <link rel="stylesheet" href="./care-history-ui.css">
 <link rel="stylesheet" href="./family-home-v2.css">
+<link rel="stylesheet" href="./privacy-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --gray:#5A6580; }
   *{box-sizing:border-box}
@@ -72,6 +73,8 @@
     <button class="btn btn-primary" onclick="acceptConsent()">ยอมรับและเริ่มใช้งาน</button>
     <div style="height:8px"></div>
     <button class="btn btn-outline" onclick="declineConsent()">ไม่ยอมรับ</button>
+    <div style="height:8px"></div>
+    <button class="btn btn-outline" onclick="openPrivacyWithoutConsent()">จัดการความเป็นส่วนตัว</button>
   </div>
 </div>
 
@@ -170,6 +173,7 @@
         <button type="button" class="family-admin-row" data-family-destination="invite"><span class="family-admin-row__icon">＋</span><span>เชิญสมาชิก</span><span class="family-admin-row__arrow">›</span></button>
         <button type="button" class="family-admin-row" data-family-destination="access"><span class="family-admin-row__icon">🔐</span><span>จัดการสิทธิ์</span><span class="family-admin-row__arrow">›</span></button>
         <button type="button" class="family-admin-row" data-family-destination="group"><span class="family-admin-row__icon family-admin-row__icon--line">LINE</span><span>การเชื่อม LINE Group</span><span class="family-admin-row__arrow">›</span></button>
+        <button type="button" class="family-admin-row" data-family-destination="privacy"><span class="family-admin-row__icon">◉</span><span>ความเป็นส่วนตัว</span><span class="family-admin-row__arrow">›</span></button>
       </div>
     </section>
 
@@ -485,6 +489,20 @@
     </div>
     </div>
   </div>
+
+  <div class="view" id="view-privacy">
+    <div class="privacy-shell">
+      <div class="family-module-header">
+        <button type="button" class="family-module-back" onclick="activateView('home')" aria-label="กลับหน้าหลัก">‹ กลับ</button>
+        <div class="family-module-header__copy"><h1>ความเป็นส่วนตัว</h1><p>จัดการความยินยอมและคำขอเกี่ยวกับข้อมูลส่วนบุคคล</p></div>
+      </div>
+      <section class="privacy-intro" aria-labelledby="privacyIntroTitle"><h2 id="privacyIntroTitle">คุณควบคุมคำขอเกี่ยวกับข้อมูลของคุณได้</h2><p>การส่งคำขอเป็นการเริ่มกระบวนการตรวจสอบโดยทีมงาน ไม่ใช่การลบ ส่งออก หรือจำกัดข้อมูลโดยอัตโนมัติ</p></section>
+      <div id="privacyLive" class="privacy-live" role="status" aria-live="polite"></div>
+      <section class="card privacy-card" aria-labelledby="privacyConsentTitle"><div class="privacy-card__heading"><h2 id="privacyConsentTitle">ความยินยอม</h2><p>ตรวจสอบสถานะหรือถอนความยินยอมโดยไม่ลบข้อมูลเดิมอัตโนมัติ</p></div><div id="privacyConsentState" class="privacy-state"></div></section>
+      <section class="card privacy-card" aria-labelledby="privacyRequestTitle"><div class="privacy-card__heading"><h2 id="privacyRequestTitle">ส่งคำขอเกี่ยวกับข้อมูลส่วนบุคคล</h2><p>กรอกรายละเอียดเท่าที่จำเป็น และหลีกเลี่ยงการใส่ข้อมูลสุขภาพที่ไม่เกี่ยวข้อง</p></div><form id="privacyRequestForm" class="privacy-form"><label for="privacyRequestType">ประเภทคำขอ</label><select id="privacyRequestType"><option value="export">ขอสำเนาข้อมูล</option><option value="correct">ขอแก้ไขข้อมูล</option><option value="restrict">ขอจำกัดการใช้ข้อมูล</option><option value="delete">ขอลบข้อมูล</option></select><p id="privacyRequestHelp" class="privacy-help"></p><label for="privacyRequestNote">รายละเอียดเพิ่มเติม (ไม่บังคับ)</label><textarea id="privacyRequestNote" maxlength="500" autocomplete="off" placeholder="ระบุเฉพาะข้อมูลที่ทีมงานต้องใช้ตรวจสอบคำขอนี้"></textarea><button id="privacyRequestSubmit" type="submit" class="privacy-button">ตรวจสอบและส่งคำขอ</button></form></section>
+      <section class="card privacy-card" aria-labelledby="privacyHistoryTitle"><div class="privacy-card__heading"><h2 id="privacyHistoryTitle">สถานะคำขอของฉัน</h2><p>แสดงเฉพาะคำขอที่ผูกกับบัญชี LINE ที่กำลังใช้งาน</p></div><div id="privacyRequestList" class="privacy-request-list"></div></section>
+    </div>
+  </div>
 </div>
 
 <div class="modal-bg" id="medicationReviewModal"><div class="modal">
@@ -507,6 +525,7 @@
 <script src="./lab-results-ui.js"></script>
 <script src="./care-history-ui.js"></script>
 <script src="./family-home-v2.js"></script>
+<script src="./privacy-ui.js"></script>
 <script>
 let BACKEND_URL = null;
 let LINE_USER_ID = null;
@@ -523,6 +542,7 @@ let DOCTOR_VISIT_UI = null;
 let LAB_RESULTS_UI = null;
 let CARE_HISTORY_UI = null;
 let HOME_UI = null;
+let PRIVACY_UI = null;
 let DASHBOARD_GENERATION = 0;
 let CURRENT_ACCESS_REQUESTS = [];
 let CURRENT_PENDING_TRANSPORT = [];
@@ -719,6 +739,11 @@ function ensureCareHistoryUI(){
   if(!CARE_HISTORY_UI){let controller=null;const session=window.PhimorFamilyCareHistoryUI.createSession({request:familyCareApi,onChange:(state)=>controller?.render(state)});controller=window.PhimorFamilyCareHistoryUI.createController({doc:document,session,getCurrentProfile:()=>currentProfile});CARE_HISTORY_UI={session,controller};}
   CARE_HISTORY_UI.session.setProfile(currentProfile?.profile?.care_profile_id||null);return CARE_HISTORY_UI;
 }
+function ensurePrivacyUI(){
+  if(!window.PhimorFamilyPrivacyUI)return null;
+  if(!PRIVACY_UI){let controller=null;const session=window.PhimorFamilyPrivacyUI.createSession({request:api,onChange:(state)=>controller?.render(state)});controller=window.PhimorFamilyPrivacyUI.createController({doc:document,session,confirmAction:(title,message)=>askConfirm(title,message,'ยืนยัน'),onConsentGranted:async()=>{ensureHomeUI();await loadDashboard();activateView('home');}});PRIVACY_UI={session,controller};}
+  PRIVACY_UI.session.setContext(currentProfile?.profile?.care_profile_id||'no-profile');return PRIVACY_UI;
+}
 
 function activateView(view){
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
@@ -737,6 +762,7 @@ function activateServiceModule(module,title){
 function scrollToFamilyAnchor(id){requestAnimationFrame(()=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'}));}
 async function openFamilyDestination(destination){
   if(destination==='actions'){activateView('home');scrollToFamilyAnchor('familyActionsSection');return;}
+  if(destination==='privacy'){activateView('privacy');await ensurePrivacyUI()?.controller.open();return;}
   if(destination==='health'){activateView('health');const care=ensureCareHistoryUI();if(currentProfile)await care?.controller.open();scrollToFamilyAnchor(currentProfile?'familyCareHistoryPanel':'healthNoProfileState');return;}
   if(!currentProfile){activateView('home');toast('กรุณาสร้างหรือเลือก Care Profile ก่อน');return;}
   if(destination==='medications'){activateView('record');scrollToFamilyAnchor('medicationEntryCard');return;}
@@ -783,13 +809,16 @@ async function acceptConsent() {
   await ensureDoctorVisitUI();
   await ensureLabResultsUI();
   ensureCareHistoryUI();
+  ensurePrivacyUI();
   refreshHome();
 }
-function declineConsent() { toast('จำเป็นต้องยอมรับก่อนใช้งานพี่หมอ'); }
+function declineConsent() { toast('ยังใช้บริการที่ต้องอาศัยความยินยอมไม่ได้ แต่คุณเปิดหน้าความเป็นส่วนตัวได้'); }
+async function openPrivacyWithoutConsent(){document.getElementById('consentOverlay').style.display='none';document.getElementById('app').style.display='block';activateView('privacy');await ensurePrivacyUI()?.controller.open();}
 
 // ── F2: หน้าหลัก ──
 function clearProfileScopedUi({returnHome=true}={}){
   CARE_HISTORY_UI?.session.setProfile(null);
+  PRIVACY_UI?.session.setContext(currentProfile?.profile?.care_profile_id||'no-profile');
   CURRENT_ACCESS_REQUESTS=[];CURRENT_PENDING_TRANSPORT=[];HOME_UI?.clear();
   document.getElementById('profileSummary').replaceChildren();
   document.getElementById('familyProfileAvatar').textContent='พ';
@@ -1088,9 +1117,10 @@ async function loadCaregivers(profileId=currentProfile?.profile?.care_profile_id
   if(!profileId)return;
   const data=await api(`/api/care-profile/${profileId}/caregivers`);
   if(token!==DASHBOARD_GENERATION||profileId!==currentProfile?.profile?.care_profile_id)return {ignored:true,stale:true};
-  document.getElementById('caregiverList').innerHTML=(data.members||[]).map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid #eee"><span>ผู้ดูแลร่วม · ${esc(m.line_user_id)}</span><button class="btn btn-outline" onclick="revokeCaregiver('${esc(m.line_user_id)}')">ถอนสิทธิ์</button></div>`).join('')||'<div style="font-size:12px;color:var(--gray)">ยังไม่มีผู้ดูแลร่วม</div>';
+  document.getElementById('caregiverList').innerHTML=(data.members||[]).map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #eee"><span>ผู้ดูแลร่วม · ${esc(m.displayIdentity)}</span><button class="btn btn-outline" onclick="revokeCaregiverMember('${esc(m.memberId)}')">ถอนสิทธิ์</button></div>`).join('')||'<div style="font-size:12px;color:var(--gray)">ยังไม่มีผู้ดูแลร่วม</div>';
   return data;
 }
+async function revokeCaregiverMember(memberId){if(!await askConfirm('ถอนสิทธิ์ผู้ดูแลร่วม','ผู้ดูแลรายนี้จะเปิดดูหรือแก้ไข Care Profile นี้ไม่ได้ทันที แต่สามารถเชิญกลับมาใหม่ภายหลังได้','ถอนสิทธิ์'))return;await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/caregivers/member/${encodeURIComponent(memberId)}`,{method:'DELETE'});toast('ถอนสิทธิ์แล้ว');loadCaregivers()}
 async function revokeCaregiver(lineId){if(!await askConfirm('ถอนสิทธิ์ผู้ดูแลร่วม','ผู้ดูแลรายนี้จะเปิดดูหรือแก้ไข Care Profile นี้ไม่ได้ทันที แต่สามารถเชิญกลับมาใหม่ภายหลังได้','ถอนสิทธิ์'))return;await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/caregivers/${encodeURIComponent(lineId)}`,{method:'DELETE'});toast('ถอนสิทธิ์แล้ว');loadCaregivers()}
 
 // ── เริ่มต้น ──
@@ -1123,6 +1153,7 @@ async function main() {
     await ensureConsultationUI();
     await ensureDoctorVisitUI();
     await ensureLabResultsUI();
+    ensurePrivacyUI();
     refreshHome();
     // อ่าน URL Parameter จากปุ่ม Rich Menu เพื่อสลับแท็บอัตโนมัติ
     const view = new URLSearchParams(location.search).get('view');

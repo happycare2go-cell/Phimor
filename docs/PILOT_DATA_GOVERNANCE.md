@@ -28,6 +28,7 @@ copying clinical bodies into the tracking system.
 
 | Domain | Purpose and permitted access | Current technical retention / automated deletion | Manual pilot handling and evidence constraints |
 |---|---|---|---|
+| Consent / data-rights requests | Actor-scoped consent history and a controlled queue for authenticated Family requests. Family sees only its own minimized status projection; System Admin sees the minimum request details needed to operate the queue. | Consent events and request status history persist in the current legacy data store. No request type triggers automated export, correction, restriction, or deletion. **POLICY DECISION REQUIRED** for retention. | Verify the requesting actor and affected data domains, follow the approved manual procedure, and record completion without copying clinical bodies into audit metadata. A completed request status is an operator attestation, not proof that every record was deleted. |
 | Integration inbox | Durable, idempotent intake and operational processing for scoped Integration Clients; System Admin sees minimized operational projections, not a clinical payload inspector. | Event payload and processing state persist; no general automated deletion is implemented. **POLICY DECISION REQUIRED** for retention. | Pause/revoke the affected client if needed, locate by safe event/client references, and obtain Privacy/Legal approval before any data action. Preserve idempotency hash, status, safe error/audit evidence needed to prove processing and prevent replay. |
 | Notification outbox | Reliable recipient-specific LINE delivery, dedupe, retry key, delivery/dead-letter state. Access is limited to backend workers and authorized operations. | Outbox rows/message projections persist; retry/dead-letter lifecycle is not a retention deletion policy. No general automated deletion. **POLICY DECISION REQUIRED**. | Stop further eligible delivery first where supported. Scope by Care Profile/notification intent without exposing LINE IDs in ordinary tickets. Preserve dedupe, provider acceptance, retry, and incident evidence required to prevent duplicate sends. |
 | Vital Signs / Daily Care | Canonical factual care history for authorized Center actors and Family read-only finalized projections. | Relational history is persistent; void/finalization events preserve provenance. No automated record deletion. **POLICY DECISION REQUIRED**. | Do not overwrite/erase finalized history without an approved correction/erasure decision. Export an inventory of affected records, preserve lifecycle/audit events as approved, and verify Family/Center projections after the action. |
@@ -37,6 +38,15 @@ copying clinical bodies into the tracking system.
 | Care Profile audit/history | Care Profile facts, membership/access history, field-change history, and security/audit events. | Persistent history; no general automated deletion. **POLICY DECISION REQUIRED**. | Verify owner/member/Center relationships before action. Remove or restrict only approved data while preserving the minimum security, consent, authorization, and completion evidence required by the decision owner. Re-test revoked and cross-profile access. |
 
 ## Pilot DSR procedure
+
+PHIMOR now provides authenticated Family consent withdrawal and data-rights
+request/status screens plus a minimized System Admin request queue. These
+screens create and track a controlled request; they do **not** execute a
+domain-wide export, correction, restriction, or erasure automatically. A
+request may be marked completed only after an operator explicitly attests that
+the approved manual procedure was performed. The legal scope, permitted
+technical action, response period, and retention period remain **POLICY
+DECISION REQUIRED**.
 
 1. Intake owner records the request using safe references and alerts the
    identity verifier.
