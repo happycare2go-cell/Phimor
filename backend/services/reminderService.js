@@ -1,8 +1,9 @@
 // services/reminderService.js — FR-G (แจ้งเตือนนัด 2 จังหวะ) FR-I (สรุปรายสัปดาห์ให้ศูนย์)
 
-const { Appointments, CareProfiles, GroupBindings, Centers, Residents, now } = require('../db');
+const { Appointments, CareProfiles, Centers, Residents, now } = require('../db');
 const { formatThaiDateTime } = require('../utils/thaiDate');
 const notificationService = require('./notificationService');
+const { findActiveFamilyBinding } = require('./groupBindingRepository');
 
 function bangkokDateKey(value) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -18,7 +19,7 @@ function isSameDay(a, b) {
 }
 
 async function resolveFamilyTargets(careProfileId) {
-  const gb = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
+  const gb = await findActiveFamilyBinding(careProfileId);
   if (gb) return [gb.line_group_id];
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
   if (!profile) return [];
@@ -47,11 +48,13 @@ async function sendAppointmentReminders(referenceDate = new Date()) {
 
     const targets = await resolveFamilyTargets(appt.care_profile_id);
     if (targets.length) {
+      const profile = await CareProfiles.findOne((item) => item.care_profile_id === appt.care_profile_id);
+      const identity = profile?.patient_name ? `${profile.patient_name} — ` : '';
       const label = kind === 'day_before' ? 'พรุ่งนี้มีนัด' : 'วันนี้มีนัด';
       for (const target of targets) await require('./notificationService').enqueueAndDeliver({
         dedupeKey:`appointment-reminder:${appt.appointment_id}:${kind}:${target}`,
         to:target, kind:'appointment_reminder', meta:{appointmentId:appt.appointment_id,careProfileId:appt.care_profile_id,kind},
-        messages:[{ type: 'text', text: `⏰ ${label}: ${appt.hospital} — ${formatThaiDateTime(appt.datetime)}` }],
+        messages:[{ type: 'text', text: `⏰ ${identity}${label}: ${appt.hospital} — ${formatThaiDateTime(appt.datetime)}` }],
       });
       await Appointments.update((a) => a.appointment_id === appt.appointment_id && !a[remindKey], {
         [remindKey]: true, [`${kind}_reminded_at`]: now(),

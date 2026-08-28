@@ -1,4 +1,5 @@
-const { PendingFamilyDeliveries, CareProfiles, GroupBindings, id, now } = require('../db');
+const { PendingFamilyDeliveries, CareProfiles, id, now } = require('../db');
+const { findActiveFamilyBinding } = require('./groupBindingRepository');
 
 async function queueForResident({ residentId, cardId, messages }) {
   const existing = await PendingFamilyDeliveries.findOne((d) => d.card_id === cardId);
@@ -9,7 +10,7 @@ async function queueForResident({ residentId, cardId, messages }) {
 async function deliverPendingForResident(residentId, careProfileId) {
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
   if (!profile) return { delivered:0 };
-  const binding = await GroupBindings.findOne((g) => g.care_profile_id === careProfileId && g.kind === 'family' && g.status !== 'inactive');
+  const binding = await findActiveFamilyBinding(careProfileId);
   const target = binding?.line_group_id || profile.owner_line_id;
   if (!target) return { delivered:0 };
   const waiting = await PendingFamilyDeliveries.findWhere((d) => d.resident_id === residentId && d.status === 'waiting_profile');

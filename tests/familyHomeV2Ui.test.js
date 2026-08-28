@@ -60,6 +60,17 @@ test('Care Profile is a compact context anchor and selector remains backend-dash
   assert.match(css, /family-profile-switch select\{position:absolute/);
 });
 
+test('existing users can add another independent Care Profile through the reused form', () => {
+  assert.match(html, /id="addCareProfileButton"[^>]*>\+ เพิ่ม Care Profile<\/button>/);
+  const open = functionSource('openAddProfileForm', 'closeAddProfileForm');
+  assert.match(open, /noProfileCard/);
+  assert.match(open, /createProfileButton/);
+  const create = functionSource('createIndependentProfile', 'collectProfileForm');
+  assert.match(create, /\/api\/care-profile\/independent/);
+  assert.match(create, /loadDashboard\(created\.care_profile_id\)/);
+  assert.equal((html.match(/id="newProfileName"/g) || []).length, 1, 'the creation form must not be duplicated');
+});
+
 test('legacy top navigation is removed while all underlying capabilities remain reachable', () => {
   for (const destination of ['health', 'medications', 'appointments', 'lab', 'family', 'access']) {
     assert.match(html, new RegExp(`data-family-destination="${destination}"`));
@@ -121,6 +132,17 @@ test('family and access tools use a lighter list while preserving distinct canon
   assert.match(html, /group-binding-token/);
   assert.match(html, /สร้างรหัสผูกกลุ่ม/);
   assert.doesNotMatch(source, /merge.*invite.*group|sharedInvitationToken/i);
+});
+
+test('Family group status is profile-scoped, hides binding action when active, and never renders raw groupId', () => {
+  assert.match(html, /id="familyBindingStatus"/);
+  assert.match(html, /id="familyBindingAction"/);
+  const render = functionSource('renderFamilyGroupStatus', 'loadDashboard');
+  assert.match(render, /familyGroup\?\.active===true/);
+  assert.match(render, /เชื่อมกลุ่มครอบครัวแล้ว/);
+  assert.match(render, /ยังไม่ได้เชื่อมกลุ่มครอบครัว/);
+  assert.match(render, /familyBindingAction'\)\.hidden=active\|\|!isOwner/);
+  assert.doesNotMatch(render, /groupId|line_group_id/);
 });
 
 test('consultation action is derived only from backend case collections', () => {
@@ -185,6 +207,21 @@ test('profile switch clearing covers clinical module output and generated links 
   for (const value of ['CURRENT_ACCESS_REQUESTS=[]', 'CURRENT_PENDING_TRANSPORT=[]', 'historyList', 'familyBindingCode', 'caregiverInviteUrl', 'LAST_PDF_LINKS=null']) assert.match(clear, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(source, /localStorage|sessionStorage/);
   assert.doesNotMatch(html, /localStorage|sessionStorage/);
+});
+
+test('medication extraction and confirmation are pinned to immutable profile context', () => {
+  const save = functionSource('saveMedication', 'isMedicationOperationCurrent');
+  assert.match(save, /careProfileId:currentProfile\.profile\.care_profile_id/);
+  assert.match(save, /generation:DASHBOARD_GENERATION/);
+  assert.match(save, /isMedicationOperationCurrent\(operation\)/);
+  assert.match(save, /`\/api\/care-profile\/\$\{operation\.careProfileId\}\/medication-snapshots`/);
+  const confirm = functionSource('confirmMedicationReview', 'clearMedicationForm');
+  assert.match(confirm, /const operation=medicationOperation/);
+  assert.match(confirm, /if\(!isMedicationOperationCurrent\(operation\)\)/);
+  assert.match(confirm, /operation\.careProfileId/);
+  assert.doesNotMatch(confirm, /currentProfile\.profile\.care_profile_id/);
+  const clear = functionSource('clearProfileScopedUi', 'renderProfileAnchor');
+  assert.match(clear, /closeMedicationReview\(\)/);
 });
 
 test('mobile layout has large touch targets, narrow-screen fallback, focus state, and safe-area padding', () => {

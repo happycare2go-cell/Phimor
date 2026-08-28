@@ -111,6 +111,30 @@ test('expected group with no verified binding is held and cannot use owner fallb
   assert.equal(calls,0);
 });
 
+test('two Care Profiles independently reconcile the same verified Family group without dedupe collision', async () => {
+  const calls=[];
+  const profiles=table([
+    {care_profile_id:'CP-1',owner_line_id:'U-1',patient_name:'คุณพ่อ',status:'active'},
+    {care_profile_id:'CP-2',owner_line_id:'U-2',patient_name:'คุณแม่',status:'active'},
+  ]);
+  const bindings=table([
+    {binding_id:'GB-1',kind:'family',care_profile_id:'CP-1',line_group_id:'G-SHARED',status:'active'},
+    {binding_id:'GB-2',kind:'family',care_profile_id:'CP-2',line_group_id:'G-SHARED',status:'active'},
+  ]);
+  const service=createFamilyCareNotificationService({CareProfiles:profiles,GroupBindings:bindings,
+    enqueue:async(input)=>{calls.push(input);return{ok:true};}});
+  const one=await service.enqueueFinalized({kind:'daily_care',careProfileId:'CP-1',resourceId:'DCR-1',
+    expectedLineGroupId:'G-SHARED',projection:fullProjection});
+  const two=await service.enqueueFinalized({kind:'daily_care',careProfileId:'CP-2',resourceId:'DCR-2',
+    expectedLineGroupId:'G-SHARED',projection:fullProjection});
+  assert.equal(one.groupReconciliationStatus,'verified_match');
+  assert.equal(two.groupReconciliationStatus,'verified_match');
+  assert.deepEqual(calls.map((call)=>call.to),['G-SHARED','G-SHARED']);
+  assert.notEqual(calls[0].dedupeKey,calls[1].dedupeKey);
+  assert.match(calls[0].messages[0].text,/คุณพ่อ/);
+  assert.match(calls[1].messages[0].text,/คุณแม่/);
+});
+
 test('Family Daily Care projection renders canonical identity, factual Daily fields, and recorded Vital values', () => {
   const text = renderFamilyCareMessage({ kind:'daily_care',
     profile:{ patient_name:'คุณยายใจดี' }, projection:fullProjection });

@@ -7,7 +7,8 @@
 //                                      │                            │
 //                                      └──────── (เกิน 24 ชม.) ──→ expired
 
-const { PendingCards, Residents, GroupBindings, CareProfiles, Appointments, Medications, MedicationSnapshots, audit, id, now } = require('../db');
+const { PendingCards, Residents, CareProfiles, Appointments, Medications, MedicationSnapshots, audit, id, now } = require('../db');
+const { findActiveFamilyBinding } = require('./groupBindingRepository');
 const aiProvider = require('../providers/aiProvider');
 const lineClient = require('../providers/lineClient');
 const { matchResident } = require('../utils/nameMatch');
@@ -336,7 +337,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
   // ── FR-F: ส่งเข้ากลุ่มครอบครัว ──
   let sentToFamily = false, queuedForLater = false;
   if (resident.care_profile_id) {
-    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family' && g.status !== 'inactive');
+    const groupBinding = await findActiveFamilyBinding(resident.care_profile_id);
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
     if (target) {
       const messages = [{
@@ -350,7 +351,7 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
           }],
         },
       }];
-      if (transportPlan && data.appointment) messages.push({ type:'text', text:`📅 กรุณาเปิด Family LIFF เพื่อเลือกวิธีเดินทางสำหรับนัดนี้\nhttps://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?view=transport` });
+      if (transportPlan && data.appointment) messages.push({ type:'text', text:`📅 ${resident.full_name} — กรุณาเปิด Family LIFF เพื่อเลือกวิธีเดินทางสำหรับนัดนี้\nhttps://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?view=transport` });
       await lineClient.pushMessage(target, messages);
       sentToFamily = true;
     } else {

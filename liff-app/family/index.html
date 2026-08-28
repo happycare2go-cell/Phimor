@@ -121,7 +121,7 @@
       <label>ผู้ติดต่อฉุกเฉิน</label><input type="text" id="newEmergencyName">
       <label>เบอร์ผู้ติดต่อฉุกเฉิน</label><input type="tel" id="newEmergencyPhone">
       <label>เบอร์โทรศัพท์ครอบครัว</label><input type="tel" id="newFamilyPhone">
-      <div style="margin-top:12px"><button class="btn btn-primary" id="createProfileButton" onclick="createIndependentProfile()">สร้าง Care Profile</button></div>
+      <div class="family-profile-form-actions"><button type="button" class="btn btn-outline" id="cancelCreateProfileButton" onclick="closeAddProfileForm()" hidden>ยกเลิก</button><button class="btn btn-primary" id="createProfileButton" onclick="createIndependentProfile()">สร้าง Care Profile</button></div>
     </div>
 
     <section class="card family-profile-anchor" id="careProfileAnchor" hidden aria-label="Care Profile ที่กำลังเลือก">
@@ -133,6 +133,7 @@
           <select id="profileSelector" aria-label="สลับ Care Profile" onchange="selectProfile(this.value)"></select>
         </div>
       </div>
+      <button type="button" class="family-add-profile" id="addCareProfileButton" onclick="openAddProfileForm()">+ เพิ่ม Care Profile</button>
     </section>
 
     <section class="family-section family-section-anchor" id="familyActionsSection" aria-labelledby="familyActionsTitle">
@@ -487,7 +488,7 @@
       <div class="family-section__heading"><div><h2 id="familyAccessHeading">สิทธิ์การเข้าถึง</h2><p>ตรวจสอบคำขอเชื่อม Care Profile จากศูนย์ดูแล</p></div></div>
       <div id="accessRequestList"><div class="family-action-empty">ไม่มีคำขอเข้าถึงที่รอดำเนินการ</div></div>
     </section>
-    <div class="card family-connection-section" id="familyBindingCard"><h3>🔗 ผูก LINE Group ครอบครัว</h3><p style="font-size:12px;color:var(--gray)">สร้างรหัส แล้วส่งรหัสในกลุ่มหลังเชิญพี่หมอเข้ากลุ่ม รหัสมีอายุ 15 นาที</p><button class="btn btn-outline" onclick="createFamilyBindingCode()">สร้างรหัสผูกกลุ่ม</button><div id="familyBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div></div>
+    <div class="card family-connection-section" id="familyBindingCard"><h3>🔗 กลุ่มครอบครัว</h3><p id="familyBindingStatus" class="family-binding-status">กำลังตรวจสอบสถานะ...</p><p id="familyBindingHelp" style="font-size:12px;color:var(--gray)">สร้างรหัส แล้วส่งรหัสในกลุ่มหลังเชิญพี่หมอเข้ากลุ่ม รหัสมีอายุ 15 นาที</p><button class="btn btn-outline" id="familyBindingAction" onclick="createFamilyBindingCode()">สร้างรหัสผูกกลุ่ม</button><div id="familyBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div></div>
     <div class="card family-connection-section" id="caregiverInviteCard">
       <h3>👨‍👩‍👧 เชิญญาติผู้ดูแลร่วม</h3>
       <p style="font-size:12px;color:var(--gray)">เจ้าของ Care Profile หลักสร้างลิงก์และส่งให้ญาติ ผู้รับต้องเปิดด้วยบัญชี LINE ของตนเองและยอมรับคำเชิญ</p>
@@ -536,6 +537,7 @@
 <script src="./care-history-ui.js"></script>
 <script src="./family-home-v2.js"></script>
 <script src="./privacy-ui.js"></script>
+<script src="./medication-operation.js"></script>
 <script>
 let BACKEND_URL = null;
 let LINE_USER_ID = null;
@@ -546,6 +548,7 @@ let allProfiles = [];
 let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let medicationDraftImage = null;
+let medicationOperation = null;
 let PLUS_UI = null;
 let PLUS_PAYMENT_UI = null;
 let CONSULTATION_UI = null;
@@ -681,6 +684,27 @@ function renderHealthProfile(profileEntry) {
 function openHomeForCareProfile(){
   activateView('home');
   document.getElementById('noProfileCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function resetIndependentProfileForm(){
+  ['newProfileName','newHeight','newWeight','newOtherConditions','newDrugAllergies','newFoodAllergies','newMobility','newEmergencyName','newEmergencyPhone','newFamilyPhone'].forEach(id=>{document.getElementById(id).value=''});
+  document.getElementById('newGender').value='';document.getElementById('newBloodType').value='';
+  setConditionChoices('newConditions',[],'newOtherConditions');
+}
+function openAddProfileForm(){
+  resetIndependentProfileForm();
+  document.getElementById('newProfileTitle').textContent='เพิ่ม Care Profile';
+  document.getElementById('newProfileHelp').textContent='สร้างข้อมูลผู้สูงอายุหรือผู้รับการดูแลอีกคน โดยไม่เชื่อมกับศูนย์จนกว่าจะใช้ขั้นตอนเชื่อมที่ได้รับอนุญาต';
+  document.getElementById('newProfileName').readOnly=false;
+  const button=document.getElementById('createProfileButton');button.textContent='สร้าง Care Profile';button.onclick=createIndependentProfile;
+  document.getElementById('cancelCreateProfileButton').hidden=false;
+  const card=document.getElementById('noProfileCard');card.style.display='block';card.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function closeAddProfileForm(){
+  if(!currentProfile)return;
+  document.getElementById('noProfileCard').style.display='none';
+  document.getElementById('cancelCreateProfileButton').hidden=true;
+  resetIndependentProfileForm();
 }
 
 async function api(path, opts={}) {
@@ -925,6 +949,7 @@ function clearProfileScopedUi({returnHome=true}={}){
   document.getElementById('upcomingList').innerHTML='<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>';
   document.getElementById('historyList').replaceChildren();
   document.getElementById('familyBindingCode').replaceChildren();
+  document.getElementById('familyBindingStatus').textContent='กำลังตรวจสอบสถานะ...';
   document.getElementById('caregiverList').replaceChildren();
   document.getElementById('caregiverInviteUrl').value='';document.getElementById('caregiverInviteUrl').style.display='none';
   document.getElementById('copyCaregiverInviteButton').style.display='none';
@@ -939,6 +964,7 @@ function renderProfileAnchor(){
   selector.disabled=allProfiles.length<2;
   document.getElementById('familyProfileSwitch').hidden=!currentProfile||allProfiles.length<2;
   document.getElementById('careProfileAnchor').hidden=!currentProfile;
+  document.getElementById('addCareProfileButton').hidden=!currentProfile||Boolean(INVITE_TOKEN);
   if(!currentProfile)return;
   const profile=currentProfile.profile,summary=document.getElementById('profileSummary');summary.replaceChildren();
   const title=document.createElement('h2');title.textContent=profile.patient_name;summary.appendChild(title);
@@ -947,15 +973,25 @@ function renderProfileAnchor(){
   const updated=profile._updatedAt||profile.updated_at;if(updated){const meta=document.createElement('p');meta.textContent=`อัปเดตล่าสุด ${new Date(updated).toLocaleDateString('th-TH',{dateStyle:'medium',timeZone:'Asia/Bangkok'})}`;summary.appendChild(meta)}
   document.getElementById('familyProfileAvatar').textContent=String(profile.patient_name||'พ').trim().slice(0,1)||'พ';
 }
-async function loadDashboard() {
+function renderFamilyGroupStatus(profileEntry){
+  const active=profileEntry?.familyGroup?.active===true;
+  const isOwner=profileEntry?.familyRole==='owner';
+  document.getElementById('familyBindingStatus').textContent=active?'เชื่อมกลุ่มครอบครัวแล้ว':'ยังไม่ได้เชื่อมกลุ่มครอบครัว';
+  document.getElementById('familyBindingHelp').hidden=active||!isOwner;
+  document.getElementById('familyBindingAction').hidden=active||!isOwner;
+  if(active)document.getElementById('familyBindingCode').replaceChildren();
+}
+async function loadDashboard(preferredProfileId=null) {
   const token=++DASHBOARD_GENERATION;
   const data = await api('/api/init-dashboard');
   if(token!==DASHBOARD_GENERATION)return {ignored:true,stale:true};
   allProfiles = data.profiles;
   const previousId = currentProfile?.profile?.care_profile_id;
-  currentProfile = allProfiles.find(x=>x.profile.care_profile_id===previousId) || allProfiles[0] || null;
+  currentProfile = allProfiles.find(x=>x.profile.care_profile_id===preferredProfileId)
+    || allProfiles.find(x=>x.profile.care_profile_id===previousId) || allProfiles[0] || null;
   if(previousId!==currentProfile?.profile?.care_profile_id)clearProfileScopedUi({returnHome:false});
   renderProfileAnchor();
+  if(currentProfile)renderFamilyGroupStatus(currentProfile);
   document.getElementById('noProfileCard').style.display = currentProfile ? 'none' : 'block';
   if (INVITE_TOKEN) {
     const invite = await api('/api/invite/' + encodeURIComponent(INVITE_TOKEN));
@@ -964,6 +1000,7 @@ async function loadDashboard() {
     document.getElementById('newProfileHelp').textContent = `กรอกข้อมูลของ ${invite.residentName || 'ผู้รับการดูแล'} แล้วกดยืนยัน`;
     document.getElementById('newProfileName').value = invite.residentName || '';
     document.getElementById('newProfileName').readOnly = true;
+    document.getElementById('cancelCreateProfileButton').hidden=true;
     const button=document.getElementById('createProfileButton'); button.textContent='ยืนยันและเชื่อมกับศูนย์'; button.onclick=acceptInvite;
   }
   if (SHARE_TOKEN) {
@@ -999,6 +1036,7 @@ function selectProfile(id){
   DASHBOARD_GENERATION+=1;
   currentProfile=allProfiles.find(x=>x.profile.care_profile_id===id)||null;
   clearProfileScopedUi();renderProfileAnchor();
+  renderFamilyGroupStatus(currentProfile);
   renderHealthProfile(currentProfile);
   PLUS_UI?.setProfile(currentProfile);
   PLUS_PAYMENT_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
@@ -1078,7 +1116,7 @@ async function createIndependentProfile() {
   if (!patientName) return toast('กรุณากรอกชื่อ');
   const selected = getCheckedConditions('newConditions');
   const other = document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean);
-  await api('/api/care-profile/independent', { method:'POST', body: JSON.stringify({
+  const created=await api('/api/care-profile/independent', { method:'POST', body: JSON.stringify({
     patientName, gender:document.getElementById('newGender').value, bloodType:document.getElementById('newBloodType').value,
     heightCm:document.getElementById('newHeight').value, weightKg:document.getElementById('newWeight').value,
     chronicConditions:[...selected,...other], drugAllergies:document.getElementById('newDrugAllergies').value,
@@ -1087,7 +1125,9 @@ async function createIndependentProfile() {
     emergencyContactPhone:document.getElementById('newEmergencyPhone').value, familyPhone:document.getElementById('newFamilyPhone').value,
   }) });
   toast('สร้างโปรไฟล์แล้ว');
-  await loadDashboard();
+  document.getElementById('noProfileCard').style.display='none';
+  document.getElementById('cancelCreateProfileButton').hidden=true;
+  await loadDashboard(created.care_profile_id);
 }
 function collectProfileForm(){ const selected=getCheckedConditions('newConditions'); const other=document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean); return { gender:document.getElementById('newGender').value,bloodType:document.getElementById('newBloodType').value,heightCm:document.getElementById('newHeight').value,weightKg:document.getElementById('newWeight').value,chronicConditions:[...selected,...other],drugAllergies:document.getElementById('newDrugAllergies').value,foodAllergies:document.getElementById('newFoodAllergies').value,mobilityLimitations:document.getElementById('newMobility').value,emergencyContactName:document.getElementById('newEmergencyName').value,emergencyContactPhone:document.getElementById('newEmergencyPhone').value,familyPhone:document.getElementById('newFamilyPhone').value }; }
 async function acceptInvite(){ if(!INVITE_TOKEN)return; await api('/api/invite/'+encodeURIComponent(INVITE_TOKEN)+'/accept',{method:'POST',body:JSON.stringify(collectProfileForm())}); INVITE_TOKEN=null; history.replaceState({},'',location.pathname); toast('เชื่อม Care Profile กับศูนย์แล้ว'); await loadDashboard(); }
@@ -1109,16 +1149,25 @@ async function saveAppointment() {
 }
 async function saveMedication() {
   if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
+  medicationDraftImage=null;
+  const operation=window.PhimorMedicationOperation.create({
+    careProfileId:currentProfile.profile.care_profile_id,
+    generation:DASHBOARD_GENERATION,
+    profileConditions:currentProfile.profile.chronic_conditions||[],
+  });
+  medicationOperation=operation;
   const name = document.getElementById('medName').value.trim();
   const dose = document.getElementById('medDose').value.trim();
   const file = document.getElementById('medImage').files[0];
   if (!name && !file) return toast('กรุณากรอกชื่อยาหรือเลือกรูป');
   let image = null;
   try { image = file ? await normalizeImageFile(file) : null; }
-  catch(e) { return toast(e.message || 'ไม่สามารถเตรียมรูปได้'); }
+  catch(e) { medicationOperation=null;return toast(e.message || 'ไม่สามารถเตรียมรูปได้'); }
+  if(!isMedicationOperationCurrent(operation))return {ignored:true,stale:true};
   const items = name ? [{ name, dose, condition:document.getElementById('medCondition').value.trim() }] : [];
   const payload = file ? { items:[], imageBase64:image.imageBase64, imageMimeType:image.imageMimeType } : { items };
-  const result = await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`, { method:'POST', body: JSON.stringify(payload) });
+  const result = await api(`/api/care-profile/${operation.careProfileId}/medication-snapshots`, { method:'POST', body: JSON.stringify(payload) });
+  if(!isMedicationOperationCurrent(operation))return {ignored:true,stale:true};
   if (result.status === 'draft_requires_confirmation') {
     medicationDraftImage = image;
     document.getElementById('medicationReviewRows').innerHTML = '';
@@ -1127,19 +1176,29 @@ async function saveMedication() {
     document.getElementById('medicationReviewModal').classList.add('show');
     return toast('AI อ่านรูปแล้ว กรุณาตรวจสอบก่อนบันทึก');
   }
+  medicationOperation=null;
   toast('บันทึกรายการยารอบนี้แล้ว');
   clearMedicationForm();
 }
+function isMedicationOperationCurrent(operation){
+  return window.PhimorMedicationOperation.matches(operation,{
+    activeOperation:medicationOperation,generation:DASHBOARD_GENERATION,
+    careProfileId:currentProfile?.profile?.care_profile_id,
+  });
+}
 function addMedicationReviewRow(item={}) {
   const row=document.createElement('div'); row.className='card medication-review-row'; row.style.padding='10px';
-  row.innerHTML=`<label>ชื่อยา</label><input class="review-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="review-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><select class="review-condition">${conditionSelectOptions(item.condition||'',currentProfile?.profile?.chronic_conditions||[])}</select><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
+  row.innerHTML=`<label>ชื่อยา</label><input class="review-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="review-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><select class="review-condition">${conditionSelectOptions(item.condition||'',medicationOperation?.profileConditions||[])}</select><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
   document.getElementById('medicationReviewRows').appendChild(row);
 }
-function closeMedicationReview(){ document.getElementById('medicationReviewModal').classList.remove('show'); medicationDraftImage=null; }
+function closeMedicationReview(){ document.getElementById('medicationReviewModal').classList.remove('show'); medicationDraftImage=null;medicationOperation=null;document.getElementById('medicationReviewRows').replaceChildren(); }
 async function confirmMedicationReview(){
+  const operation=medicationOperation;
+  if(!isMedicationOperationCurrent(operation)){closeMedicationReview();return {ignored:true,stale:true};}
   const items=Array.from(document.querySelectorAll('.medication-review-row')).map(row=>({name:row.querySelector('.review-name').value.trim(),dose:row.querySelector('.review-dose').value.trim(),condition:row.querySelector('.review-condition').value.trim()})).filter(x=>x.name);
   if(!items.length)return toast('กรุณากรอกชื่อยาอย่างน้อย 1 รายการ');
-  await api(`/api/care-profile/${currentProfile.profile.care_profile_id}/medication-snapshots`,{method:'POST',body:JSON.stringify({items,imageBase64:medicationDraftImage?.imageBase64||null,imageMimeType:medicationDraftImage?.imageMimeType||null,confirmAi:true})});
+  await api(`/api/care-profile/${operation.careProfileId}/medication-snapshots`,{method:'POST',body:JSON.stringify({items,imageBase64:medicationDraftImage?.imageBase64||null,imageMimeType:medicationDraftImage?.imageMimeType||null,confirmAi:true})});
+  if(!isMedicationOperationCurrent(operation))return {ignored:true,stale:true};
   closeMedicationReview(); clearMedicationForm(); toast('ยืนยันและบันทึกรายการยาแล้ว');
 }
 function clearMedicationForm(){ ['medName','medDose','medCondition'].forEach(id=>document.getElementById(id).value=''); document.getElementById('medImage').value=''; }
@@ -1231,7 +1290,7 @@ async function copyForwardText(text){
     toast('คัดลอกข้อความแล้ว พร้อมส่งต่อ');
   }catch(_){window.prompt('กดค้างเพื่อคัดลอกข้อความนี้',text)}
 }
-async function createFamilyBindingCode(){ if(!currentProfile)return toast('ยังไม่มีโปรไฟล์'); const token=DASHBOARD_GENERATION,id=currentProfile.profile.care_profile_id,patientName=currentProfile.profile.patient_name; const result=await api(`/api/care-profile/${id}/group-binding-token`,{method:'POST',body:'{}'}); if(token!==DASHBOARD_GENERATION||id!==currentProfile?.profile?.care_profile_id)return {ignored:true,stale:true}; LAST_FAMILY_BINDING_TEXT=`พี่หมอ: รหัสผูกกลุ่มครอบครัวของ ${patientName}\n${result.code}\n\nหลังเชิญพี่หมอเข้ากลุ่มแล้ว เจ้าของ Care Profile ที่สร้างรหัสต้องส่งข้อความนี้ในกลุ่มด้วยบัญชี LINE เดิมภายใน 15 นาที`; document.getElementById('familyBindingCode').innerHTML=`<div>${esc(result.code)}</div><button class="btn btn-copy" style="margin-top:8px" onclick="copyForwardText(LAST_FAMILY_BINDING_TEXT)">Copy</button>`; toast('สร้างรหัสแล้ว กด Copy เพื่อนำข้อความไปวางในกลุ่ม'); return result; }
+async function createFamilyBindingCode(){ if(!currentProfile)return toast('ยังไม่มีโปรไฟล์');if(currentProfile.familyRole!=='owner')return toast('เฉพาะเจ้าของ Care Profile เท่านั้น');if(currentProfile.familyGroup?.active)return toast('Care Profile นี้เชื่อมกลุ่มครอบครัวแล้ว'); const token=DASHBOARD_GENERATION,id=currentProfile.profile.care_profile_id,patientName=currentProfile.profile.patient_name; const result=await api(`/api/care-profile/${id}/group-binding-token`,{method:'POST',body:'{}'}); if(token!==DASHBOARD_GENERATION||id!==currentProfile?.profile?.care_profile_id)return {ignored:true,stale:true}; LAST_FAMILY_BINDING_TEXT=`พี่หมอ: รหัสผูกกลุ่มครอบครัวของ ${patientName}\n${result.code}\n\nหลังเชิญพี่หมอเข้ากลุ่มแล้ว เจ้าของ Care Profile ที่สร้างรหัสต้องส่งข้อความนี้ในกลุ่มด้วยบัญชี LINE เดิมภายใน 15 นาที`; document.getElementById('familyBindingCode').innerHTML=`<div>${esc(result.code)}</div><button class="btn btn-copy" style="margin-top:8px" onclick="copyForwardText(LAST_FAMILY_BINDING_TEXT)">Copy</button>`; toast('สร้างรหัสแล้ว กด Copy เพื่อนำข้อความไปวางในกลุ่ม'); return result; }
 async function createCaregiverInvite(){
   if(!currentProfile||currentProfile.familyRole!=='owner')return toast('เฉพาะเจ้าของ Care Profile หลักเท่านั้น');
   const token=DASHBOARD_GENERATION,profileId=currentProfile.profile.care_profile_id,patientName=currentProfile.profile.patient_name;

@@ -20,6 +20,11 @@
 .family-profile-anchor #profileSummary p{margin:2px 0 0;color:var(--gray);font-size:11.5px;line-height:1.4}
 .family-profile-switch{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:54px;min-height:44px;padding:0 10px;border:1px solid #ccd4e5;border-radius:11px;background:#fff;color:var(--navy);font-size:11px;font-weight:700}
 .family-profile-switch select{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.family-add-profile{display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin:10px 0 0 55px;padding:0 12px;border:1px solid #ccd4e5;border-radius:11px;background:#fff;color:var(--navy);font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.family-add-profile:focus-visible{outline:3px solid rgba(222,177,78,.75);outline-offset:2px}
+.family-profile-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.family-profile-form-actions .btn{min-height:44px}
+.family-binding-status{margin:6px 0;color:var(--navy);font-size:14px;font-weight:700;line-height:1.45}
 .family-section{margin:19px 0 0}
 .family-section__heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 10px}
 .family-section__heading h2{margin:0;color:var(--navy);font-size:17px}
@@ -68,6 +73,6 @@
 .family-connection-section{scroll-margin-top:16px}
 .family-section-anchor{scroll-margin-top:16px}
 .family-home-transport{margin-top:9px}
-@media(max-width:360px){.family-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.family-grid-card{min-height:90px}.family-profile-anchor__top{align-items:flex-start}.family-profile-switch{min-width:48px;padding:0 7px}.family-module-header--actions{flex-wrap:wrap}.family-module-header--actions .family-module-link{margin-left:55px}}
+@media(max-width:360px){.family-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.family-grid-card{min-height:90px}.family-profile-anchor__top{align-items:flex-start}.family-profile-switch{min-width:48px;padding:0 7px}.family-add-profile{margin-left:0;width:100%}.family-module-header--actions{flex-wrap:wrap}.family-module-header--actions .family-module-link{margin-left:55px}}
 @media(min-width:700px){.family-home-shell,#view-services,#view-record,#view-history,#view-health{max-width:620px;margin-left:auto;margin-right:auto}}
 @supports(padding:max(0px)){#view-home,#view-services,#view-record,#view-history,#view-health{padding-bottom:max(24px,env(safe-area-inset-bottom))}}

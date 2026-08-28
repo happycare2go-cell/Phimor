@@ -3,6 +3,7 @@
 const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, AccessRequests, audit, id, now, withTransaction } = require('../db');
 const { isPast } = require('./cardService');
 const pdfService = require('./pdfService');
+const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, listActiveBindingsForGroup } = require('./groupBindingRepository');
 
 const CONSENT_VERSION = '2569-08-1'; // ข้อ H6: ต้องบันทึกเวอร์ชันเอกสารที่ยอมรับ
 
@@ -201,26 +202,32 @@ async function createIndependentProfile({ ownerLineId, patientName, familyPhone,
 }
 
 // ── FR-N1: ผูกกลุ่มไลน์ครอบครัวด้วยตนเอง ──
-async function bindFamilyGroup({ careProfileId, groupId, requesterLineId }) {
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  if (!profile) return { ok: false, reason: 'ไม่พบ Care Profile' };
-  if (profile.owner_line_id !== requesterLineId) return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้' };
+async function bindFamilyGroupInCurrentTransaction({ careProfileId, groupId, requesterLineId }) {
+    const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+    if (!profile) return { ok: false, reason: 'ไม่พบ Care Profile', code:'CARE_PROFILE_NOT_FOUND' };
+    if (profile.owner_line_id !== requesterLineId) {
+      return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้', code:'FAMILY_OWNER_REQUIRED' };
+    }
+    if (!groupId) return { ok:false, reason:'ไม่พบข้อมูลกลุ่ม LINE', code:'GROUP_CONTEXT_REQUIRED' };
 
-  const conflict = await GroupBindings.findOne(
-    (g) => g.line_group_id === groupId && g.status !== 'inactive'
-      && !(g.kind === 'family' && g.care_profile_id === careProfileId)
-  );
-  if (conflict) return { ok: false, reason: 'กลุ่มนี้ถูกผูกกับศูนย์หรือ Care Profile อื่นแล้ว' };
-  const previous = await GroupBindings.findOne(
-    (g) => g.kind === 'family' && g.care_profile_id === careProfileId && g.status !== 'inactive'
-  );
-  if (previous && previous.line_group_id === groupId) return { ok: true, existing: true };
-  if (previous) await GroupBindings.update((g) => g.binding_id === previous.binding_id, { status: 'inactive', unbound_at: now() });
-  await GroupBindings.insert({
-    binding_id: id('GB'), care_profile_id: careProfileId, line_group_id: groupId, kind: 'family', bound_at: now(),
-    center_id: null, status: 'active', bound_by_line_user_id: requesterLineId,
-  });
-  return { ok: true };
+    const groupBindings = await listActiveBindingsForGroup(groupId);
+    if (groupBindings.some((binding) => binding.kind !== 'family')) {
+      return { ok: false, reason: 'กลุ่มนี้ถูกผูกเป็นกลุ่มประเภทอื่นแล้ว', code:'GROUP_KIND_CONFLICT' };
+    }
+    const current = await findActiveFamilyBinding(careProfileId);
+    if (current?.line_group_id === groupId) return { ok: true, existing: true, binding:current };
+    if (current) {
+      return { ok:false, reason:'Care Profile นี้เชื่อมกลุ่มครอบครัวแล้ว', code:'FAMILY_GROUP_ALREADY_BOUND' };
+    }
+    const binding = await GroupBindings.insert({
+      binding_id: id('GB'), care_profile_id: careProfileId, line_group_id: groupId, kind: 'family', bound_at: now(),
+      center_id: null, status: 'active', bound_by_line_user_id: requesterLineId,
+    });
+    return { ok: true, binding };
+}
+
+async function bindFamilyGroup(input) {
+  return withTransaction(GROUP_BINDING_TRANSACTION_KEY, () => bindFamilyGroupInCurrentTransaction(input));
 }
 
 async function recordMedicationSnapshot({ careProfileId, items, recordedBy, source = 'manual', sourceImageBase64 = null }) {
@@ -362,7 +369,7 @@ const AI_RESTRICTED_MESSAGE =
   + 'ตอนนี้บันทึกนัดด้วยการพิมพ์ได้เลยค่ะ'; // ข้อ N4 — ต้องไม่รู้สึกถูกกีดกัน
 
 module.exports = {
-  recordConsent, getConsentState, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup,
+  recordConsent, getConsentState, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup, bindFamilyGroupInCurrentTransaction,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
   exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
   recordMedicationSnapshot, getMedicationHistory, createCaregiverInvite, getCaregiverInvite, acceptCaregiverInvite, canAccessProfile, hasPermission,

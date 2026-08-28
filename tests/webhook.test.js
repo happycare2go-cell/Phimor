@@ -159,6 +159,31 @@ test('distinct legitimate group joins each receive one onboarding message', asyn
   assert.deepStrictEqual(onboarding.map((item) => item.to), ['G-A', 'G-B']);
 });
 
+test('shared Family group leave deactivates every profile and join does not reactivate history', async () => {
+  await db.GroupBindings.insert({ binding_id:'GB-1', kind:'family', care_profile_id:'CP-1', line_group_id:'G-SHARED', status:'active' });
+  await db.GroupBindings.insert({ binding_id:'GB-2', kind:'family', care_profile_id:'CP-2', line_group_id:'G-SHARED', status:'active' });
+  const webhook = require('../backend/routes/webhook');
+  await webhook.processEvent({ type:'leave', source:{ type:'group', groupId:'G-SHARED' } });
+  let rows = await db.GroupBindings.findWhere((binding) => binding.line_group_id === 'G-SHARED');
+  assert.ok(rows.every((binding) => binding.status === 'inactive' && binding.unbound_at));
+
+  await webhook.processEvent({ webhookEventId:'EVT-REJOIN', type:'join', source:{ type:'group', groupId:'G-SHARED' } });
+  rows = await db.GroupBindings.findWhere((binding) => binding.line_group_id === 'G-SHARED');
+  assert.ok(rows.every((binding) => binding.status === 'inactive'));
+});
+
+test('shared Family group memberLeft deactivates only profiles owned by that LINE actor', async () => {
+  await db.CareProfiles.insert({ care_profile_id:'CP-1', owner_line_id:'U-A', patient_name:'คุณพ่อ', status:'independent' });
+  await db.CareProfiles.insert({ care_profile_id:'CP-2', owner_line_id:'U-B', patient_name:'คุณแม่', status:'independent' });
+  await db.GroupBindings.insert({ binding_id:'GB-1', kind:'family', care_profile_id:'CP-1', line_group_id:'G-SHARED', status:'active' });
+  await db.GroupBindings.insert({ binding_id:'GB-2', kind:'family', care_profile_id:'CP-2', line_group_id:'G-SHARED', status:'active' });
+  await require('../backend/routes/webhook').processEvent({ type:'memberLeft', source:{ type:'group', groupId:'G-SHARED' },
+    left:{ members:[{ type:'user', userId:'U-A' }] } });
+  const rows = await db.GroupBindings.findWhere((binding) => binding.line_group_id === 'G-SHARED');
+  assert.equal(rows.find((binding) => binding.care_profile_id === 'CP-1').status, 'inactive');
+  assert.equal(rows.find((binding) => binding.care_profile_id === 'CP-2').status, 'active');
+});
+
 test('Flow เต็มผ่าน HTTP: พนักงานทักในกลุ่ม → ส่งรูปส่วนตัว → ผู้จัดการยืนยัน → ครอบครัวได้รับ', async () => {
   const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
   await centerService.bindGroupToCenter({ centerId: center.center_id, groupId: 'G_CENTER', requesterLineId: 'U_OWNER' });

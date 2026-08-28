@@ -37,6 +37,7 @@ const FAMILY_DOCTOR_VISIT_SOURCE = fs.readFileSync(path.resolve(__dirname, '..',
 const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.js'), 'utf8');
 const FAMILY_CARE_HISTORY_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'care-history-ui.js'), 'utf8');
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
+const FAMILY_MEDICATION_OPERATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'medication-operation.js'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
 
 function localHtml(name) {
@@ -53,7 +54,8 @@ function localHtml(name) {
     .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
     .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
-    .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`);
+    .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
+    .replace('<script src="./medication-operation.js"></script>', `<script>${FAMILY_MEDICATION_OPERATION_SOURCE}</script>`);
 }
 
 async function mockBackend(page, handler) {
@@ -129,6 +131,53 @@ async function familyHealthProfileSwitchJourney(browser) {
   assert.strictEqual(await page.locator('#foodAllergies').inputValue(), 'กุ้ง');
   assert.strictEqual(await page.locator('#chronicConditions input[value="ความดันโลหิตสูง"]').isChecked(), true);
   assert.strictEqual(await page.locator('#chronicConditions input[value="เบาหวาน"]').isChecked(), false);
+  await page.close();
+}
+
+async function familyMultiProfileGroupJourney(browser) {
+  const page = await browser.newPage({ viewport:{width:390,height:844} });
+  const profiles = [
+    {profile:{care_profile_id:'CP1',patient_name:'คุณพ่อ',created_at:'2026-08-01T00:00:00Z'},familyRole:'owner',familyGroup:{active:true,status:'active'},canUseAi:false,upcomingAppointments:[]},
+    {profile:{care_profile_id:'CP2',patient_name:'คุณแม่',created_at:'2026-08-02T00:00:00Z'},familyRole:'owner',familyGroup:{active:false,status:'unbound'},canUseAi:false,upcomingAppointments:[]},
+    {profile:{care_profile_id:'CP3',patient_name:'คุณตา',created_at:'2026-08-03T00:00:00Z'},familyRole:'caregiver',familyGroup:{active:false,status:'unbound'},canUseAi:false,upcomingAppointments:[]},
+  ];
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if (url.pathname === '/api/consent/check') return {hasConsent:true};
+    if (url.pathname === '/api/init-dashboard') return {profiles};
+    if (url.pathname === '/api/access-requests') return {requests:[]};
+    if (url.pathname === '/api/transport/family/pending') return {pending:[]};
+    if (/^\/api\/care-profile\/CP\d\/caregivers$/.test(url.pathname)) return {members:[]};
+    if (url.pathname === '/api/plus/entitlement') return {status:'basic',plus:false};
+    if (url.pathname === '/api/care-profile/independent' && request.method() === 'POST') {
+      const input=request.postDataJSON();
+      const created={care_profile_id:'CP4',patient_name:input.patientName,status:'independent',created_at:'2026-08-04T00:00:00Z'};
+      profiles.push({profile:created,familyRole:'owner',familyGroup:{active:false,status:'unbound'},canUseAi:false,upcomingAppointments:[]});
+      return {status:201,body:created};
+    }
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'), {waitUntil:'domcontentloaded'});
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.waitForFunction(() => document.querySelector('#familyBindingStatus').textContent === 'เชื่อมกลุ่มครอบครัวแล้ว');
+  assert.equal(await page.locator('#familyBindingStatus').textContent(),'เชื่อมกลุ่มครอบครัวแล้ว');
+  assert.equal(await page.locator('#familyBindingAction').evaluate((button) => button.hidden),true);
+
+  await page.locator('#profileSelector').selectOption('CP2');
+  await page.waitForFunction(() => document.querySelector('#profileSummary').textContent.includes('คุณแม่')
+    && document.querySelector('#familyBindingStatus').textContent === 'ยังไม่ได้เชื่อมกลุ่มครอบครัว');
+  assert.equal(await page.locator('#familyBindingStatus').textContent(),'ยังไม่ได้เชื่อมกลุ่มครอบครัว');
+  assert.equal(await page.locator('#familyBindingAction').evaluate((button) => button.hidden),false);
+  await page.locator('#profileSelector').selectOption('CP3');
+  await page.waitForFunction(() => document.querySelector('#profileSummary').textContent.includes('คุณตา'));
+  assert.equal(await page.locator('#familyBindingAction').evaluate((button) => button.hidden),true);
+
+  await page.locator('#addCareProfileButton').click();
+  await page.locator('#newProfileName').fill('คุณยาย');
+  await page.locator('#createProfileButton').click();
+  await page.waitForFunction(() => document.querySelector('#profileSelector').value === 'CP4');
+  assert.match(await page.locator('#profileSummary').textContent(),/คุณยาย/);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),true);
   await page.close();
 }
 
@@ -420,7 +469,7 @@ async function pharmacistConsoleJourney(browser) {
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
   const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
-  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
   for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }

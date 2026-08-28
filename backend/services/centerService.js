@@ -1,6 +1,7 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
 const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, audit, id, now, withTransaction } = require('../db');
+const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenterBinding, listActiveBindingsForGroup, isActiveGroupBinding } = require('./groupBindingRepository');
 const richMenuService = require('./richMenuService');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
@@ -62,7 +63,7 @@ async function updateCenterSettings({ centerId, requesterLineId, address, contac
 }
 
 // ── FR-A2, A3: ผูกกลุ่มไลน์งานศูนย์ (ต้องเป็นเจ้าของ/ผู้จัดการเป็นผู้เชิญ) ──
-async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
+async function bindGroupToCenterInCurrentTransaction({ centerId, groupId, requesterLineId }) {
   const staff = await CenterStaff.findOne(
     (s) => s.center_id === centerId && s.line_user_id === requesterLineId && ['owner', 'manager'].includes(s.role)
   );
@@ -70,11 +71,10 @@ async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
     return { ok: false, reason: 'ผู้เชิญไม่มีสิทธิ์เจ้าของหรือผู้จัดการของศูนย์นี้' };
   }
   const previous = await GroupBindings.findOne(
-    (g) => g.kind === 'center_staff' && g.center_id === centerId && g.status !== 'inactive'
+    (g) => isActiveGroupBinding(g, 'center_staff') && g.center_id === centerId
   );
-  const groupUsedElsewhere = await GroupBindings.findOne(
-    (g) => g.line_group_id === groupId && g.status !== 'inactive'
-      && !(g.kind === 'center_staff' && g.center_id === centerId)
+  const groupUsedElsewhere = (await listActiveBindingsForGroup(groupId)).find(
+    (g) => !(g.kind === 'center_staff' && g.center_id === centerId)
   );
   if (groupUsedElsewhere) return { ok: false, reason: 'กลุ่มนี้ถูกผูกกับศูนย์หรือ Care Profile อื่นแล้ว' };
 
@@ -98,13 +98,17 @@ async function bindGroupToCenter({ centerId, groupId, requesterLineId }) {
   return { ok: true, replacedPrevious: alreadyBound };
 }
 
+async function bindGroupToCenter(input) {
+  return withTransaction(GROUP_BINDING_TRANSACTION_KEY, () => bindGroupToCenterInCurrentTransaction(input));
+}
+
 async function findCenterByGroup(groupId) {
-  const binding = await GroupBindings.findOne((g) => g.line_group_id === groupId);
+  const binding = await findActiveCenterBinding(groupId);
   if (binding) {
-    if (binding.kind !== 'center_staff' || binding.status === 'inactive') return null;
     const center = await Centers.findOne((c) => c.center_id === binding.center_id && c.status === 'active');
     return require('./subscriptionService').entitlement(center).allowed ? center : null;
   }
+  if ((await listActiveBindingsForGroup(groupId)).length) return null;
   const center = await Centers.findOne((c) => c.group_id === groupId && c.status === 'active');
   return require('./subscriptionService').entitlement(center).allowed ? center : null;
 }
@@ -446,7 +450,7 @@ async function dischargeResident(centerId, residentId, requesterLineId) {
   let familyNotice = null;
   let familyNotified = false;
   if (resident.care_profile_id) {
-    const { CareProfiles, GroupBindings } = require('../db');
+    const { CareProfiles } = require('../db');
     const lineClient = require('../providers/lineClient');
     await CareProfiles.update(
       (p) => p.care_profile_id === resident.care_profile_id,
@@ -456,11 +460,11 @@ async function dischargeResident(centerId, residentId, requesterLineId) {
       + 'ยังบันทึกนัด รับการเตือน และเรียกใช้บริการผู้ดูแลจาก Care2Go ได้ตามปกติ'; // ข้อความตามที่ตกลงไว้
 
     // ⚠️ ข้อ B6 ระบุว่า "ระบบส่งข้อความแจ้งครอบครัว" — ต้อง Push จริง ไม่ใช่แค่คืนค่าไปให้ศูนย์เห็น
-    const groupBinding = await GroupBindings.findOne((g) => g.care_profile_id === resident.care_profile_id && g.kind === 'family' && g.status !== 'inactive');
+    const groupBinding = await findActiveFamilyBinding(resident.care_profile_id);
     const careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
     const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
     if (target) {
-      await lineClient.pushMessage(target, [{ type: 'text', text: familyNotice }]);
+      await lineClient.pushMessage(target, [{ type: 'text', text: `${careProfile?.patient_name || resident.full_name} — ${familyNotice}` }]);
       familyNotified = true;
     }
   }
@@ -574,10 +578,11 @@ async function cancelAppointment({ centerId, appointmentId, requesterLineId, rea
 
 async function notifyFamilyAppointmentEvent(careProfileId, text, dedupeKey) {
   const profile = await require('../db').CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-  const binding = await GroupBindings.findOne((g) => g.kind === 'family' && g.care_profile_id === careProfileId && g.status !== 'inactive');
+  const binding = await findActiveFamilyBinding(careProfileId);
   const target = binding?.line_group_id || profile?.owner_line_id;
   if (!target) return { ok:false, reason:'no_family_target' };
-  return require('./notificationService').enqueueAndDeliver({ dedupeKey, to:target, kind:'appointment_changed', meta:{careProfileId}, messages:[{type:'text',text}] });
+  const identity = profile?.patient_name ? `${profile.patient_name} — ` : '';
+  return require('./notificationService').enqueueAndDeliver({ dedupeKey, to:target, kind:'appointment_changed', meta:{careProfileId}, messages:[{type:'text',text:`${identity}${text}`}] });
 }
 
 // ── ข้อ J4/หมวดความปลอดภัย: หมุน API Key ของศูนย์ใหม่ (เพิกถอนของเดิมทันที) ──
@@ -595,7 +600,7 @@ async function findCenterByApiKey(apiKey) {
 }
 
 module.exports = {
-  createCenter, updateCenterSettings, bindGroupToCenter, findCenterByGroup, appointManager, removeManager, listStaff,
+  createCenter, updateCenterSettings, bindGroupToCenter, bindGroupToCenterInCurrentTransaction, findCenterByGroup, appointManager, removeManager, listStaff,
   addResident, updateResident, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
   updateAppointment, cancelAppointment,
   rotateExternalApiKey, findCenterByApiKey,
