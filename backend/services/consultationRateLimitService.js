@@ -2,16 +2,16 @@ const rateLimiter = require('../utils/rateLimiter');
 const { loadConsultationConfig } = require('../config/consultationConfig');
 const { ConsultationDomainError } = require('../domain/consultation');
 
-// This adapter intentionally reuses the current in-memory limiter. It is safe
-// only for a single backend instance and must move to a shared store before
-// multi-instance consultation traffic is enabled.
 function createConsultationRateLimitService({ limiter = rateLimiter, configLoader = loadConsultationConfig } = {}) {
   function check(key, limit, windowMs) {
     if (!key) throw new ConsultationDomainError('RATE_LIMIT_IDENTITY_REQUIRED');
-    return limiter.checkAndRecord(key, limit, windowMs);
+    return limiter.checkAndRecord(key, limit, windowMs, { domain:'consultation' });
   }
 
-  function enforce(result) {
+  async function enforce(resultPromise) {
+    let result;
+    try { result = await resultPromise; }
+    catch (_) { throw new ConsultationDomainError('CONSULTATION_RATE_LIMIT_UNAVAILABLE',503); }
     if (result.allowed) return result;
     const error=new ConsultationDomainError('CONSULTATION_RATE_LIMITED',429);
     error.retryAfterMs=result.retryAfterMs;

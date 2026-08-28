@@ -81,15 +81,17 @@ function createPlusRouter(overrides = {}) {
     if (!req.plusFlags.plus.enabled) return unavailable(res, 'PLUS_DISABLED');
     next();
   });
-  router.use((req, res, next) => {
-    const decision = limiter.checkAndRecord(`plus:${req.user.lineUserId}`, limit, windowMs);
+  router.use(asyncHandler(async (req, res, next) => {
+    let decision;
+    try { decision = await limiter.checkAndRecord(`plus:${req.user.lineUserId}`, limit, windowMs, { domain:'plus_api' }); }
+    catch (_) { return unavailable(res, 'RATE_LIMIT_UNAVAILABLE'); }
     res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
     if (!decision.allowed) {
       res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
       return res.status(429).json({ status: 'unavailable', errorCode: 'PLUS_RATE_LIMITED', message: 'เรียกใช้ Phimor Plus ถี่เกินไป กรุณารอสักครู่' });
     }
     next();
-  });
+  }));
 
   async function loadEntitlement(req) {
     return entitlementGetter({ lineUserId: req.user.lineUserId, flags: req.plusFlags, queryFn: overrides.entitlementQueryFn });

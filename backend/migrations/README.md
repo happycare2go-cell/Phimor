@@ -28,3 +28,7 @@ Rules:
 - `down` documents a rollback path, but production data migrations may be forward-only.
 - Running `migrate` bootstraps `schema_migrations` and explicitly applies any pending migration files.
 - Business migrations must be tested in staging and are never run automatically by application startup.
+
+Current repository sequence ends at `0014_create_shared_rate_limit_windows.js`.
+Migration 0014 must be applied before backend code using the production shared
+rate limiter is deployed; otherwise protected API paths intentionally fail closed.

@@ -10,12 +10,12 @@ const http = require('node:http');
 
 const db = require('../backend/db');
 
-let server, baseUrl;
+let server, baseUrl, app;
 const REAL_ADMIN_KEY = 'test-admin-key-12345';
 
 before(async () => {
   process.env.ADMIN_API_KEY = REAL_ADMIN_KEY; // ตั้งค่าก่อน require ครั้งแรกครั้งเดียวพอ
-  const app = require('../backend/server');
+  app = require('../backend/server');
   server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -44,6 +44,29 @@ test('สร้างศูนย์ด้วย Admin Key ผิด ต้อ�
     body: JSON.stringify({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' }),
   });
   assert.strictEqual(res.status, 401);
+});
+
+test('reliability operations projection is Admin-only and contains counts without payload bodies', async () => {
+  const originalSchedulerHealth = app.locals.schedulerHealth;
+  app.locals.notificationService = { async getHealth() { return { pending:2, deadLetters:1, oldestPendingAt:null }; } };
+  app.locals.integrationEventService = { async listOperationalStatus() {
+    return { items:[
+      { eventStatus:'retrying' }, { eventStatus:'dead' }, { eventStatus:'pending_subject_mapping' },
+    ], summary:{ group_binding_mismatch:1 } };
+  } };
+  app.locals.schedulerHealth = () => ({ configuredJobs:1, jobs:{ notificationRetry:{ status:'completed' } } });
+  let response = await callAdmin('/api/admin/operations/reliability');
+  assert.strictEqual(response.status, 401);
+  response = await callAdmin('/api/admin/operations/reliability', { headers:{ 'X-Admin-Key':REAL_ADMIN_KEY } });
+  assert.strictEqual(response.status, 200);
+  const body = await response.json();
+  assert.deepStrictEqual(body.integration.states, { retrying:1, dead:1, pending_subject_mapping:1 });
+  assert.strictEqual(body.notifications.deadLetters, 1);
+  assert.strictEqual(body.scheduler.jobs.notificationRetry.status, 'completed');
+  assert.doesNotMatch(JSON.stringify(body), /clinical|message body|LINE-SECRET|Bearer/i);
+  delete app.locals.notificationService;
+  delete app.locals.integrationEventService;
+  app.locals.schedulerHealth = originalSchedulerHealth;
 });
 
 test('สร้างศูนย์ด้วย Admin Key ที่ถูกต้อง ต้องสำเร็จและคืนขั้นตอนถัดไป', async () => {

@@ -121,7 +121,12 @@ async function handleImageMessage(event, imageBuffer) {
     });
   }
 
-  const rl = rateLimiter.checkAndRecord(lineUserId, IMAGE_RATE_LIMIT, 60000);
+  let rl;
+  try {
+    rl = await rateLimiter.checkAndRecord(lineUserId, IMAGE_RATE_LIMIT, 60000, { domain:'line_image_ingestion' });
+  } catch (_) {
+    return safeReply(event.replyToken, { type:'text', text:'ระบบจำกัดการส่งรูปยังไม่พร้อม กรุณาลองใหม่ภายหลังค่ะ' });
+  }
   if (!rl.allowed) {
     const waitSec = Math.ceil(rl.retryAfterMs / 1000);
     return safeReply(event.replyToken, { type: 'text', text: `ส่งรูปถี่เกินไปค่ะ กรุณารออีกประมาณ ${waitSec} วินาทีแล้วลองใหม่` });

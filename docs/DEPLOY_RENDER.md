@@ -15,7 +15,7 @@ changes to live Render/LINE configuration.
   `liff-app/environment.js` and their LIFF IDs from `GET /config/liff`. Never
   edit a production LIFF ID into HTML/JavaScript source.
 - The migration chain currently ends at
-  `0013_add_consultation_payment_recovery.js`. `npm start` does not execute
+  `0014_create_shared_rate_limit_windows.js`. `npm start` does not execute
   the numbered migration runner.
 
 ## Required configuration
@@ -83,7 +83,7 @@ of application startup because no numbered migration currently owns them:
 It also ensures expression indexes for common legacy lookups on Center,
 staff, Resident, Care Profile, Appointment, Transport, notification, and
 access-request fields. These names do not overlap the relational tables owned
-by migrations 0001–0013 (`vitals` is the legacy store; canonical Vital data is
+by migrations 0001–0014 (`vitals` is the legacy store; canonical Vital data is
 in `vital_sign_sets`/`vital_sign_observations`). Removing this startup DDL now
 would break installations whose legacy tables were bootstrapped by it.
 
@@ -91,7 +91,9 @@ Remaining risk: the backend database role still needs schema DDL privileges
 and startup can mutate those legacy objects. This is temporary compatibility
 debt. A future reviewed migration must take ownership of every legacy table and
 index before startup DDL can be removed. Numbered migrations remain the only
-supported mechanism for migrations 0001–0013.
+supported mechanism for migrations 0001–0014. Migration 0014 must precede the
+multi-instance backend deployment because rate limiting intentionally fails
+closed when its shared table is unavailable.
 
 ## Stop conditions
 

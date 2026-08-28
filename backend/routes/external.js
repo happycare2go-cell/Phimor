@@ -5,6 +5,24 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { Vitals, Residents, Centers, id, now } = require('../db');
 const centerService = require('../services/centerService');
 const { projectCenter } = require('../services/centerProjection');
+const rateLimiter = require('../utils/rateLimiter');
+
+const requireLegacyCenterRateLimit = asyncHandler(async (req, res, next) => {
+  try {
+    const limit = process.env.NODE_ENV === 'test' ? 2000
+      : Math.max(1, Number(process.env.LEGACY_CENTER_API_RATE_LIMIT_PER_MINUTE || 120));
+    const decision = await rateLimiter.checkAndRecord(
+      req.center.center_id, limit, 60000, { domain:'legacy_center_api' }
+    );
+    if (!decision.allowed) {
+      res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
+      return res.status(429).json({ error:'rate_limited', message:'เรียกใช้งานถี่เกินไป กรุณารอสักครู่' });
+    }
+    return next();
+  } catch (_) {
+    return res.status(503).json({ error:'rate_limit_unavailable', message:'ระบบจำกัดอัตราการใช้งานไม่พร้อม กรุณาลองใหม่ภายหลัง' });
+  }
+});
 
 router.post('/register-center', asyncHandler(async (req, res) => {
   const { centerName, address, contactPhone, idToken } = req.body;
@@ -18,7 +36,7 @@ router.post('/register-center', asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, message: 'ลงทะเบียนศูนย์สำเร็จ รอผู้ดูแลระบบกำหนดสิทธิแพ็กเกจ', center: projectCenter(newCenter), subscription: require('../services/subscriptionService').entitlement(newCenter) });
 }));
 
-router.post('/vitals', requireCenterApiKey, asyncHandler(async (req, res) => {
+router.post('/vitals', requireCenterApiKey, requireLegacyCenterRateLimit, asyncHandler(async (req, res) => {
   const { residentId, recordedAt, systolic, diastolic, pulse, temperature, source } = req.body;
   res.setHeader('Deprecation', 'true');
   if (!residentId) return res.status(400).json({ error: 'bad_request', message: 'กรุณาระบุ residentId' });

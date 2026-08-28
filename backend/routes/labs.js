@@ -109,9 +109,13 @@ function createLabsRouter(overrides = {}) {
     }
     let identity;
     try { identity = parseTrendIdentity(body.identity); } catch (error) { return labError(res, error); }
-    const decision = limiter.checkAndRecord(
-      `lab-explanation:${req.user.lineUserId}`, explanationLimit, explanationWindowMs
-    );
+    let decision;
+    try {
+      decision = await limiter.checkAndRecord(
+        `lab-explanation:${req.user.lineUserId}`, explanationLimit, explanationWindowMs,
+        { domain:'lab_explanation' }
+      );
+    } catch (_) { return labError(res, new Error('rate limit unavailable')); }
     res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
     if (!decision.allowed) {
       res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));

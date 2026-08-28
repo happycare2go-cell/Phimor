@@ -100,7 +100,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   router.post('/:caseId/accept', asyncHandler(async (req, res) => {
     if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({ status:'invalid_request', errorCode:'INVALID_CASE_ID' });
     try {
-      rates.requirePharmacistAccept(req.pharmacist.pharmacistId,req.consultationConfig);
+      await rates.requirePharmacistAccept(req.pharmacist.pharmacistId,req.consultationConfig);
       await cases.acceptCase({ caseId:req.params.caseId, pharmacistLineUserId:req.user.lineUserId });
       return res.json(await reads.getPharmacistCase({ caseId:req.params.caseId, pharmacistLineUserId:req.user.lineUserId }));
     } catch (error) { return consultationError(res, error); }
@@ -121,7 +121,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
       return res.status(400).json({status:'invalid_request',errorCode:'UNSUPPORTED_FIELD'});
     }
     try {
-      rates.requireAssistant({caseId:req.params.caseId,pharmacistId:req.pharmacist.pharmacistId},req.consultationConfig);
+      await rates.requireAssistant({caseId:req.params.caseId,pharmacistId:req.pharmacist.pharmacistId},req.consultationConfig);
       return res.json(await assistant({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
     } catch(error) { return consultationError(res,error); }
   }));
@@ -133,7 +133,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
       return res.status(400).json({ status:'invalid_request', errorCode:'UNSUPPORTED_FIELD' });
     }
     try {
-      rates.requireMessage({caseId:req.params.caseId,actorType:'pharmacist',actorId:req.pharmacist.pharmacistId},req.consultationConfig);
+      await rates.requireMessage({caseId:req.params.caseId,actorType:'pharmacist',actorId:req.pharmacist.pharmacistId},req.consultationConfig);
       const result = await messages.sendMessage({
         caseId:req.params.caseId,
         actor:{ type:'pharmacist', lineUserId:req.user.lineUserId },

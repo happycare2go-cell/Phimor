@@ -1,8 +1,14 @@
 // services/reminderService.js — FR-G (แจ้งเตือนนัด 2 จังหวะ) FR-I (สรุปรายสัปดาห์ให้ศูนย์)
 
 const { Appointments, CareProfiles, GroupBindings, Centers, Residents, now } = require('../db');
-const lineClient = require('../providers/lineClient');
 const { formatThaiDateTime } = require('../utils/thaiDate');
+const notificationService = require('./notificationService');
+
+function bangkokDateKey(value) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone:'Asia/Bangkok', year:'numeric', month:'2-digit', day:'2-digit',
+  }).format(value);
+}
 
 function isSameDay(a, b) {
   const key = (d) => new Intl.DateTimeFormat('en-CA', {
@@ -81,8 +87,13 @@ async function sendWeeklySummary(referenceDate = new Date()) {
       const resident = residents.find((r) => r.care_profile_id === a.care_profile_id);
       lines.push(`• ${resident?.full_name || 'ไม่ทราบชื่อ'} — ${a.hospital} · ${formatThaiDateTime(a.datetime)}`);
     }
-    await lineClient.pushMessage(center.group_id, [{ type: 'text', text: lines.join('\n') }]);
-    sent++;
+    const delivery = await notificationService.enqueueAndDeliver({
+      dedupeKey:`appointment-weekly-summary:${center.center_id}:${bangkokDateKey(referenceDate)}:${center.group_id}`,
+      to:center.group_id, kind:'appointment_weekly_summary',
+      meta:{ centerId:center.center_id, summaryDate:bangkokDateKey(referenceDate) },
+      messages:[{ type:'text', text:lines.join('\n') }],
+    });
+    if (delivery.ok && !delivery.duplicate) sent++;
   }
   return { sent };
 }
@@ -120,10 +131,16 @@ async function sendTomorrowSummaryToCenters(referenceDate = new Date()) {
     }
     if (pendingCount > 0) lines.push('', `⚠️ มี ${pendingCount} รายการที่ยังไม่ได้จัดการเดินทาง กรุณาตรวจสอบด่วน`);
 
-    await lineClient.pushMessage(center.group_id, [{ type: 'text', text: lines.join('\n') }]);
-    sent++;
+    const summaryDate = bangkokDateKey(tomorrow);
+    const delivery = await notificationService.enqueueAndDeliver({
+      dedupeKey:`appointment-tomorrow-summary:${center.center_id}:${summaryDate}:${center.group_id}`,
+      to:center.group_id, kind:'appointment_tomorrow_summary',
+      meta:{ centerId:center.center_id, summaryDate },
+      messages:[{ type:'text', text:lines.join('\n') }],
+    });
+    if (delivery.ok && !delivery.duplicate) sent++;
   }
   return { sent };
 }
 
-module.exports = { sendAppointmentReminders, sendWeeklySummary, sendTomorrowSummaryToCenters };
+module.exports = { sendAppointmentReminders, sendWeeklySummary, sendTomorrowSummaryToCenters, bangkokDateKey };

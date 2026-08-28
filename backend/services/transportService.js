@@ -11,8 +11,9 @@
 //    "ใช้บริการ Care2Go" — ห้ามมีปุ่มปฏิเสธ เพราะตัวเลือก Care2Go ทำหน้าที่เป็นทางออกอยู่แล้ว
 //    ครอบครัวที่กดขอให้ศูนย์จัดต้องมั่นใจได้ว่าจะมีคนจัดให้เสมอ
 
-const { TransportPlans, CenterRateCards, Bills, GroupBindings, CareProfiles, Appointments, Residents, audit, id, now } = require('../db');
+const { TransportPlans, CenterRateCards, Bills, GroupBindings, CareProfiles, Appointments, Residents, audit, id, now, withTransaction } = require('../db');
 const lineClient = require('../providers/lineClient');
+const notificationService = require('./notificationService');
 
 const CARE2GO_UNAVAILABLE_DEADLINE_HOURS = 12; // ข้อ L11
 
@@ -315,46 +316,55 @@ async function remindPendingFamilyChoices(referenceDate = new Date()) {
   const pending = await TransportPlans.findWhere((p) => p.status === 'awaiting_family');
 
   let reminded = 0;
-  for (const plan of pending) {
-    const appt = await Appointments.findOne((a) => a.appointment_id === plan.appointment_id);
-    if (!appt) continue;
+  for (const candidate of pending) {
+    const claimed = await withTransaction(`transport-reminder:${candidate.plan_id}`, async () => {
+      const plan = await TransportPlans.findOne((p) => p.plan_id === candidate.plan_id);
+      if (!plan || plan.status !== 'awaiting_family') return null;
+      const appt = await Appointments.findOne((a) => a.appointment_id === plan.appointment_id);
+      if (!appt) return null;
+      const hoursUntilAppt = (new Date(appt.datetime).getTime() - referenceDate.getTime()) / 3600000;
+      if (hoursUntilAppt < 0) return null;
+      const stage = FAMILY_REMINDER_STAGES.find(
+        (item) => hoursUntilAppt <= item.atOrBelowHours && hoursUntilAppt > item.aboveHours
+      );
+      if (!stage) return null;
+      const sentStages = plan.reminder_stages_sent || [];
+      if (sentStages.includes(stage.key)) return null;
 
-    const hoursUntilAppt = (new Date(appt.datetime).getTime() - referenceDate.getTime()) / 3600000;
-    if (hoursUntilAppt < 0) continue; // นัดผ่านไปแล้ว ไม่ต้องเตือน
-
-    // หาจังหวะที่ตรงกับเวลาที่เหลือ และยังไม่เคยเตือนในจังหวะนั้น
-    const stage = FAMILY_REMINDER_STAGES.find(
-      (s) => hoursUntilAppt <= s.atOrBelowHours && hoursUntilAppt > s.aboveHours
-    );
-    if (!stage) continue;
-    const sentStages = plan.reminder_stages_sent || [];
-    if (sentStages.includes(stage.key)) continue; // เตือนจังหวะนี้ไปแล้ว
-
-    const careProfile = await CareProfiles.findOne((cp) => cp.care_profile_id === plan.care_profile_id);
-    const familyTarget = await resolveFamilyTarget(plan.care_profile_id, careProfile);
-    const hoursLeftLabel = stage.key === 'stage_12h' ? 'ประมาณ 12 ชั่วโมง' : 'ประมาณ 6 ชั่วโมง';
-
-    if (familyTarget) {
-      await lineClient.pushMessage(familyTarget, [{
-        type: 'text',
-        text: `⏰ เหลืออีก${hoursLeftLabel}ก่อนถึงนัด ${appt.hospital} วันที่ ${new Date(appt.datetime).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Bangkok' })}\nยังไม่ได้เลือกวิธีเดินทางเลยค่ะ`,
-      }]);
-    }
-
-    // แจ้งศูนย์เฉพาะจังหวะสุดท้าย (เหลือ 6 ชม.) เพื่อไม่ให้ศูนย์ถูกรบกวนบ่อยเกินไป
-    if (stage.key === 'stage_6h') {
-      const center = await Centers.findOne((c) => c.center_id === plan.center_id);
-      if (center?.group_id) {
-        await lineClient.pushMessage(center.group_id, [{
-          type: 'text', text: `⚠️ ครอบครัวยังไม่ตัดสินใจเรื่องการเดินทาง และเหลือเวลาอีกประมาณ 6 ชั่วโมงก่อนถึงนัด (รหัสนัด ${appt.appointment_id})`,
-        }]);
+      const queued = [];
+      const careProfile = await CareProfiles.findOne((cp) => cp.care_profile_id === plan.care_profile_id);
+      const familyTarget = await resolveFamilyTarget(plan.care_profile_id, careProfile);
+      const hoursLeftLabel = stage.key === 'stage_12h' ? 'ประมาณ 12 ชั่วโมง' : 'ประมาณ 6 ชั่วโมง';
+      if (familyTarget) {
+        const family = await notificationService.enqueue({
+          dedupeKey:`transport-reminder:${plan.plan_id}:${stage.key}:family:${familyTarget}`,
+          to:familyTarget, kind:'transport_family_reminder',
+          meta:{ planId:plan.plan_id, appointmentId:appt.appointment_id, stage:stage.key, recipientType:'family' },
+          messages:[{ type:'text', text:`⏰ เหลืออีก${hoursLeftLabel}ก่อนถึงนัด ${appt.hospital} วันที่ ${new Date(appt.datetime).toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Bangkok' })}\nยังไม่ได้เลือกวิธีเดินทางเลยค่ะ` }],
+        });
+        if (family.ok) queued.push(family.notification);
       }
-    }
-
-    await TransportPlans.update((p) => p.plan_id === plan.plan_id, {
-      reminder_stages_sent: [...sentStages, stage.key],
+      if (stage.key === 'stage_6h') {
+        const center = await Centers.findOne((c) => c.center_id === plan.center_id);
+        if (center?.group_id) {
+          const centerNotice = await notificationService.enqueue({
+            dedupeKey:`transport-reminder:${plan.plan_id}:${stage.key}:center:${center.group_id}`,
+            to:center.group_id, kind:'transport_center_reminder',
+            meta:{ planId:plan.plan_id, appointmentId:appt.appointment_id, stage:stage.key, recipientType:'center' },
+            messages:[{ type:'text', text:`⚠️ ครอบครัวยังไม่ตัดสินใจเรื่องการเดินทาง และเหลือเวลาอีกประมาณ 6 ชั่วโมงก่อนถึงนัด (รหัสนัด ${appt.appointment_id})` }],
+          });
+          if (centerNotice.ok) queued.push(centerNotice.notification);
+        }
+      }
+      if (!queued.length) return null;
+      await TransportPlans.update((p) => p.plan_id === plan.plan_id && p.status === 'awaiting_family', {
+        reminder_stages_sent:[...sentStages, stage.key],
+      });
+      await appendHistory(plan.plan_id, `family_reminder_${stage.key}`);
+      return queued;
     });
-    await appendHistory(plan.plan_id, `family_reminder_${stage.key}`);
+    if (!claimed) continue;
+    for (const notification of claimed) await notificationService.deliver(notification);
     reminded++;
   }
   return { reminded };

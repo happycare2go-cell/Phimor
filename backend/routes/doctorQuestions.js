@@ -59,9 +59,12 @@ function createDoctorQuestionsRouter(overrides = {}) {
       return res.status(400).json({ status: 'unavailable', errorCode: 'INVALID_INPUT' });
     }
     if (!isEmergencyFocus(body.focus)) {
-      const decision = limiter.checkAndRecord(
-        `doctor-questions:${req.user.lineUserId}`, limit, windowMs
-      );
+      let decision;
+      try {
+        decision = await limiter.checkAndRecord(
+          `doctor-questions:${req.user.lineUserId}`, limit, windowMs, { domain:'doctor_questions' }
+        );
+      } catch (_) { return errorResponse(res, new Error('rate limit unavailable')); }
       res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
       if (!decision.allowed) {
         res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));

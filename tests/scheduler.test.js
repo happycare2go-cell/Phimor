@@ -4,6 +4,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const cron = require('../backend/node_modules/node-cron'); // require ผ่าน path เต็ม เพราะไฟล์ Test อยู่คนละ Directory กับ node_modules
 const { TZ } = require('../backend/utils/thaiDate');
+const fs = require('node:fs');
+const path = require('node:path');
 
 test('เขตเวลาที่ใช้ต้องเป็น Asia/Bangkok เสมอ ไม่พึ่งพา Timezone ของเครื่อง Server', () => {
   assert.strictEqual(TZ, 'Asia/Bangkok');
@@ -41,4 +43,23 @@ test('Staging clock เร่งเวลาได้ แต่ Production ไ�
   assert.ok(Math.abs(production - Date.now()) < 1000);
   if (originalMode === undefined) delete process.env.STAGING_MODE; else process.env.STAGING_MODE = originalMode;
   if (originalOffset === undefined) delete process.env.STAGING_CLOCK_OFFSET_MINUTES; else process.env.STAGING_CLOCK_OFFSET_MINUTES = originalOffset;
+});
+
+test('ทุก production cron เข้าผ่าน job-scoped distributed coordinator', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '..', 'backend', 'server.js'), 'utf8');
+  for (const job of [
+    'cardExpiry', 'pendingCardReminders', 'appointmentReminders', 'appointmentWeeklySummary',
+    'centerTomorrowSummary', 'transportReminders', 'subscriptionExpiry', 'notificationRetry',
+    'webhookInbox', 'integrationInbox', 'consultationLifecycle', 'centerStaffReconciliation',
+    'sourceImageRetention', 'sharedRateLimitCleanup',
+  ]) assert.match(source, new RegExp(`run\\('${job}'`));
+  assert.match(source, /schedulerCoordinator\.run\(jobName, task\)/);
+  assert.doesNotMatch(source, /cron\.schedule\([^\n]+=> \{ [^\n]+\.catch\(console\.error\)/);
+});
+
+test('/ready surfaces scheduler diagnostics without treating lock ownership as readiness failure', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '..', 'backend', 'server.js'), 'utf8');
+  assert.match(source, /const scheduler = schedulerCoordinator\.health\(\)/);
+  assert.match(source, /const ready = database && rateLimits\.available && missing\.length === 0/);
+  assert.doesNotMatch(source, /ready\s*=.*skipped_due_to_lock/);
 });

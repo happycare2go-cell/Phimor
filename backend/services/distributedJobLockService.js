@@ -18,7 +18,7 @@ function createDistributedJobLockService({acquireClient=acquireDatabaseClient}={
         try { await client.query('SELECT pg_advisory_unlock(hashtext($1))',[lockKey.trim()]); }
         catch (_) { /* releasing the client also releases a session lock */ }
       }
-      client.release();
+      try { client.release(); } catch (_) { /* a lost session already released its lock */ }
     }
   }
   return {runWithLock};

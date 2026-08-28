@@ -40,6 +40,28 @@ router.post('/bootstrap', requireAuth, asyncHandler(async (req, res) => {
 router.use(requireAdminKey);
 router.use('/platform', createPlatformAdminRouter());
 
+// Minimal reliability projection for operators. It exposes only counts and
+// scheduler metadata; notification bodies and integration payloads stay out.
+router.get('/operations/reliability', asyncHandler(async (req, res) => {
+  const notificationReader = req.app.locals.notificationService
+    || require('../services/notificationService');
+  const integrationReader = req.app.locals.integrationEventService
+    || require('../services/integrationEventService').integrationEventService;
+  const notifications = await notificationReader.getHealth();
+  const integration = await integrationReader.listOperationalStatus({ limit:200 });
+  const integrationStates = integration.items.reduce((summary, item) => {
+    const key = ['retrying', 'dead', 'rejected', 'pending_subject_mapping'].includes(item.eventStatus)
+      ? item.eventStatus : 'other';
+    summary[key] = (summary[key] || 0) + 1;
+    return summary;
+  }, {});
+  res.json({
+    notifications,
+    integration:{ sampleLimit:200, states:integrationStates, groupReconciliation:integration.summary },
+    scheduler:req.app.locals.schedulerHealth?.() || { configuredJobs:0, jobs:{} },
+  });
+}));
+
 // Exact-reference lookup for payment incidents. The projection intentionally
 // excludes LINE identities, the consultation question and Care Profile data.
 router.get('/consultation-payments/lookup', asyncHandler(async (req, res) => {
