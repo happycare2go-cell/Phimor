@@ -43,21 +43,21 @@
   .consent-overlay{position:fixed;inset:0;background:#fff;z-index:200;display:flex;flex-direction:column;padding:24px 20px;overflow-y:auto}
   .consent-overlay h2{color:var(--navy)}
   .consent-overlay p{font-size:13.5px;line-height:1.7;color:#333}
-  .toast{position:fixed;bottom:20px;left:16px;right:16px;background:var(--navy);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;text-align:center;opacity:0;transition:.25s;z-index:99}
+  .toast{position:fixed;bottom:20px;left:16px;right:16px;background:var(--navy);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;text-align:center;opacity:0;transition:.25s;z-index:99;pointer-events:none}
   .toast.show{opacity:1}
-  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-end}
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:flex-end}
   .modal-bg.show{display:flex}
   .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
-  .modal-actions{display:flex;gap:8px;margin-top:16px}.modal-actions .btn{flex:1}
+  .modal-actions{display:flex;gap:8px;margin-top:16px}.modal-actions .btn{flex:1;min-height:44px;touch-action:manipulation}.modal-actions .btn:disabled{opacity:.58;cursor:wait}
   .badge-tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;background:var(--ice);color:var(--navy)}
 </style>
 </head>
 <body>
 
-<div class="modal-bg" id="confirmActionModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmActionTitle">
+<div class="modal-bg" id="confirmActionModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmActionTitle" aria-describedby="confirmActionMessage">
   <h3 id="confirmActionTitle" style="color:var(--navy);margin-top:0">ยืนยันการดำเนินการ</h3>
   <p id="confirmActionMessage" style="line-height:1.7;color:var(--gray)"></p>
-  <div class="modal-actions"><button class="btn btn-outline" onclick="finishConfirm(false)">กลับ</button><button class="btn btn-primary" id="confirmActionButton" onclick="finishConfirm(true)">ยืนยัน</button></div>
+  <div class="modal-actions"><button type="button" class="btn btn-outline" id="confirmActionCancelButton" onclick="finishConfirm(false)">กลับ</button><button type="button" class="btn btn-primary" id="confirmActionButton" onclick="finishConfirm(true)">ยืนยัน</button></div>
 </div></div>
 
 <!-- ═══ F1: หน้ายินยอม PDPA — บังคับผ่านก่อนเข้าหน้าหลัก ═══ -->
@@ -560,6 +560,12 @@ let CURRENT_PENDING_TRANSPORT = [];
 const PHARMACIST_LINE_OA_URL = '';
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 let confirmResolver=null;
+let confirmAction=null;
+let confirmSession=0;
+let confirmBusy=false;
+let confirmButtonLabel='ยืนยัน';
+let confirmPendingLabel='กำลังบันทึก...';
+let confirmFailureMessage='ดำเนินการไม่สำเร็จ กรุณาลองอีกครั้ง';
 function safeLineProfilePictureUrl(value){
   if(typeof value!=='string'||!value.trim())return '';
   try{
@@ -583,14 +589,52 @@ function renderLineIdentity(profile){
   image.onerror=()=>{image.hidden=true;fallback.hidden=false;image.removeAttribute('src');};
   if(pictureUrl)image.src=pictureUrl;
 }
-function askConfirm(title,message,buttonText='ยืนยัน'){
-  confirmActionTitle.textContent=title;confirmActionMessage.textContent=message;confirmActionButton.textContent=buttonText;
-  document.getElementById('confirmActionModal').classList.add('show');
+function setConfirmBusy(busy){
+  confirmBusy=Boolean(busy);
+  confirmActionButton.disabled=confirmBusy;
+  confirmActionCancelButton.disabled=confirmBusy;
+  confirmActionButton.setAttribute('aria-busy',confirmBusy?'true':'false');
+  confirmActionButton.textContent=confirmBusy?confirmPendingLabel:confirmButtonLabel;
+}
+function settleConfirm(value,session=confirmSession){
+  if(session!==confirmSession)return;
+  const modal=document.getElementById('confirmActionModal');
+  modal.classList.remove('show');modal.setAttribute('aria-hidden','true');
+  const resolve=confirmResolver;
+  confirmResolver=null;confirmAction=null;confirmSession+=1;setConfirmBusy(false);
+  if(resolve)resolve(value);
+}
+function askConfirm(title,message,buttonText='ยืนยัน',options={}){
+  if(confirmResolver)settleConfirm(false);
+  const session=++confirmSession;
+  confirmButtonLabel=buttonText;
+  confirmPendingLabel=options.pendingText||'กำลังดำเนินการ...';
+  confirmFailureMessage=options.failureMessage||'ดำเนินการไม่สำเร็จ กรุณาลองอีกครั้ง';
+  confirmAction=typeof options.onConfirm==='function'?options.onConfirm:null;
+  confirmActionTitle.textContent=title;confirmActionMessage.textContent=message;setConfirmBusy(false);
+  const modal=document.getElementById('confirmActionModal');
+  modal.classList.add('show');modal.setAttribute('aria-hidden','false');
+  requestAnimationFrame(()=>{if(session===confirmSession)confirmActionButton.focus({preventScroll:true})});
   return new Promise(resolve=>{confirmResolver=resolve});
 }
-function finishConfirm(value){
-  document.getElementById('confirmActionModal').classList.remove('show');
-  const resolve=confirmResolver;confirmResolver=null;if(resolve)resolve(value);
+async function finishConfirm(value){
+  const session=confirmSession;
+  if(confirmBusy)return;
+  if(!value||!confirmAction){settleConfirm(Boolean(value),session);return;}
+  setConfirmBusy(true);
+  try{
+    const result=await confirmAction();
+    if(session===confirmSession)settleConfirm(result??true,session);
+  }catch(_error){
+    if(session!==confirmSession)return;
+    confirmActionMessage.textContent=confirmFailureMessage;
+    toast(confirmFailureMessage);
+  }finally{
+    if(session===confirmSession)setConfirmBusy(false);
+  }
+}
+function cancelConfirmForContextChange(){
+  if(document.getElementById('confirmActionModal').classList.contains('show'))settleConfirm(false);
 }
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._hideTimer); t._hideTimer=setTimeout(()=>t.classList.remove('show'),Math.max(3200,Math.min(6500,String(msg).length*90))); }
@@ -869,6 +913,7 @@ async function openPrivacyWithoutConsent(){document.getElementById('consentOverl
 
 // ── F2: หน้าหลัก ──
 function clearProfileScopedUi({returnHome=true}={}){
+  cancelConfirmForContextChange();
   CARE_HISTORY_UI?.session.setProfile(null);
   PRIVACY_UI?.session.setContext(currentProfile?.profile?.care_profile_id||'no-profile');
   CURRENT_ACCESS_REQUESTS=[];CURRENT_PENDING_TRANSPORT=[];HOME_UI?.clear();
@@ -991,10 +1036,41 @@ async function loadPendingTransport(token=DASHBOARD_GENERATION,profileId=current
   document.getElementById('pendingTransportList').innerHTML=list.map(p=>`<div class="appt-item"><div class="appt-h">${esc(p.appointment.hospital)}</div><div class="appt-d">${new Date(p.appointment.datetime).toLocaleString('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'})}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" onclick="chooseTransport('${p.plan_id}','self')">ไปเอง</button>${p.center_id?`<button class="btn btn-outline" onclick="chooseTransport('${p.plan_id}','request_center')">ให้ศูนย์จัดการ</button>`:'<span style="font-size:12px;color:var(--gray)">ยังไม่ได้เชื่อมศูนย์</span>'}</div><button class="btn btn-outline" style="display:none;margin-top:8px" onclick="chooseTransport('${p.plan_id}','care2go')">เรียก Care2Go</button></div>`).join('');
   refreshHome();return data;
 }
+const TRANSPORT_CHOICE_TIMEOUT_MS=15000;
+const TRANSPORT_CHOICE_SUBMISSIONS=new Set();
+async function submitTransportChoice(planId,choice){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),TRANSPORT_CHOICE_TIMEOUT_MS);
+  try{
+    const res=await fetch(BACKEND_URL+`/api/transport/${encodeURIComponent(planId)}/family-choice`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${LINE_ID_TOKEN}`,'X-Line-User-Id':LINE_USER_ID},body:JSON.stringify({choice}),signal:controller.signal});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error('TRANSPORT_CHOICE_REJECTED');
+    return data;
+  }catch(error){
+    const safeError=new Error(error?.name==='AbortError'?'TRANSPORT_CHOICE_TIMEOUT':'TRANSPORT_CHOICE_FAILED');
+    safeError.code=safeError.message;throw safeError;
+  }finally{clearTimeout(timeout)}
+}
 async function chooseTransport(planId,choice){
   const labels={self:'ไปเอง',request_center:'ให้ศูนย์จัดการ',care2go:'เรียก Care2Go'};
-  if(!await askConfirm('ยืนยันวิธีเดินทาง', `คุณเลือก “${labels[choice]}” ระบบจะบันทึกตัวเลือกนี้ให้ศูนย์ดำเนินการต่อ`, 'ยืนยันตัวเลือก'))return;
-  await api(`/api/transport/${planId}/family-choice`,{method:'POST',body:JSON.stringify({choice})}); toast('บันทึกวิธีเดินทางแล้ว'); await loadDashboard();
+  if(!labels[choice]||TRANSPORT_CHOICE_SUBMISSIONS.has(planId))return;
+  const profileId=currentProfile?.profile?.care_profile_id||null;
+  const generation=DASHBOARD_GENERATION;
+  await askConfirm('ยืนยันวิธีเดินทาง', `คุณเลือก “${labels[choice]}” ระบบจะบันทึกตัวเลือกนี้ให้ศูนย์ดำเนินการต่อ`, 'ยืนยันตัวเลือก',{
+    pendingText:'กำลังบันทึก...',
+    failureMessage:'บันทึกวิธีเดินทางไม่สำเร็จ กรุณาลองอีกครั้ง',
+    onConfirm:async()=>{
+      if(TRANSPORT_CHOICE_SUBMISSIONS.has(planId))throw new Error('TRANSPORT_CHOICE_ALREADY_PENDING');
+      TRANSPORT_CHOICE_SUBMISSIONS.add(planId);
+      try{
+        const result=await submitTransportChoice(planId,choice);
+        if(profileId===currentProfile?.profile?.care_profile_id&&generation===DASHBOARD_GENERATION){
+          toast('บันทึกวิธีเดินทางแล้ว');await loadDashboard();
+        }
+        return result;
+      }finally{TRANSPORT_CHOICE_SUBMISSIONS.delete(planId)}
+    },
+  });
 }
 
 async function createIndependentProfile() {

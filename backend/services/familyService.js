@@ -72,7 +72,8 @@ async function hasPermission(careProfileId, lineUserId, permission) {
   if (!profile) return false;
   if (profile.owner_line_id === lineUserId) return true;
   const member = await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === lineUserId && m.status === 'active');
-  const permissions = member?.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport'];
+  if (!member) return false;
+  const permissions = member.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport'];
   return permissions.includes(permission);
 }
 

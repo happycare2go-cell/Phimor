@@ -61,7 +61,8 @@ async function mockBackend(page, handler) {
     const request = route.request();
     if (!request.url().startsWith(SIMULATED_BACKEND_URL)) return route.abort();
     const result = await handler(new URL(request.url()), request);
-    return route.fulfill({ status: result?.status || 200, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
+    const responseStatus = Number.isInteger(result?.status) ? result.status : 200;
+    return route.fulfill({ status: responseStatus, contentType: 'application/json', body: JSON.stringify(result?.body ?? result ?? {}) });
   });
 }
 
@@ -313,6 +314,53 @@ async function familyCareHistoryJourney(browser) {
   await page.close();
 }
 
+async function familyTransportChoiceJourney(browser) {
+  const page = await browser.newPage({ viewport:{width:390,height:844} });
+  const profile = { profile:{care_profile_id:'CP-TRANSPORT',patient_name:'คุณยายอิสระ'},familyRole:'owner',canUseAi:false,upcomingAppointments:[] };
+  let unresolved = true; let attempts = 0;
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return {publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if (url.pathname === '/api/consent/check') return {hasConsent:true};
+    if (url.pathname === '/api/init-dashboard') return {profiles:[profile]};
+    if (url.pathname === '/api/access-requests') return {requests:[]};
+    if (url.pathname === '/api/care-profile/CP-TRANSPORT/caregivers') return {members:[]};
+    if (url.pathname === '/api/plus/entitlement') return {status:'basic',plus:false};
+    if (url.pathname === '/api/plus/offer') return {priceMinor:5900,durationDays:30,autoRenew:false};
+    if (url.pathname === '/api/plus/orders/current') return {status:'none'};
+    if (url.pathname === '/api/consultations/eligibility') return {availability:'unavailable'};
+    if (url.pathname === '/api/transport/family/pending') return {pending:unresolved?[{plan_id:'TP-INDEPENDENT',care_profile_id:'CP-TRANSPORT',center_id:null,appointment:{hospital:'โรงพยาบาลตัวอย่าง',datetime:'2026-09-02T09:00:00+07:00'}}]:[]};
+    if (url.pathname === '/api/transport/TP-INDEPENDENT/family-choice' && request.method() === 'POST') {
+      attempts += 1;
+      if (attempts === 1) return {status:503,body:{message:'internal provider detail must not surface'}};
+      unresolved = false; return {body:{ok:true,status:'family_handled'}};
+    }
+    return {status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'), {waitUntil:'domcontentloaded'});
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
+  await page.waitForFunction(() => document.querySelector('#pendingTransportList').textContent.includes('ยังไม่ได้เชื่อมศูนย์'));
+  assert.match(await page.locator('#pendingTransportList').textContent(), /ยังไม่ได้เชื่อมศูนย์/);
+  await page.getByRole('button',{name:'ไปเอง'}).click();
+  await page.waitForFunction(() => document.querySelector('#confirmActionModal').classList.contains('show'));
+  const targeting = await page.locator('#confirmActionButton').evaluate((button) => {
+    const box=button.getBoundingClientRect();const hit=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);
+    return {hitId:hit?.id,toastPointerEvents:getComputedStyle(document.querySelector('#toast')).pointerEvents,modalZ:Number(getComputedStyle(document.querySelector('#confirmActionModal')).zIndex),toastZ:Number(getComputedStyle(document.querySelector('#toast')).zIndex)};
+  });
+  assert.deepEqual(targeting,{hitId:'confirmActionButton',toastPointerEvents:'none',modalZ:100,toastZ:99});
+  await page.getByRole('button',{name:'ยืนยันตัวเลือก'}).click();
+  await page.waitForFunction(() => document.querySelector('#confirmActionMessage').textContent.includes('บันทึกวิธีเดินทางไม่สำเร็จ'));
+  assert.equal(attempts,1);
+  assert.equal(await page.locator('#confirmActionButton').isEnabled(),true);
+  assert.equal(await page.locator('#confirmActionCancelButton').isEnabled(),true);
+  assert.doesNotMatch(await page.locator('#confirmActionModal').textContent(),/internal provider detail/);
+  await page.getByRole('button',{name:'ยืนยันตัวเลือก'}).click();
+  await page.waitForFunction(() => !document.querySelector('#confirmActionModal').classList.contains('show'));
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('#transportDecisionCard')).display === 'none');
+  assert.equal(attempts,2);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),true);
+  await page.close();
+}
+
 async function adminCareOperationsJourney(browser) {
   const page = await browser.newPage({ viewport:{width:390,height:844} }); let mapped = 0; let reconciled = 0;
   await page.on('dialog', (dialog) => dialog.accept());
@@ -371,7 +419,9 @@ async function pharmacistConsoleJourney(browser) {
   if (!executablePath) throw new Error('ไม่พบ Chrome/Edge สำหรับ browser simulation กรุณาติดตั้ง browser หรือกำหนด PHIMOR_CHROMIUM_EXECUTABLE');
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
-  for (const [name, run] of Object.entries({ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney })) {
+  const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
+  for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }
   }

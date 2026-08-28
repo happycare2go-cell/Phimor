@@ -129,25 +129,36 @@ async function notifyAppointmentChanged(appointmentId, changeType, actorLineId) 
 
 // ── FR-L1, L2: ครอบครัวเลือก "เราไปเอง" ──
 async function familyChooseSelf(planId, requesterLineId) {
-  const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
-  if (!plan) return { ok: false, reason: 'ไม่พบแผนการเดินทาง' };
-  if (plan.status !== 'awaiting_family') return { ok: false, reason: 'รายการนี้ไม่ได้อยู่ในสถานะรอครอบครัวตัดสินใจ' };
+  const transition = await withTransaction(`transport-family-choice:${planId}`, async () => {
+    const plan = await TransportPlans.findOne((p) => p.plan_id === planId);
+    if (!plan) return { ok: false, reason: 'ไม่พบแผนการเดินทาง' };
+    if (plan.status === 'family_handled' && plan.family_choice === 'self') {
+      return { ok:true, status:'family_handled', duplicate:true, centerId:plan.center_id || null };
+    }
+    if (plan.status !== 'awaiting_family') return { ok: false, reason: 'รายการนี้ไม่ได้อยู่ในสถานะรอครอบครัวตัดสินใจ' };
 
-  await TransportPlans.update((p) => p.plan_id === planId, {
-    family_choice: 'self', family_decided_by: requesterLineId, family_decided_at: now(), status: 'family_handled',
+    await TransportPlans.update((p) => p.plan_id === planId, {
+      family_choice: 'self', family_decided_by: requesterLineId, family_decided_at: now(), status: 'family_handled',
+    });
+    await appendHistory(planId, 'family_choice=self');
+    await audit('transport.family_self', requesterLineId, { planId });
+    return { ok:true, status:'family_handled', duplicate:false, centerId:plan.center_id || null };
   });
-  await appendHistory(planId, 'family_choice=self');
-  await audit('transport.family_self', requesterLineId, { planId });
+  if (!transition.ok || transition.duplicate) return transition;
 
   // แจ้งกลุ่มงานศูนย์เพื่อทราบ (ข้อ L2)
-  if (plan.center_id) {
+  if (transition.centerId) {
     const { Centers } = require('../db');
-    const center = await Centers.findOne((c) => c.center_id === plan.center_id);
+    const center = await Centers.findOne((c) => c.center_id === transition.centerId);
     if (center?.group_id) {
-      await lineClient.pushMessage(center.group_id, [{ type: 'text', text: `ญาติแจ้งว่าจะพาไปเอง สำหรับนัดที่กำลังจะถึง` }]);
+      await notificationService.enqueueAndDeliver({
+        dedupeKey:`transport-family-self:${planId}:center`, to:center.group_id,
+        kind:'transport_family_self', meta:{planId,centerId:transition.centerId},
+        messages:[{ type:'text', text:'ญาติแจ้งว่าจะพาไปเอง สำหรับนัดที่กำลังจะถึง' }],
+      });
     }
   }
-  return { ok: true, status: 'family_handled' };
+  return transition;
 }
 
 // ── FR-L1, L3: ครอบครัวเลือก "ให้ศูนย์จัดการให้" ──
