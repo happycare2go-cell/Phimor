@@ -56,12 +56,17 @@ test('production policy ให้สมาชิกใหม่รอเจ้�
   assert.equal((await centerService.listCentersByStaffUser('U_NEW')).length, 1);
 });
 
-test('อนุมัติ Care Profile เดิมแล้ว ลิงก์ invite เก่าต้องใช้สร้างโปรไฟล์ซ้ำไม่ได้', async () => {
+test('legacy known-profile AccessRequest remains compatible and revokes the Resident invite after approval', async () => {
   const profile = await familyService.createIndependentProfile({ ownerLineId:'U_FAMILY', patientName:'คุณยาย', familyPhone:'081-234-5678' });
   const center = await centerService.createCenter({ name:'ศูนย์ใหม่', ownerLineId:'U_OWNER' });
   const added = await centerService.addResident({ centerId:center.center_id, fullName:'คุณยาย', familyPhone:'0812345678' });
-  assert.equal(added.accessRequestSent, true);
-  assert.equal((await accessService.respondAccessRequest(added.accessRequestId, true, 'U_FAMILY')).ok, true);
+  assert.equal(added.accessRequestSent, false, 'new onboarding no longer auto-matches by phone');
+  const legacy = await accessService.createAccessRequest({
+    centerId:center.center_id, careProfileId:profile.care_profile_id,
+    residentId:added.resident.resident_id, requestedBy:'U_OWNER',
+  });
+  assert.equal(legacy.ok, true);
+  assert.equal((await accessService.respondAccessRequest(legacy.request.request_id, true, 'U_FAMILY')).ok, true);
   const token = new URL(added.inviteUrl).searchParams.get('token');
   assert.equal((await familyService.acceptInvite(token, 'U_FAMILY')).ok, false);
   assert.equal((await db.CareProfiles.findWhere((p) => p.patient_name === 'คุณยาย')).length, 1);

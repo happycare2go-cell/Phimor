@@ -376,7 +376,8 @@ async function canApprove(centerId, lineUserId) {
 }
 
 // ── FR-B2, B3, B7: เพิ่มผู้พัก + ชื่ออื่นที่ใช้ + สร้างลิงก์เชิญ ──
-// ข้อ O1: ถ้าเบอร์ญาติตรงกับ Care Profile ที่มีอยู่แล้ว ต้องส่งคำขอเชื่อมต่อ ห้ามเชื่อมอัตโนมัติ
+// familyPhone is contact information only. Existing-profile linking now uses
+// an explicit anonymous Center link; phone numbers are never identity proof.
 async function addResident({ centerId, fullName, aliases = [], room, familyPhone }) {
   const duplicate = await Residents.findOne((r) => r.center_id === centerId && r.status === 'active' && r.full_name.trim() === fullName.trim());
   if (duplicate) return { ok: false, reason: 'มีผู้พักชื่อนี้อยู่ในสาขาแล้ว', duplicate };
@@ -399,25 +400,9 @@ async function addResident({ centerId, fullName, aliases = [], room, familyPhone
     used_at: null, status: 'active', revoked_at: null,
   });
 
-  // ข้อ O1: ตรวจสอบว่าเบอร์นี้เคยมี Care Profile จากศูนย์อื่นมาก่อนไหม (ไม่ใช่แค่ Test เฉยๆ ต้องเรียกจริง)
-  let accessRequestSent = false;
-  let accessRequestId = null;
-  if (familyPhone) {
-    const accessService = require('./accessService');
-    const existingProfile = await accessService.findProfileByPhone(familyPhone);
-    if (existingProfile && !existingProfile.center_id) {
-      const requestResult = await accessService.createAccessRequest({
-        centerId, careProfileId: existingProfile.care_profile_id,
-        residentId: resident.resident_id, requestedBy: 'system:auto_match',
-      });
-      accessRequestSent = !!requestResult.ok;
-      accessRequestId = requestResult.request?.request_id || null;
-    }
-  }
-
   return {
     ok: true, resident, inviteUrl: `https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?token=${encodeURIComponent(invite.invite_token)}`, inviteExpiresAt: invite.expires_at,
-    accessRequestSent, accessRequestId,
+    accessRequestSent:false, accessRequestId:null,
   };
 }
 

@@ -28,13 +28,24 @@ router.get('/invite/:token', asyncHandler(async (req, res) => {
   const { Invites, Residents } = require('../db');
   const invite = await Invites.findOne((i) => i.invite_token === req.params.token);
   if (!invite) return res.status(404).json({ error: 'not_found', message: 'ลิงก์เชิญไม่ถูกต้อง' });
-  if (invite.used_at || invite.status === 'revoked') return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญนี้ถูกใช้หรือยกเลิกแล้ว' });
-  if (new Date(invite.expires_at) < new Date()) return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญหมดอายุแล้ว' });
+  // Preserve claim links written before Invite.status was introduced.
+  if (invite.used_at || (invite.status && invite.status !== 'active')) return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญนี้ถูกใช้ ปฏิเสธ หรือยกเลิกแล้ว' });
+  if (new Date(invite.expires_at) < new Date()) {
+    await Invites.update((item) => item.invite_token === req.params.token && (!item.status || item.status === 'active'), { status:'expired', expired_at:new Date().toISOString() });
+    return res.status(410).json({ error: 'gone', message: 'ลิงก์เชิญหมดอายุแล้ว' });
+  }
   const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id && r.status === 'active');
   const existingProfile = resident?.care_profile_id && await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
   if (existingProfile?.owner_line_id) return res.status(410).json({ error: 'gone', message: 'ผู้พักรายนี้มีเจ้าของ Care Profile แล้ว' });
   if (!resident) return res.status(410).json({ error: 'gone', message: 'ผู้พักรายนี้ถูกเชื่อมแล้วหรือไม่ได้อยู่ในศูนย์นี้' });
   res.json({ residentName: resident?.full_name, centerId: resident?.center_id, expiresAt: invite.expires_at });
+}));
+
+router.post('/invite/:token/decline', asyncHandler(async (req, res) => {
+  if (req.body?.confirmed !== true) return res.status(400).json({ error:'confirmation_required', message:'กรุณายืนยันว่าต้องการปฏิเสธคำเชิญนี้' });
+  const result = await familyService.declineInvite(req.params.token, req.user.lineUserId);
+  if (!result.ok) return res.status(result.code === 'INVITE_NOT_FOUND' ? 404 : 410).json({ error:result.code || 'gone', message:result.reason });
+  res.json({ ok:true, status:'declined' });
 }));
 
 // POST /api/invite/:token/accept — ยอมรับคำเชิญ สร้าง Care Profile

@@ -1,10 +1,16 @@
 # PHIMOR database migrations
 
-The current code sequence ends at `0015_add_plus_payment_v1.js`. The canonical
+The current code sequence ends at `0016_add_center_family_linking_integrity.js`. The canonical
 tail is `0013_add_consultation_payment_recovery.js`, then
-`0014_create_shared_rate_limit_windows.js`, then `0015_add_plus_payment_v1.js`.
+`0014_create_shared_rate_limit_windows.js`, `0015_add_plus_payment_v1.js`, then
+`0016_add_center_family_linking_integrity.js`.
 Plus payment must remain disabled until migration 0015 is applied after every
 earlier pending migration and the compatible backend is ready to deploy.
+
+Migration 0016 adds only expression/partial indexes to the legacy JSONB
+`accessRequests` and `residents` tables. It performs explicit duplicate
+preflight checks and stops without changing evidence if token, link-request,
+or active Care Profile/Resident invariants are already violated.
 
 Migrations are explicit operations. The application does not run them during startup.
 

@@ -84,7 +84,9 @@ async function acceptInvite(token, lineUserId, profileData = {}) {
   return withTransaction(`invite:${token}`, async () => {
   const invite = await Invites.findOne((i) => i.invite_token === token);
   if (!invite) return { ok: false, reason: 'ลิงก์เชิญไม่ถูกต้อง' };
-  if (invite.used_at || invite.status === 'revoked') return { ok: false, reason: 'ลิงก์เชิญนี้ถูกใช้หรือยกเลิกแล้ว' };
+  // Rows created before Invite.status existed are treated as active so the
+  // Center-managed Care Profile claim flow remains backward compatible.
+  if (invite.used_at || (invite.status && invite.status !== 'active')) return { ok: false, reason: 'ลิงก์เชิญนี้ถูกใช้ ปฏิเสธ หรือยกเลิกแล้ว' };
   if (new Date(invite.expires_at).getTime() < Date.now()) return { ok: false, reason: 'ลิงก์เชิญหมดอายุแล้ว' };
 
   const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id);
@@ -130,6 +132,31 @@ async function acceptInvite(token, lineUserId, profileData = {}) {
   await require('./deliveryService').deliverPendingForResident(resident.resident_id, profile.care_profile_id);
 
   return { ok: true, careProfile: profile };
+  });
+}
+
+async function declineInvite(token, lineUserId) {
+  return withTransaction(`invite:${token}`, async () => {
+    const invite = await Invites.findOne((item) => item.invite_token === token);
+    if (!invite) return { ok:false, code:'INVITE_NOT_FOUND', reason:'ลิงก์เชิญไม่ถูกต้อง' };
+    if (invite.status === 'declined' && invite.declined_by === lineUserId) return { ok:true, status:'declined', duplicate:true };
+    if (invite.used_at || (invite.status && invite.status !== 'active')) return { ok:false, code:'INVITE_NOT_ACTIVE', reason:'ลิงก์เชิญนี้ไม่สามารถใช้งานได้แล้ว' };
+    if (new Date(invite.expires_at).getTime() <= Date.now()) {
+      await Invites.update((item) => item.invite_token === token && (!item.status || item.status === 'active'), {
+        status:'expired', expired_at:now(),
+      });
+      return { ok:false, code:'INVITE_EXPIRED', reason:'ลิงก์เชิญหมดอายุแล้ว' };
+    }
+    const declinedAt = now();
+    const declined = await Invites.update(
+      (item) => item.invite_token === token && (!item.status || item.status === 'active') && !item.used_at,
+      { status:'declined', declined_at:declinedAt, declined_by:lineUserId }
+    );
+    if (!declined) return { ok:false, code:'INVITE_NOT_ACTIVE', reason:'ลิงก์เชิญนี้ไม่สามารถใช้งานได้แล้ว' };
+    await audit('family.center_profile_invite_declined', lineUserId, {
+      residentId:declined.resident_id, inviteStatus:'declined',
+    });
+    return { ok:true, status:'declined' };
   });
 }
 
@@ -438,7 +465,7 @@ const AI_RESTRICTED_MESSAGE =
   + 'ตอนนี้บันทึกนัดด้วยการพิมพ์ได้เลยค่ะ'; // ข้อ N4 — ต้องไม่รู้สึกถูกกีดกัน
 
 module.exports = {
-  recordConsent, getConsentState, hasValidConsent, acceptInvite, createIndependentProfile, bindFamilyGroup, bindFamilyGroupInCurrentTransaction,
+  recordConsent, getConsentState, hasValidConsent, acceptInvite, declineInvite, createIndependentProfile, bindFamilyGroup, bindFamilyGroupInCurrentTransaction,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
   exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
   recordMedicationSnapshot, getMedicationHistory, createCaregiverInvite, getCaregiverInvite, acceptCaregiverInvite, canAccessProfile, hasPermission,

@@ -12,6 +12,7 @@ const { CenterStaff, Centers } = require('../db');
 const { projectCenter } = require('../services/centerProjection');
 const { platformService: defaultPlatformService } = require('../services/platformService');
 const { displayIdentity } = require('../utils/safeIdentity');
+const accessService = require('../services/accessService');
 
 function platformServiceFor(req) {
   return req.app.locals.platformService || defaultPlatformService;
@@ -115,6 +116,17 @@ router.post('/center/staff/:targetLineId/approve', requireCenterStaff(['owner'])
 router.get('/residents', requireCenterStaff(['owner', 'manager', 'staff']), asyncHandler(async (req, res) => {
   const rows = await centerService.listResidents(req.centerId, { search: req.query.search });
   res.json({ residents: rows });
+}));
+
+router.post('/center/care-profile-link-requests', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const result = await accessService.createAnonymousLinkRequest({ centerId:req.centerId, requestedBy:req.user.lineUserId });
+  if (!result.ok) return res.status(400).json({ error:result.code || 'link_unavailable', message:result.reason });
+  res.status(201).json({ linkUrl:result.linkUrl, expiresAt:result.expiresAt });
+}));
+
+router.get('/center/care-profile-link-requests', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const requests = await accessService.listActiveAnonymousLinksForCenter(req.centerId);
+  res.json({ requests });
 }));
 
 // GET /api/center/appointments — ตารางนัดของทุกผู้พักในศูนย์ (ข้อ K1, K2)

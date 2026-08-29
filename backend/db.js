@@ -52,6 +52,11 @@ const makeTable = (tableName) => {
     if (isTest && !memoryTables.has(tableName)) memoryTables.set(tableName, []);
 
     const memory = () => memoryTables.get(tableName);
+    const safeField = (field) => {
+        const value = String(field || '');
+        if (!/^[a-z0-9_]+$/i.test(value)) throw new Error('INVALID_JSONB_FIELD');
+        return value;
+    };
 
     return {
         insert: async (data) => {
@@ -81,6 +86,24 @@ const makeTable = (tableName) => {
             const res = await query(`SELECT data FROM "${tableName}"`);
             const allData = res.rows.map(row => row.data);
             return allData.find(predicate);
+        },
+        findOneByField: async (field, value) => {
+            const key = safeField(field);
+            if (isTest) return memory().find((record) => record[key] === value) || null;
+            const res = await query(
+                `SELECT data FROM "${tableName}" WHERE data->>'${key}' = $1 ORDER BY created_at ASC LIMIT 1`,
+                [String(value)]
+            );
+            return res.rows[0]?.data || null;
+        },
+        findWhereByField: async (field, value) => {
+            const key = safeField(field);
+            if (isTest) return memory().filter((record) => record[key] === value);
+            const res = await query(
+                `SELECT data FROM "${tableName}" WHERE data->>'${key}' = $1 ORDER BY created_at ASC`,
+                [String(value)]
+            );
+            return res.rows.map((row) => row.data);
         },
         update: async (predicate, patch) => {
             if (isTest) {
@@ -219,6 +242,42 @@ async function pingDatabase() {
   return true;
 }
 
+async function withTransactionLocks(lockKeys, fn) {
+  const keys = [...new Set((Array.isArray(lockKeys) ? lockKeys : [lockKeys])
+    .filter(Boolean).map((key) => String(key)))].sort();
+  if (isTest) {
+    const acquire = async (index) => {
+      if (index >= keys.length) return fn();
+      const key = keys[index];
+      const previous = testLocks.get(key) || Promise.resolve();
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      testLocks.set(key, previous.then(() => gate));
+      await previous;
+      try { return await acquire(index + 1); } finally { release(); }
+    };
+    return acquire(0);
+  }
+  const existing = transactionStore.getStore();
+  if (existing) {
+    for (const key of keys) await existing.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+    return fn();
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const key of keys) await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+    const result = await transactionStore.run(client, fn);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // LISTEN/NOTIFY consumers need a dedicated checked-out connection. Keeping
 // acquisition here preserves the repository's single PostgreSQL configuration
 // and lets the caller release the client during shutdown.
@@ -252,7 +311,7 @@ module.exports = {
   NotificationOutbox, WebhookInbox, DataSubjectRequests,
   PendingFamilyDeliveries,
   AdminUsers,
-  audit, resetAll, initializeDatabase, withTransaction, pingDatabase,
+  audit, resetAll, initializeDatabase, withTransaction, withTransactionLocks, pingDatabase,
   acquireDatabaseClient,
   databaseQuery: query,
 };

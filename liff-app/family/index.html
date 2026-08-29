@@ -35,6 +35,7 @@
   .btn-primary{background:var(--navy);color:#fff}
   .btn-gold{background:var(--gold);color:var(--navy)}
   .btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+  .btn-danger{background:#fff;color:#9B2C2C;border:1px solid #C65A5A}
   .btn-copy{background:#111;color:#fff;border:1px solid #111}
   .empty{text-align:center;padding:36px 20px;color:var(--gray);font-size:13px}
   .appt-item{padding:12px 0;border-bottom:1px solid #EEF1F8}
@@ -52,6 +53,7 @@
   .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
   .modal-actions{display:flex;gap:8px;margin-top:16px}.modal-actions .btn{flex:1;min-height:44px;touch-action:manipulation}.modal-actions .btn:disabled{opacity:.58;cursor:wait}
   .badge-tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;background:var(--ice);color:var(--navy)}
+  .access-request-card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06);overflow-wrap:anywhere}.access-request-card h3{margin:0 0 8px;color:var(--navy);font-size:15px}.access-request-meta{font-size:12px;line-height:1.7;color:var(--gray)}.access-profile-options{display:grid;gap:8px;margin:12px 0}.access-profile-option{display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 12px;border:1px solid #D8DEEC;border-radius:10px;cursor:pointer}.access-profile-option:focus-within{outline:3px solid rgba(222,177,78,.75);outline-offset:2px}.access-profile-option input{width:20px;height:20px;margin:0;flex:none}.access-request-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.access-request-actions .btn{min-height:44px}.access-request-actions .btn:last-child:nth-child(3){grid-column:1/-1}@supports(padding:max(0px)){#view-access{padding-bottom:max(24px,env(safe-area-inset-bottom))}}
 </style>
 </head>
 <body>
@@ -123,7 +125,7 @@
       <label>ผู้ติดต่อฉุกเฉิน</label><input type="text" id="newEmergencyName">
       <label>เบอร์ผู้ติดต่อฉุกเฉิน</label><input type="tel" id="newEmergencyPhone">
       <label>เบอร์โทรศัพท์ครอบครัว</label><input type="tel" id="newFamilyPhone">
-      <div class="family-profile-form-actions"><button type="button" class="btn btn-outline" id="cancelCreateProfileButton" onclick="closeAddProfileForm()" hidden>ยกเลิก</button><button class="btn btn-primary" id="createProfileButton" onclick="createIndependentProfile()">สร้าง Care Profile</button></div>
+      <div class="family-profile-form-actions"><button type="button" class="btn btn-outline" id="cancelCreateProfileButton" onclick="closeAddProfileForm()" hidden>ยกเลิก</button><button type="button" class="btn btn-danger" id="declineCenterInviteButton" onclick="declineCenterInvite()" hidden>ปฏิเสธ</button><button class="btn btn-primary" id="createProfileButton" onclick="createIndependentProfile()">สร้าง Care Profile</button></div>
     </div>
 
     <section class="card family-profile-anchor" id="careProfileAnchor" hidden aria-label="Care Profile ที่กำลังเลือก">
@@ -549,7 +551,11 @@ let LINE_PROFILE = null;
 let currentProfile = null;
 let allProfiles = [];
 let INVITE_TOKEN = new URLSearchParams(location.search).get('token');
+let CENTER_LINK_TOKEN = new URLSearchParams(location.search).get('centerLink');
 let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
+let CENTER_LINK_OPEN_ERROR = '';
+let OPENED_ACCESS_REQUEST_ID = null;
+let INVITE_SUBMISSION_ACTIVE = false;
 let medicationDraftImage = null;
 let medicationOperation = null;
 let PLUS_UI = null;
@@ -564,6 +570,7 @@ let CLINICAL_ACTION_DIALOG = null;
 function clinicalActionDialog(){if(!CLINICAL_ACTION_DIALOG&&window.PhimorClinicalActionDialog)CLINICAL_ACTION_DIALOG=window.PhimorClinicalActionDialog.createDialog({doc:document});return CLINICAL_ACTION_DIALOG;}
 let DASHBOARD_GENERATION = 0;
 let CURRENT_ACCESS_REQUESTS = [];
+const ACTIVE_ACCESS_SUBMISSIONS = new Set();
 let CURRENT_PENDING_TRANSPORT = [];
 let appointmentCreateRequest = null;
 const PHARMACIST_LINE_OA_URL = '';
@@ -703,13 +710,15 @@ function openAddProfileForm(){
   document.getElementById('newProfileHelp').textContent='สร้างข้อมูลผู้สูงอายุหรือผู้รับการดูแลอีกคน โดยไม่เชื่อมกับศูนย์จนกว่าจะใช้ขั้นตอนเชื่อมที่ได้รับอนุญาต';
   document.getElementById('newProfileName').readOnly=false;
   const button=document.getElementById('createProfileButton');button.textContent='สร้าง Care Profile';button.onclick=createIndependentProfile;
-  document.getElementById('cancelCreateProfileButton').hidden=false;
+  const cancel=document.getElementById('cancelCreateProfileButton');cancel.hidden=false;cancel.textContent='ยกเลิก';cancel.onclick=closeAddProfileForm;
+  document.getElementById('declineCenterInviteButton').hidden=true;
   const card=document.getElementById('noProfileCard');card.style.display='block';card.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function closeAddProfileForm(){
   if(!currentProfile)return;
   document.getElementById('noProfileCard').style.display='none';
   document.getElementById('cancelCreateProfileButton').hidden=true;
+  document.getElementById('declineCenterInviteButton').hidden=true;
   resetIndependentProfileForm();
 }
 
@@ -999,14 +1008,24 @@ async function loadDashboard(preferredProfileId=null) {
   renderProfileAnchor();
   if(currentProfile)renderFamilyGroupStatus(currentProfile);
   document.getElementById('noProfileCard').style.display = currentProfile ? 'none' : 'block';
+  if(CENTER_LINK_TOKEN){
+    const linkToken=CENTER_LINK_TOKEN;
+    try{
+      const opened=await api('/api/access-links/'+encodeURIComponent(linkToken)+'/open',{method:'POST',body:'{}'});
+      if(token!==DASHBOARD_GENERATION)return {ignored:true,stale:true};
+      OPENED_ACCESS_REQUEST_ID=opened.requestId;CENTER_LINK_OPEN_ERROR='';
+    }catch(error){CENTER_LINK_OPEN_ERROR=error.message||'เปิดลิงก์เชื่อม Care Profile ไม่สำเร็จ'}
+    finally{CENTER_LINK_TOKEN=null;history.replaceState({},'',location.pathname)}
+  }
   if (INVITE_TOKEN) {
     const invite = await api('/api/invite/' + encodeURIComponent(INVITE_TOKEN));
     document.getElementById('noProfileCard').style.display = 'block';
-    document.getElementById('newProfileTitle').textContent = 'ยืนยันเชื่อมผู้พักจากศูนย์';
-    document.getElementById('newProfileHelp').textContent = `กรอกข้อมูลของ ${invite.residentName || 'ผู้รับการดูแล'} แล้วกดยืนยัน`;
+    document.getElementById('newProfileTitle').textContent = 'รับ Care Profile ที่ศูนย์สร้างไว้';
+    document.getElementById('newProfileHelp').textContent = `ตรวจสอบข้อมูลของ ${invite.residentName || 'ผู้รับการดูแล'} แล้วกดยืนยันเพื่อรับสิทธิ์ใน Care Profile เดิม`;
     document.getElementById('newProfileName').value = invite.residentName || '';
     document.getElementById('newProfileName').readOnly = true;
-    document.getElementById('cancelCreateProfileButton').hidden=true;
+    const closeButton=document.getElementById('cancelCreateProfileButton');closeButton.hidden=false;closeButton.textContent='กลับ / ปิด';closeButton.onclick=closeCenterInvite;
+    document.getElementById('declineCenterInviteButton').hidden=false;
     const button=document.getElementById('createProfileButton'); button.textContent='ยืนยันและเชื่อมกับศูนย์'; button.onclick=acceptInvite;
   }
   if (SHARE_TOKEN) {
@@ -1035,6 +1054,7 @@ async function loadDashboard(preferredProfileId=null) {
   CARE_HISTORY_UI?.session.setProfile(currentProfile?.profile?.care_profile_id||null);
   await Promise.all([loadAccessRequests(token,currentProfile?.profile?.care_profile_id||null),loadPendingTransport(token,currentProfile?.profile?.care_profile_id||null)]);
   if(token!==DASHBOARD_GENERATION)return {ignored:true,stale:true};
+  if(OPENED_ACCESS_REQUEST_ID||CENTER_LINK_OPEN_ERROR){activateView('access');document.getElementById('familyAccessSection')?.scrollIntoView({block:'start'});OPENED_ACCESS_REQUEST_ID=null;}
   refreshHome();
   return data;
 }
@@ -1054,14 +1074,44 @@ function selectProfile(id){
   loadDashboard();
 }
 async function loadAccessRequests(token=DASHBOARD_GENERATION,profileId=currentProfile?.profile?.care_profile_id||null){
-  if(!profileId){CURRENT_ACCESS_REQUESTS=[];refreshHome();return;}
   const data = await api('/api/access-requests');
   if(token!==DASHBOARD_GENERATION||profileId!==currentProfile?.profile?.care_profile_id)return {ignored:true,stale:true};
-  CURRENT_ACCESS_REQUESTS=(data.requests||[]).filter(request=>request.careProfileId===profileId);
-  document.getElementById('accessRequestList').innerHTML = CURRENT_ACCESS_REQUESTS.length?CURRENT_ACCESS_REQUESTS.map(r=>`<div class="card"><h3>${esc(r.centerName)} ขอเข้าถึงข้อมูลของ ${esc(r.patientName)}</h3><p style="font-size:12px;color:var(--gray)">สาขา/ที่อยู่: ${esc(r.centerAddress||'-')}<br>เบอร์ติดต่อ: ${esc(r.centerPhone||'-')}<br>ผู้พัก: ${esc(r.residentName||r.patientName)}${r.room?' · ห้อง '+esc(r.room):''}<br>คำขอหมดอายุ: ${r.expiresAt?new Date(r.expiresAt).toLocaleString('th-TH'):'-'}</p><div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="respondAccess('${r.requestId}',true)">อนุญาต</button><button class="btn btn-outline" onclick="respondAccess('${r.requestId}',false)">ไม่อนุญาต</button></div></div>`).join(''):'<div class="family-action-empty">ไม่มีคำขอเข้าถึงที่รอดำเนินการ</div>';
+  CURRENT_ACCESS_REQUESTS=(data.requests||[]).filter(request=>request.requestKind==='anonymous_existing_profile_link'||request.careProfileId===profileId);
+  renderAccessRequests();
   refreshHome();return data;
 }
-async function respondAccess(id, approved){ await api(`/api/access-requests/${id}/respond`,{method:'POST',body:JSON.stringify({approved})}); toast(approved?'อนุญาตการเชื่อมต่อแล้ว':'ไม่อนุญาตการเชื่อมต่อ'); await loadDashboard(); }
+function renderAccessRequests(){
+  const root=document.getElementById('accessRequestList');
+  if(CENTER_LINK_OPEN_ERROR){root.innerHTML=`<div class="access-request-card" role="alert"><h3>เปิดลิงก์ไม่สำเร็จ</h3><p class="access-request-meta">${esc(CENTER_LINK_OPEN_ERROR)}</p></div>`;return;}
+  if(!CURRENT_ACCESS_REQUESTS.length){root.innerHTML='<div class="family-action-empty">ไม่มีคำขอเข้าถึงที่รอดำเนินการ</div>';return;}
+  root.innerHTML=CURRENT_ACCESS_REQUESTS.map(request=>{
+    if(request.requestKind!=='anonymous_existing_profile_link')return `<article class="access-request-card"><h3>${esc(request.centerName)} ขอเข้าถึงข้อมูลของ ${esc(request.patientName)}</h3><p class="access-request-meta">${request.centerAddress?'ที่อยู่: '+esc(request.centerAddress)+'<br>':''}${request.centerPhone?'เบอร์ติดต่อ: '+esc(request.centerPhone)+'<br>':''}ผู้พัก: ${esc(request.residentName||request.patientName)}${request.room?' · ห้อง '+esc(request.room):''}<br>คำขอหมดอายุ: ${request.expiresAt?new Date(request.expiresAt).toLocaleString('th-TH'):'-'}</p><div class="access-request-actions"><button class="btn btn-primary" onclick="respondAccess('${request.requestId}',true)">อนุญาต</button><button class="btn btn-danger" onclick="declineAccessRequest('${request.requestId}')">ไม่อนุญาต</button></div></article>`;
+    const options=(request.eligibleProfiles||[]).map(profile=>`<label class="access-profile-option"><input type="radio" name="access-profile-${request.requestId}" value="${esc(profile.careProfileId)}"><span>${esc(profile.patientName)}</span></label>`).join('');
+    return `<article class="access-request-card" data-access-request="${esc(request.requestId)}"><h3>${esc(request.centerName)} ต้องการเชื่อม Care Profile</h3><p class="access-request-meta">${request.centerAddress?'ที่อยู่: '+esc(request.centerAddress)+'<br>':''}${request.centerPhone?'เบอร์ติดต่อ: '+esc(request.centerPhone)+'<br>':''}เลือก 1 Care Profile ที่ต้องการให้ศูนย์นี้ดูแลและเข้าถึงข้อมูล<br>ลิงก์หมดอายุ: ${request.expiresAt?new Date(request.expiresAt).toLocaleString('th-TH'):'-'}</p>${options?`<div class="access-profile-options" role="radiogroup" aria-label="เลือก Care Profile">${options}</div>`:'<div class="family-action-empty">ยังไม่มี Care Profile ที่เชื่อมกับศูนย์นี้ได้</div>'}<div class="access-request-actions"><button class="btn btn-outline" onclick="closeAccessRequestView()">กลับ / ปิด</button><button class="btn btn-danger" onclick="declineAccessRequest('${request.requestId}')">ปฏิเสธ</button>${options?`<button class="btn btn-primary" onclick="approveAnonymousAccess('${request.requestId}')">ยืนยันเชื่อม</button>`:''}</div></article>`;
+  }).join('');
+}
+function closeAccessRequestView(){CENTER_LINK_OPEN_ERROR='';activateView('home')}
+async function approveAnonymousAccess(id){
+  if(ACTIVE_ACCESS_SUBMISSIONS.has(id))return;
+  const selected=document.querySelector(`input[name="access-profile-${CSS.escape(id)}"]:checked`);
+  if(!selected)return toast('กรุณาเลือก Care Profile 1 รายการ');
+  ACTIVE_ACCESS_SUBMISSIONS.add(id);document.querySelectorAll(`[data-access-request="${CSS.escape(id)}"] button`).forEach(button=>button.disabled=true);
+  try{await api(`/api/access-requests/${encodeURIComponent(id)}/respond`,{method:'POST',body:JSON.stringify({approved:true,careProfileId:selected.value})});toast('เชื่อม Care Profile กับศูนย์แล้ว');CENTER_LINK_OPEN_ERROR='';await loadDashboard(selected.value)}
+  finally{ACTIVE_ACCESS_SUBMISSIONS.delete(id);document.querySelectorAll(`[data-access-request="${CSS.escape(id)}"] button`).forEach(button=>button.disabled=false)}
+}
+async function declineAccessRequest(id){
+  if(ACTIVE_ACCESS_SUBMISSIONS.has(id))return;
+  if(!await askConfirm('ปฏิเสธคำขอเชื่อม','คำขอนี้จะใช้ต่อไม่ได้ ศูนย์จะไม่เห็นว่าคุณเลือก Care Profile ใด','ปฏิเสธ'))return;
+  ACTIVE_ACCESS_SUBMISSIONS.add(id);document.querySelectorAll(`[data-access-request="${CSS.escape(id)}"] button`).forEach(button=>button.disabled=true);
+  try{await api(`/api/access-requests/${encodeURIComponent(id)}/respond`,{method:'POST',body:JSON.stringify({approved:false})});toast('ปฏิเสธคำขอแล้ว');CENTER_LINK_OPEN_ERROR='';await loadDashboard()}
+  finally{ACTIVE_ACCESS_SUBMISSIONS.delete(id);document.querySelectorAll(`[data-access-request="${CSS.escape(id)}"] button`).forEach(button=>button.disabled=false)}
+}
+async function respondAccess(id, approved){
+  if(!approved)return declineAccessRequest(id);
+  if(ACTIVE_ACCESS_SUBMISSIONS.has(id))return;ACTIVE_ACCESS_SUBMISSIONS.add(id);
+  try{await api(`/api/access-requests/${encodeURIComponent(id)}/respond`,{method:'POST',body:JSON.stringify({approved:true})});toast('อนุญาตการเชื่อมต่อแล้ว');await loadDashboard()}
+  finally{ACTIVE_ACCESS_SUBMISSIONS.delete(id)}
+}
 function renderUpcoming(list) {
   const box = document.getElementById('upcomingList');
   if (!list || list.length === 0) { box.innerHTML = '<div class="empty">ยังไม่มีนัดที่บันทึกไว้</div>'; return; }
@@ -1137,7 +1187,25 @@ async function createIndependentProfile() {
   await loadDashboard(created.care_profile_id);
 }
 function collectProfileForm(){ const selected=getCheckedConditions('newConditions'); const other=document.getElementById('newOtherConditions').value.split(',').map(s=>s.trim()).filter(Boolean); return { gender:document.getElementById('newGender').value,bloodType:document.getElementById('newBloodType').value,heightCm:document.getElementById('newHeight').value,weightKg:document.getElementById('newWeight').value,chronicConditions:[...selected,...other],drugAllergies:document.getElementById('newDrugAllergies').value,foodAllergies:document.getElementById('newFoodAllergies').value,mobilityLimitations:document.getElementById('newMobility').value,emergencyContactName:document.getElementById('newEmergencyName').value,emergencyContactPhone:document.getElementById('newEmergencyPhone').value,familyPhone:document.getElementById('newFamilyPhone').value }; }
-async function acceptInvite(){ if(!INVITE_TOKEN)return; await api('/api/invite/'+encodeURIComponent(INVITE_TOKEN)+'/accept',{method:'POST',body:JSON.stringify(collectProfileForm())}); INVITE_TOKEN=null; history.replaceState({},'',location.pathname); toast('เชื่อม Care Profile กับศูนย์แล้ว'); await loadDashboard(); }
+function setCenterInviteBusy(busy){INVITE_SUBMISSION_ACTIVE=busy;['createProfileButton','declineCenterInviteButton','cancelCreateProfileButton'].forEach(id=>{const button=document.getElementById(id);if(button)button.disabled=busy})}
+async function acceptInvite(){
+  if(!INVITE_TOKEN||INVITE_SUBMISSION_ACTIVE)return;setCenterInviteBusy(true);
+  try{await api('/api/invite/'+encodeURIComponent(INVITE_TOKEN)+'/accept',{method:'POST',body:JSON.stringify(collectProfileForm())});INVITE_TOKEN=null;history.replaceState({},'',location.pathname);toast('เชื่อม Care Profile กับศูนย์แล้ว');await loadDashboard()}
+  finally{setCenterInviteBusy(false)}
+}
+async function closeCenterInvite(){
+  INVITE_TOKEN=null;history.replaceState({},'',location.pathname);
+  document.getElementById('declineCenterInviteButton').hidden=true;
+  const cancel=document.getElementById('cancelCreateProfileButton');cancel.hidden=true;cancel.onclick=closeAddProfileForm;
+  resetIndependentProfileForm();await loadDashboard();
+}
+async function declineCenterInvite(){
+  if(!INVITE_TOKEN||INVITE_SUBMISSION_ACTIVE)return;
+  if(!await askConfirm('ปฏิเสธการรับ Care Profile','คำเชิญนี้จะใช้ต่อไม่ได้ แต่ข้อมูลที่ศูนย์บันทึกไว้จะยังอยู่กับศูนย์','ปฏิเสธ'))return;
+  const token=INVITE_TOKEN;setCenterInviteBusy(true);
+  try{await api('/api/invite/'+encodeURIComponent(token)+'/decline',{method:'POST',body:JSON.stringify({confirmed:true})});INVITE_TOKEN=null;history.replaceState({},'',location.pathname);toast('ปฏิเสธคำเชิญแล้ว');await loadDashboard()}
+  finally{setCenterInviteBusy(false)}
+}
 
 // ── F3: บันทึกเอง ──
 async function saveAppointment() {

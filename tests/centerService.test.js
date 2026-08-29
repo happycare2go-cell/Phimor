@@ -181,7 +181,7 @@ test('FR-J1: นำเข้ารายชื่อแบบชุด ตรว
   assert.strictEqual(result.skippedDuplicates.length, 1);
 });
 
-test('ข้อ O1 (แก้ไขแล้ว): เพิ่มผู้พักด้วยเบอร์ที่ตรงกับ Care Profile อิสระเดิม ต้องส่งคำขอเชื่อมต่อ ไม่เชื่อมทันที', async () => {
+test('เพิ่มผู้พัก Flow B ด้วยเบอร์ที่ตรงกับ Care Profile เดิม ต้องไม่ค้นหาหรือสร้างคำขออัตโนมัติ', async () => {
   const familyService = require('../backend/services/familyService');
 
   // ครอบครัวสร้าง Care Profile อิสระเองไว้ก่อนแล้ว พร้อมเบอร์โทร
@@ -194,15 +194,14 @@ test('ข้อ O1 (แก้ไขแล้ว): เพิ่มผู้พั
     centerId: centerB.center_id, fullName: 'สมหญิง ใจงาม', familyPhone: '0899999999',
   });
 
-  assert.strictEqual(accessRequestSent, true, 'ต้องส่งคำขอเชื่อมต่ออัตโนมัติเมื่อเจอเบอร์ตรงกัน');
+  assert.strictEqual(accessRequestSent, false, 'เบอร์โทรเป็นข้อมูลติดต่อ ไม่ใช่หลักฐานตัวตนหรือการค้นหา Care Profile');
 
   // ยืนยันว่ายังไม่เชื่อมทันที (ต้องรอครอบครัวอนุมัติก่อน)
   const stillIndependent = await db.CareProfiles.findOne((p) => p.care_profile_id === profile.care_profile_id);
   assert.strictEqual(stillIndependent.center_id, null, 'ห้ามเชื่อมอัตโนมัติ ต้องรอครอบครัวอนุมัติ');
 
   const requests = await db.AccessRequests.findWhere((r) => r.care_profile_id === profile.care_profile_id);
-  assert.strictEqual(requests.length, 1);
-  assert.strictEqual(requests[0].center_id, centerB.center_id);
+  assert.strictEqual(requests.length, 0);
 });
 
 test('เพิ่มผู้พักด้วยเบอร์ใหม่ที่ไม่เคยมีในระบบ ต้องไม่ส่งคำขอเชื่อมต่อใดๆ', async () => {
