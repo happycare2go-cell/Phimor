@@ -31,6 +31,9 @@ function createTenantResolver(overrides = {}) {
     if (!identity?.integrationClientId || !identity?.organizationId || !identity?.sourceSystem) {
       throw new PlatformError('INVALID_INTEGRATION_IDENTITY', 'Integration identity ไม่ถูกต้อง', 401);
     }
+    if (typeof service.assertIntegrationIdentityActive === 'function') {
+      await service.assertIntegrationIdentityActive(identity);
+    }
     if (!(await repository.hasClientEventScope(identity.integrationClientId, eventType))) {
       throw new PlatformError('EVENT_SCOPE_DENIED', 'Integration Client ไม่มีสิทธิ์สำหรับ event type นี้', 403);
     }

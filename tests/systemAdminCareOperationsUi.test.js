@@ -76,10 +76,31 @@ test('reconciliation calls the existing idempotent backend operation and never a
   assert.doesNotMatch(JSON.stringify(descriptor), /expectedLineGroupId|verifiedLineGroupId|destination/);
 });
 
-test('Integration UI is inspect-only and never displays or persists an existing credential secret', () => {
-  assert.match(source, /ระบบไม่แสดง Secret เดิม/);
-  assert.doesNotMatch(source, /credential\.token|secret_hash|secret_salt|localStorage|sessionStorage/);
+test('Integration UI manages commissioning while never redisplaying or persisting an existing credential secret', () => {
+  assert.match(source, /Credential เดิมไม่สามารถเปิดดูซ้ำได้/); assert.match(source, /Credential ใหม่/);
+  assert.match(source, /oneTimeSecret\.clear/); assert.match(source, /pagehide/);
+  assert.doesNotMatch(source, /credential\.token|secret_hash|secret_salt|localStorage|sessionStorage|console\./);
   assert.doesNotMatch(html, /type="text"[^>]+credential|credentialSecret/i);
+});
+
+test('generic Integration commissioning UI exposes managed directory and controlled request contracts',()=>{
+  assert.match(source,/\+ เพิ่มระบบเชื่อมต่อ/);assert.match(source,/จัดการระบบเชื่อมต่อ/);
+  assert.match(source,/การเชื่อมรหัสศูนย์ภายนอก/);assert.match(source,/การเชื่อมรหัสผู้พักภายนอก/);
+  const create=ui.buildCreateClientRequest({organizationId:'ORG-A',clientCode:'HHS Pilot',displayName:'HHS Pilot',sourceSystem:'HHS'});
+  assert.deepEqual(JSON.parse(create.options.body),{clientCode:'hhs-pilot',displayName:'HHS Pilot',sourceSystem:'HHS',initialStatus:'suspended'});
+  assert.deepEqual(ui.SUPPORTED_EVENT_TYPES,['care.daily_report.finalized','care.vitals.recorded']);
+  assert.equal(ui.buildCenterScopeRequest('INT-A','CTR-A',true).options.method,'PUT');
+  assert.equal(ui.buildCenterScopeRequest('INT-A','CTR-A',false).options.method,'DELETE');
+  assert.equal(ui.buildEventScopeRequest('INT-A','care.daily_report.finalized',true).options.method,'PUT');
+});
+
+test('mapping inventory and credential actions are exact and contain no arbitrary routing target',()=>{
+  const center=ui.buildCenterMappingRequest('INT-A','HHS_BRANCH_01','CTR-A');
+  assert.equal(center.options.method,'PUT');assert.deepEqual(JSON.parse(center.options.body),{centerId:'CTR-A'});
+  const resident=ui.buildSubjectMappingRequest('INT-A','HHS_BRANCH_01','HHS_RESIDENT_01','RES-A');
+  assert.deepEqual(JSON.parse(resident.options.body),{residentId:'RES-A'});
+  assert.doesNotMatch(JSON.stringify([center,resident]),/groupId|lineId|phone|fuzzy|clinical/i);
+  assert.equal(ui.buildCredentialRequest('INT-A','rotate','KEY-A').path,'/api/admin/platform/integration-clients/INT-A/credentials/KEY-A/rotate');
 });
 
 test('operations UI is mobile-card based and does not become a clinical browser', () => {

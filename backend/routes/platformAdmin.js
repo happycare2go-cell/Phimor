@@ -2,6 +2,7 @@ const express = require('express');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { platformService: defaultPlatformService } = require('../services/platformService');
 const { integrationEventService: defaultIntegrationEventService } = require('../services/integrationEventService');
+const { PlatformError } = require('../domain/platform');
 
 function serviceFor(req) {
   return req.app.locals.platformService || defaultPlatformService;
@@ -31,6 +32,11 @@ function platformAction(handler) {
     try { return await handler(req, res, serviceFor(req), actorFor(req)); }
     catch (error) { return sendPlatformError(res, error); }
   });
+}
+
+function assertBodyKeys(body, allowed) {
+  const unknown = Object.keys(body || {}).filter((key) => !allowed.includes(key));
+  if (unknown.length) throw new PlatformError('UNKNOWN_REQUEST_FIELD', 'คำขอมีข้อมูลที่ระบบไม่รองรับ', 400);
 }
 
 function createPlatformAdminRouter() {
@@ -129,9 +135,12 @@ function createPlatformAdminRouter() {
   }));
 
   router.post('/organizations/:organizationId/integration-clients', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {};
+    assertBodyKeys(body, ['clientCode', 'displayName', 'sourceSystem', 'initialStatus']);
     const integrationClient = await service.createIntegrationClient({
-      organizationId: req.params.organizationId, clientCode: req.body.clientCode,
-      displayName: req.body.displayName, sourceSystem: req.body.sourceSystem,
+      organizationId: req.params.organizationId, clientCode: body.clientCode,
+      displayName: body.displayName, sourceSystem: body.sourceSystem,
+      initialStatus: body.initialStatus || 'active',
       actorReference,
     });
     res.status(201).json({ integrationClient });
@@ -139,6 +148,13 @@ function createPlatformAdminRouter() {
 
   router.get('/integration-clients/:integrationClientId', platformAction(async (req, res, service) => {
     res.json({ integrationClient: await service.inspectIntegrationClient(req.params.integrationClientId) });
+  }));
+
+  router.patch('/integration-clients/:integrationClientId/status', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {}; assertBodyKeys(body, ['status']);
+    res.json({ integrationClient: await service.setIntegrationClientStatus({
+      integrationClientId:req.params.integrationClientId, status:body.status, actorReference,
+    }) });
   }));
 
   router.post('/integration-clients/:integrationClientId/revoke', platformAction(async (req, res, service, actorReference) => {
@@ -176,6 +192,7 @@ function createPlatformAdminRouter() {
   }));
 
   router.post('/integration-clients/:integrationClientId/credentials', platformAction(async (req, res, service, actorReference) => {
+    assertBodyKeys(req.body, []);
     const result = await service.issueCredential({
       integrationClientId: req.params.integrationClientId, actorReference,
     });
@@ -183,16 +200,18 @@ function createPlatformAdminRouter() {
   }));
 
   router.post('/integration-clients/:integrationClientId/credentials/:credentialId/rotate', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {}; assertBodyKeys(body, ['overlapSeconds']);
     const result = await service.rotateCredential({
       integrationClientId: req.params.integrationClientId,
       credentialId: req.params.credentialId,
-      overlapSeconds: req.body.overlapSeconds || 0,
+      overlapSeconds: body.overlapSeconds || 0,
       actorReference,
     });
     res.status(201).json({ ...result, warning: 'Secret ใหม่แสดงครั้งเดียว' });
   }));
 
   router.post('/integration-clients/:integrationClientId/credentials/:credentialId/revoke', platformAction(async (req, res, service, actorReference) => {
+    assertBodyKeys(req.body, []);
     res.json({ credential: await service.revokeCredential({
       integrationClientId: req.params.integrationClientId,
       credentialId: req.params.credentialId, actorReference,
@@ -200,11 +219,19 @@ function createPlatformAdminRouter() {
   }));
 
   router.put('/integration-clients/:integrationClientId/external-centers/:externalCenterId', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {}; assertBodyKeys(body, ['centerId', 'displayName']);
     res.json({ mapping: await service.mapExternalCenter({
       integrationClientId: req.params.integrationClientId,
       externalCenterId: req.params.externalCenterId,
-      centerId: req.body.centerId, displayName: req.body.displayName, actorReference,
+      centerId: body.centerId, displayName: body.displayName, actorReference,
     }) });
+  }));
+
+  router.get('/integration-clients/:integrationClientId/external-centers', platformAction(async (req, res, service) => {
+    res.json(await service.listExternalCenterMappings(req.params.integrationClientId, {
+      status:req.query.status || null, search:req.query.search || null,
+      page:req.query.page, limit:req.query.limit,
+    }));
   }));
 
   router.delete('/integration-clients/:integrationClientId/external-centers/:externalCenterId', platformAction(async (req, res, service, actorReference) => {
@@ -215,15 +242,23 @@ function createPlatformAdminRouter() {
   }));
 
   router.put('/integration-clients/:integrationClientId/external-centers/:externalCenterId/subjects/:externalResidentId', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {}; assertBodyKeys(body, ['residentId', 'firstName', 'lastName', 'displayName', 'room']);
     res.json({ mapping: await service.mapExternalSubject({
       integrationClientId: req.params.integrationClientId,
       externalCenterId: req.params.externalCenterId,
       externalResidentId: req.params.externalResidentId,
-      residentId: req.body.residentId || null,
-      firstName: req.body.firstName, lastName: req.body.lastName,
-      displayName: req.body.displayName, room: req.body.room,
+      residentId: body.residentId || null,
+      firstName: body.firstName, lastName: body.lastName,
+      displayName: body.displayName, room: body.room,
       actorReference,
     }) });
+  }));
+
+  router.get('/integration-clients/:integrationClientId/external-subjects', platformAction(async (req, res, service) => {
+    res.json(await service.listExternalSubjectMappings(req.params.integrationClientId, {
+      status:req.query.status || null, search:req.query.search || null,
+      page:req.query.page, limit:req.query.limit,
+    }));
   }));
 
   router.delete('/integration-clients/:integrationClientId/external-centers/:externalCenterId/subjects/:externalResidentId', platformAction(async (req, res, service, actorReference) => {
@@ -238,4 +273,4 @@ function createPlatformAdminRouter() {
   return router;
 }
 
-module.exports = { createPlatformAdminRouter, sendPlatformError };
+module.exports = { createPlatformAdminRouter, sendPlatformError, assertBodyKeys };

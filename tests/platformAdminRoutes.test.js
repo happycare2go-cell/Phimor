@@ -106,6 +106,26 @@ test('System Admin onboards Organization and Integration Client without returnin
   assert.doesNotMatch(JSON.stringify(inspected), /pim_int_|secret_hash|secret_salt/i);
 });
 
+test('System Admin commissioning routes create suspended client, manage status, and reject unknown fields', async()=>{
+  const organization=await setupCenter('CTR-A');
+  let response=await call(`/api/admin/platform/organizations/${organization.organizationId}/integration-clients`,{method:'POST',headers:admin,body:JSON.stringify({clientCode:'commission-ui',displayName:'Commission UI',sourceSystem:'Generic',initialStatus:'suspended'})});
+  assert.equal(response.status,201);const client=(await response.json()).integrationClient;assert.equal(client.status,'suspended');
+  response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'active'})});assert.equal(response.status,200);assert.equal((await response.json()).integrationClient.status,'active');
+  response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'suspended',organizationId:'forged'})});assert.equal(response.status,400);assert.equal((await response.json()).errorCode,'UNKNOWN_REQUEST_FIELD');
+  response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:{'X-Line-User-Id':'U-CENTER'},body:JSON.stringify({status:'active'})});assert.equal(response.status,401);
+});
+
+test('System Admin lists minimized Center and Resident mapping inventories with bounded pagination',async()=>{
+  const organization=await setupCenter('CTR-A');
+  await db.Residents.insert({resident_id:'RES-A',center_id:'CTR-A',care_profile_id:'CP-SECRET',full_name:'ผู้พักตัวอย่าง',room:'A1',status:'active',phone:'080-secret',blood_group:'O'});
+  let response=await call(`/api/admin/platform/organizations/${organization.organizationId}/integration-clients`,{method:'POST',headers:admin,body:JSON.stringify({clientCode:'inventory-ui',displayName:'Inventory',sourceSystem:'Generic',initialStatus:'suspended'})});const client=(await response.json()).integrationClient;
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/centers/CTR-A`,{method:'PUT',headers:admin,body:'{}'});
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/external-centers/EXT-C`,{method:'PUT',headers:admin,body:JSON.stringify({centerId:'CTR-A'})});
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/external-centers/EXT-C/subjects/EXT-R`,{method:'PUT',headers:admin,body:JSON.stringify({residentId:'RES-A'})});
+  response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/external-centers?page=1&limit=20&status=active`,{headers:admin});assert.equal(response.status,200);let body=await response.json();assert.equal(body.pagination.total,1);assert.equal(body.items[0].centerName,'CTR-A');
+  response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/external-subjects?page=1&limit=20&status=mapped`,{headers:admin});assert.equal(response.status,200);body=await response.json();assert.equal(body.items[0].residentDisplayName,'ผู้พักตัวอย่าง');assert.equal(body.items[0].careProfileReady,true);assert.doesNotMatch(JSON.stringify(body),/CP-SECRET|080-secret|blood_group|line_user/i);
+});
+
 test('Center receives read-only capability visibility but no feature-toggle endpoint', () => {
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname,'..','backend','routes','centers.js'),'utf8');
   assert.match(source, /router\.get\('\/center\/:centerId\/capabilities'/);

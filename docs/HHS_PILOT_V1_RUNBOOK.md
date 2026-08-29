@@ -8,13 +8,18 @@ access by itself.
 
 PHIMOR System Admin must:
 
+Use **System Admin LIFF → ศูนย์และระบบเชื่อมต่อ → ระบบเชื่อมต่อ** for the
+commissioning steps below. The generic UI workflow and correction rules are in
+`docs/GENERIC_INTEGRATION_COMMISSIONING.md`; HHS is a pilot client of that
+vendor-neutral workflow.
+
 1. create the Integration Client under the correct Organization;
 2. add only the pilot Center scope;
 3. add only `care.daily_report.finalized` and, if agreed,
    `care.vitals.recorded` event scopes;
 4. create the exact external Center mapping;
-5. issue one credential through
-   `POST /api/admin/platform/integration-clients/:integrationClientId/credentials`;
+5. choose **ออก Credential** in the client detail (backed by
+   `POST /api/admin/platform/integration-clients/:integrationClientId/credentials`);
 6. copy the returned token once into an approved secret channel/manager; and
 7. remove it from screen/clipboard according to the operator's secure process.
 

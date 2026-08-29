@@ -6,6 +6,12 @@
   const CAPABILITY_LABELS = Object.freeze({
     vital_signs_v1: 'สัญญาณชีพ', daily_care_v1: 'บันทึกการดูแลประจำวัน',
   });
+  const SUPPORTED_EVENT_TYPES = Object.freeze([
+    'care.daily_report.finalized', 'care.vitals.recorded',
+  ]);
+  const CLIENT_STATUS_LABELS = Object.freeze({
+    active:['เปิดใช้งาน', 'ok'], suspended:['ระงับการใช้งาน', 'warn'], revoked:['เพิกถอนแล้ว', 'bad'],
+  });
   const GROUP_LABELS = Object.freeze({
     verified_match: ['VERIFIED', 'กลุ่ม LINE ตรงกัน', 'ok'],
     group_binding_missing: ['MISSING', 'ยังไม่พบกลุ่ม LINE ที่พี่หมอยืนยันแล้ว', 'warn'],
@@ -60,6 +66,64 @@
     path:`/api/admin/platform/integration-events/${encodeURIComponent(integrationEventId)}/reconcile-group`,
     options:{ method:'POST', body:'{}' },
   });
+  const normalizeClientCode = (value) => safeText(value).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
+  const buildCreateClientRequest = ({ organizationId, clientCode, displayName, sourceSystem }) => ({
+    path:`/api/admin/platform/organizations/${encodeURIComponent(organizationId)}/integration-clients`,
+    options:{ method:'POST', body:JSON.stringify({
+      clientCode:normalizeClientCode(clientCode), displayName:safeText(displayName),
+      sourceSystem:safeText(sourceSystem), initialStatus:'suspended',
+    }) },
+  });
+  const buildClientStatusRequest = (integrationClientId, status) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/status`,
+    options:{ method:'PATCH', body:JSON.stringify({ status }) },
+  });
+  const buildCenterScopeRequest = (integrationClientId, centerId, allowed) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/centers/${encodeURIComponent(centerId)}`,
+    options:{ method:allowed ? 'PUT' : 'DELETE', ...(allowed ? { body:'{}' } : {}) },
+  });
+  const buildEventScopeRequest = (integrationClientId, eventType, allowed) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/event-scopes/${encodeURIComponent(eventType)}`,
+    options:{ method:allowed ? 'PUT' : 'DELETE', ...(allowed ? { body:'{}' } : {}) },
+  });
+  const buildCredentialRequest = (integrationClientId, action, credentialId = null) => {
+    const base = `/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/credentials`;
+    return { path:credentialId ? `${base}/${encodeURIComponent(credentialId)}/${action}` : base,
+      options:{ method:'POST', body:action === 'rotate' ? JSON.stringify({ overlapSeconds:0 }) : '{}' } };
+  };
+  const buildCenterMappingListRequest = (integrationClientId, { page = 1, status = '', search = '' } = {}) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/external-centers?${new URLSearchParams({page:String(page),limit:'50',status,search}).toString()}`,
+    options:{ method:'GET' },
+  });
+  const buildCenterMappingRequest = (integrationClientId, externalCenterId, centerId) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/external-centers/${encodeURIComponent(safeText(externalCenterId))}`,
+    options:{ method:'PUT', body:JSON.stringify({ centerId }) },
+  });
+  const buildDeactivateCenterMappingRequest = (integrationClientId, externalCenterId) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/external-centers/${encodeURIComponent(externalCenterId)}`,
+    options:{ method:'DELETE' },
+  });
+  const buildSubjectMappingListRequest = (integrationClientId, { page = 1, status = '', search = '' } = {}) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/external-subjects?${new URLSearchParams({page:String(page),limit:'50',status,search}).toString()}`,
+    options:{ method:'GET' },
+  });
+  const buildSubjectMappingRequest = (integrationClientId, externalCenterId, externalResidentId, residentId) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/external-centers/${encodeURIComponent(externalCenterId)}/subjects/${encodeURIComponent(safeText(externalResidentId))}`,
+    options:{ method:'PUT', body:JSON.stringify({ residentId }) },
+  });
+  const buildDeactivateSubjectMappingRequest = (integrationClientId, externalCenterId, externalResidentId) => ({
+    path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/external-centers/${encodeURIComponent(externalCenterId)}/subjects/${encodeURIComponent(externalResidentId)}`,
+    options:{ method:'DELETE' },
+  });
+  function createOneTimeSecretState() {
+    let value = null;
+    return {
+      show(secret) { value = safeText(secret); return Boolean(value); },
+      read() { return value; },
+      clear() { value = null; },
+      hasValue() { return Boolean(value); },
+    };
+  }
   const truncateGroupId = (value) => {
     const normalized = safeText(value);
     return normalized.length > 14 ? `${normalized.slice(0, 6)}…${normalized.slice(-4)}` : normalized;
@@ -80,9 +144,12 @@
     const content = doc.getElementById('careOperationsContent');
     const tabs = Array.from(doc.querySelectorAll('[data-care-ops-tab]')).slice(0, 10);
     let generation = 0;
+    let detailGeneration = 0;
+    const oneTimeSecret = createOneTimeSecretState();
     const state = {
       activeTab:'capabilities', loading:false, error:null, organizations:[], centers:[],
       capabilities:new Map(), integrations:[], pending:[], operational:[], mapping:null, feedback:null,
+      integrationSearch:'', detail:null,
     };
     const send = (descriptor) => request(descriptor.path, descriptor.options);
     const element = (tag, className, text) => {
@@ -92,6 +159,41 @@
     const button = (label, handler, className = 'secondary') => {
       const node = element('button', className, label); node.type = 'button'; node.addEventListener('click', handler); return node;
     };
+    const input = (labelText, { type = 'text', maxLength = 160, value = '', required = false, placeholder = '' } = {}) => {
+      const label = element('label', 'care-ops__field');
+      label.append(element('span', '', labelText));
+      const control = element('input'); control.type = type; control.maxLength = maxLength;
+      control.value = value; control.required = required; control.placeholder = placeholder; label.append(control);
+      return { label, control };
+    };
+    const selectField = (labelText, options, selected = '') => {
+      const label = element('label', 'care-ops__field'); label.append(element('span', '', labelText));
+      const control = element('select');
+      options.forEach((option) => { const node = element('option', '', option.label); node.value = option.value;
+        node.disabled = Boolean(option.disabled); control.append(node); });
+      control.value = selected; label.append(control); return { label, control };
+    };
+    function ensureDialog(id, title) {
+      let dialog = doc.getElementById(id);
+      if (!dialog) {
+        dialog = element('dialog', 'care-ops__dialog'); dialog.id = id;
+        const shell = element('div', 'care-ops__dialog-shell');
+        const header = element('div', 'care-ops__dialog-header');
+        const heading = element('h2', '', title); heading.id = `${id}Title`;
+        const close = button('ปิด', () => closeDialog(dialog), 'secondary'); close.setAttribute('aria-label', `ปิด ${title}`);
+        header.append(heading, close);
+        const live = element('div', 'care-ops__dialog-live'); live.id = `${id}Live`; live.setAttribute('role', 'status');
+        const body = element('div', 'care-ops__dialog-body'); body.id = `${id}Body`;
+        shell.append(header, live, body); dialog.append(shell); dialog.setAttribute('aria-labelledby', heading.id);
+        doc.body.append(dialog);
+      }
+      return dialog;
+    }
+    function openDialog(dialog) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+    function closeDialog(dialog) { if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open'); }
+    function dialogParts(dialog) { return { live:dialog.querySelector('.care-ops__dialog-live'), body:dialog.querySelector('.care-ops__dialog-body') }; }
+    function setBusy(container, busy) { container.querySelectorAll('button,input,select').forEach((node) => { node.disabled = Boolean(busy); }); }
+    function showDialogError(dialog, message) { const { live } = dialogParts(dialog); live.textContent = message; live.className = 'care-ops__dialog-live care-ops__feedback--error'; }
     function itemCard(title, meta = '') {
       const card = element('article', 'care-ops__item'); card.append(element('h3', '', title));
       if (meta) card.append(element('div', 'care-ops__meta', meta)); return card;
@@ -131,22 +233,191 @@
         list.append(card);
       }); content.replaceChildren(list);
     }
+    function statusBadge(status) {
+      const descriptor = CLIENT_STATUS_LABELS[status] || [status || 'ไม่ทราบสถานะ', ''];
+      return element('span', `care-ops__status${descriptor[1] ? ` care-ops__status--${descriptor[1]}` : ''}`, descriptor[0]);
+    }
+    function renderReadiness(readiness) {
+      const box = element('div', 'care-ops__readiness');
+      box.append(element('strong', '', readiness?.label || 'ตั้งค่ายังไม่ครบ'));
+      const labels = {
+        organization:'Organization', centerScope:'Center scope', eventScope:'Event scope',
+        activeCredential:'Active Credential', externalCenterMapping:'External Center mapping',
+        externalResidentMapping:'External Resident mapping', clientActive:'Client active',
+      };
+      const list = element('ul');
+      Object.entries(labels).forEach(([key, label]) => {
+        const ready = Boolean(readiness?.checks?.[key]);
+        list.append(element('li', ready ? 'is-ready' : 'is-pending', `${ready ? '✓' : '○'} ${label}${key === 'externalResidentMapping' && !ready ? ' (แนะนำก่อน Pilot)' : ''}`));
+      });
+      box.append(list); return box;
+    }
+    function openCreateClient() {
+      const dialog = ensureDialog('integrationClientCreateDialog', 'เพิ่มระบบเชื่อมต่อ');
+      const { live, body } = dialogParts(dialog); live.textContent = ''; live.className = 'care-ops__dialog-live';
+      const form = element('form', 'care-ops__form');
+      const organizations = state.organizations.filter((item) => item.status === 'active' && item.organizationType === 'external_care_center');
+      const organization = selectField('Organization', [{value:'',label:'เลือก Organization'}, ...organizations.map((item) => ({value:item.organizationId,label:item.displayName}))]);
+      const code = input('Client code', {required:true,maxLength:100,placeholder:'vendor-pilot'});
+      const name = input('Display name', {required:true,maxLength:240,placeholder:'Vendor Pilot'});
+      const source = input('Source system', {required:true,maxLength:100,placeholder:'Vendor system'});
+      const note = element('p', 'care-ops__notice', 'ระบบเชื่อมต่อใหม่จะเริ่มในสถานะระงับ เพื่อให้ตั้งค่า scope, Credential และ mapping ให้ครบก่อนเปิดใช้งาน');
+      const actions = element('div', 'care-ops__actions');
+      actions.append(button('ไว้ก่อน', () => closeDialog(dialog), 'secondary'));
+      const submit = element('button', '', 'สร้างระบบเชื่อมต่อ'); submit.type = 'submit'; actions.append(submit);
+      form.append(organization.label, code.label, name.label, source.label, note, actions);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault(); live.textContent = '';
+        if (!organization.control.value) return showDialogError(dialog, 'กรุณาเลือก Organization');
+        setBusy(form, true);
+        try {
+          const descriptor = buildCreateClientRequest({ organizationId:organization.control.value,
+            clientCode:code.control.value, displayName:name.control.value, sourceSystem:source.control.value });
+          const result = await send(descriptor); closeDialog(dialog); await load();
+          await openIntegrationDetail(result.integrationClient.integrationClientId);
+        } catch (error) { showDialogError(dialog, errorMessage(error)); setBusy(form, false); }
+      });
+      body.replaceChildren(form); openDialog(dialog); organization.control.focus();
+    }
+    function openSecretModal(secret, credential) {
+      if (!oneTimeSecret.show(secret)) throw new Error('ไม่ได้รับ Credential ใหม่จากระบบ');
+      const dialog = ensureDialog('integrationCredentialSecretDialog', 'Credential ใหม่');
+      const { live, body } = dialogParts(dialog); live.textContent = ''; live.className = 'care-ops__dialog-live';
+      const warning = element('p', 'care-ops__secret-warning', 'ระบบจะแสดง Credential นี้เพียงครั้งเดียว กรุณาคัดลอกและเก็บในระบบ Server ของผู้เชื่อมต่อ');
+      const secretValue = element('code', 'care-ops__secret-value', oneTimeSecret.read());
+      const reference = element('p', 'care-ops__meta', `อ้างอิง ${credential?.publicPrefix || 'Credential ใหม่'}`);
+      const actions = element('div', 'care-ops__actions');
+      actions.append(button('คัดลอก Credential', async () => {
+        try {
+          const value = oneTimeSecret.read(); if (!value) throw new Error('Credential ถูกล้างแล้ว');
+          await doc.defaultView.navigator.clipboard.writeText(value);
+          live.textContent = 'คัดลอก Credential แล้ว'; live.className = 'care-ops__dialog-live care-ops__feedback--success';
+        } catch (_) { showDialogError(dialog, 'คัดลอกไม่สำเร็จ กรุณาคัดลอกจากข้อความที่แสดงก่อนปิดหน้าต่าง'); }
+      }));
+      actions.append(button('ฉันบันทึกแล้ว', () => closeDialog(dialog), ''));
+      body.replaceChildren(warning, reference, secretValue, actions);
+      if (!dialog.dataset.secretBound) {
+        dialog.addEventListener('close', () => { oneTimeSecret.clear(); secretValue.textContent = ''; body.replaceChildren(); });
+        dialog.dataset.secretBound = 'true';
+      }
+      openDialog(dialog);
+    }
+    async function refreshIntegrationDetail({ centerPage, subjectPage } = {}) {
+      if (!state.detail?.integrationClientId) return;
+      const token = ++detailGeneration; const clientId = state.detail.integrationClientId;
+      const nextCenterPage = centerPage || state.detail.centerPage || 1;
+      const nextSubjectPage = subjectPage || state.detail.subjectPage || 1;
+      const [clientResult, centerResult, subjectResult] = await Promise.all([
+        request(`/api/admin/platform/integration-clients/${encodeURIComponent(clientId)}`, {method:'GET'}),
+        send(buildCenterMappingListRequest(clientId, {page:nextCenterPage,search:state.detail.centerSearch || ''})),
+        send(buildSubjectMappingListRequest(clientId, {page:nextSubjectPage,search:state.detail.subjectSearch || ''})),
+      ]);
+      if (token !== detailGeneration || !state.detail || state.detail.integrationClientId !== clientId) return;
+      Object.assign(state.detail, { client:clientResult.integrationClient, centerMappings:safeArray(centerResult.items),
+        centerPagination:centerResult.pagination, subjectMappings:safeArray(subjectResult.items),
+        subjectPagination:subjectResult.pagination, centerPage:nextCenterPage, subjectPage:nextSubjectPage,
+        loading:false, error:null });
+      const directoryClient = state.integrations.find((item) => item.integrationClientId === clientId);
+      if (directoryClient) Object.assign(directoryClient, clientResult.integrationClient);
+      renderIntegrationDetail();
+    }
+    async function openIntegrationDetail(integrationClientId) {
+      const dialog = ensureDialog('integrationClientDetailDialog', 'จัดการระบบเชื่อมต่อ');
+      state.detail = { integrationClientId, loading:true, centerPage:1, subjectPage:1,
+        centerSearch:'', subjectSearch:'', residentOptions:[], residentCenterId:null };
+      const { live, body } = dialogParts(dialog); live.textContent = ''; live.className = 'care-ops__dialog-live';
+      body.replaceChildren(element('div', 'care-ops__spinner', 'กำลังโหลดการตั้งค่า…')); openDialog(dialog);
+      try { await refreshIntegrationDetail(); }
+      catch (error) { if (state.detail?.integrationClientId === integrationClientId) { state.detail.loading = false; state.detail.error = errorMessage(error); renderIntegrationDetail(); } }
+    }
+    async function detailAction(descriptor, success, { confirmTitle = null, confirmMessage = '' } = {}) {
+      if (confirmTitle && !(await confirmAction(confirmTitle, confirmMessage))) return false;
+      const dialog = doc.getElementById('integrationClientDetailDialog');
+      const { body } = dialogParts(dialog); setBusy(body, true);
+      try { const result = await send(descriptor); state.feedback = {tone:'success',text:success}; await refreshIntegrationDetail(); return result; }
+      catch (error) { showDialogError(dialog, errorMessage(error)); setBusy(body, false); return false; }
+    }
+    function section(title, description = '') {
+      const node = element('section', 'care-ops__detail-section'); node.append(element('h3', '', title));
+      if (description) node.append(element('p', 'care-ops__meta', description)); return node;
+    }
+    function pager(pagination, onPage) {
+      const actions = element('div', 'care-ops__pager');
+      const previous = button('ก่อนหน้า', () => onPage(pagination.page - 1), 'secondary'); previous.disabled = pagination.page <= 1;
+      const next = button('ถัดไป', () => onPage(pagination.page + 1), 'secondary'); next.disabled = pagination.page >= pagination.totalPages;
+      actions.append(previous, element('span', 'care-ops__meta', `หน้า ${pagination.page} / ${Math.max(1, pagination.totalPages)} · ${pagination.total} รายการ`), next); return actions;
+    }
+    async function loadResidentOptions(externalCenterId) {
+      const mapping = state.detail?.centerMappings.find((item) => item.externalCenterId === externalCenterId && item.status === 'active');
+      if (!mapping) { if (state.detail) state.detail.residentOptions = []; renderIntegrationDetail(); return; }
+      try {
+        const result = await send(buildResidentOptionsRequest(mapping.centerId));
+        if (state.detail) { state.detail.residentOptions = safeArray(result.residents); state.detail.residentCenterId = mapping.centerId; renderIntegrationDetail(); }
+      } catch (error) { const dialog = doc.getElementById('integrationClientDetailDialog'); showDialogError(dialog, errorMessage(error)); }
+    }
+    function renderIntegrationDetail() {
+      const dialog = doc.getElementById('integrationClientDetailDialog'); if (!dialog || !state.detail) return;
+      const { live, body } = dialogParts(dialog); live.textContent = ''; live.className = 'care-ops__dialog-live';
+      if (state.detail.loading) return body.replaceChildren(element('div', 'care-ops__spinner', 'กำลังโหลดการตั้งค่า…'));
+      if (state.detail.error) return body.replaceChildren(element('div', 'care-ops__error', state.detail.error));
+      const client = state.detail.client; const clientId = client.integrationClientId;
+      const info = section('1. ข้อมูลระบบเชื่อมต่อ');
+      const infoGrid = element('div', 'care-ops__integration-grid');
+      [['ชื่อ',client.displayName],['Client code',client.clientCode],['Source system',client.sourceSystem],['Organization',client.organization?.displayName || client.organizationName || '-']]
+        .forEach(([label,value]) => { const box=element('div');box.append(element('strong','',label),element('div','care-ops__meta',value||'-'));infoGrid.append(box); }); info.append(infoGrid);
+
+      const status = section('2. สถานะ'); const statusActions = element('div', 'care-ops__actions'); status.append(statusBadge(client.status));
+      if (client.status === 'active') statusActions.append(button('ระงับการใช้งาน', () => detailAction(buildClientStatusRequest(clientId,'suspended'),'ระงับระบบเชื่อมต่อแล้ว',{confirmTitle:'ระงับการใช้งาน',confirmMessage:'Credential และ mapping จะยังคงอยู่ แต่ระบบจะปฏิเสธข้อมูลใหม่จนกว่าจะเปิดใช้งานอีกครั้ง'})));
+      if (client.status === 'suspended') statusActions.append(button('เปิดใช้งาน', () => detailAction(buildClientStatusRequest(clientId,'active'),'เปิดใช้งานระบบเชื่อมต่อแล้ว',{confirmTitle:'เปิดใช้งานระบบเชื่อมต่อ',confirmMessage:'ระบบภายนอกจะเริ่มยืนยันตัวตนและส่ง event ตาม scope ที่กำหนดได้'}),''));
+      if (client.status !== 'revoked') statusActions.append(button('เพิกถอนระบบเชื่อมต่อ', () => detailAction({path:`/api/admin/platform/integration-clients/${encodeURIComponent(clientId)}/revoke`,options:{method:'POST',body:'{}'}},'เพิกถอนระบบเชื่อมต่อแล้ว',{confirmTitle:'เพิกถอนระบบเชื่อมต่อ',confirmMessage:'การเพิกถอนเป็นสถานะถาวร และ Credential ที่ใช้งานอยู่จะถูกเพิกถอนด้วย'}),'danger'));
+      status.append(statusActions);
+
+      const scopes = section('3. ศูนย์ที่อนุญาต', 'เลือกได้เฉพาะศูนย์ใน Organization เดียวกัน');
+      const allowedCenterIds = new Set(safeArray(client.centers).map((item) => item.centerId));
+      const organizationCenters = state.centers.filter((item) => item.organizationId === client.organizationId);
+      const centerSelect = selectField('เพิ่ม Center scope', [{value:'',label:'เลือกศูนย์'}, ...organizationCenters.filter((item)=>!allowedCenterIds.has(item.centerId)).map((item)=>({value:item.centerId,label:`${item.name || 'ไม่ระบุชื่อ'} · ${item.status || '-'}`,disabled:item.status!=='active'}))]);
+      const addCenter = button('เพิ่ม Center scope', async () => { if (!centerSelect.control.value) return showDialogError(dialog,'กรุณาเลือกศูนย์'); await detailAction(buildCenterScopeRequest(clientId,centerSelect.control.value,true),'เพิ่ม Center scope แล้ว'); });
+      scopes.append(centerSelect.label, addCenter);
+      safeArray(client.centers).forEach((item) => { const row=element('div','care-ops__managed-row');row.append(element('div','',item.name||'ไม่ระบุชื่อศูนย์'),button('นำออก',()=>detailAction(buildCenterScopeRequest(clientId,item.centerId,false),'นำ Center scope ออกแล้ว',{confirmTitle:'นำ Center scope ออก',confirmMessage:'ระบบจะหยุดรับ event ใหม่ของศูนย์นี้ ข้อมูลเดิมจะไม่ถูกลบ'}),'secondary'));scopes.append(row); });
+
+      const events = section('4. Event ที่อนุญาต', 'เลือกเฉพาะ event type ที่ PHIMOR รองรับ');
+      SUPPORTED_EVENT_TYPES.forEach((eventType) => { const enabled=safeArray(client.eventScopes).includes(eventType);const row=element('div','care-ops__managed-row');row.append(element('code','',eventType),button(enabled?'นำออก':'เพิ่ม',()=>detailAction(buildEventScopeRequest(clientId,eventType,!enabled),`${enabled?'นำ':'เพิ่ม'} Event scope ${eventType} แล้ว`,enabled?{confirmTitle:'นำ Event scope ออก',confirmMessage:'ระบบจะปฏิเสธ event ประเภทนี้จาก client นี้'}:{}),enabled?'secondary':''));events.append(row); });
+
+      const credentials = section('5. Credential', 'ระบบแสดงเฉพาะ prefix และข้อมูลการใช้งาน Credential เดิมไม่สามารถเปิดดูซ้ำได้ หากปิดหน้าต่างก่อนบันทึก กรุณาหมุน Credential ใหม่');
+      const activeCredentials = safeArray(client.credentials).filter((item)=>item.status==='active');
+      if (!activeCredentials.length && client.status !== 'revoked') credentials.append(button('ออก Credential', async () => { const result=await detailAction(buildCredentialRequest(clientId,'issue'),'ออก Credential ใหม่แล้ว');if(result?.token)openSecretModal(result.token,result.credential); },''));
+      safeArray(client.credentials).forEach((credential) => { const row=element('div','care-ops__credential-row');const meta=element('div');meta.append(element('strong','',`pim_int_${credential.publicPrefix}.••••`),element('div','care-ops__meta',`${credential.status} · ออก ${formatDate(credential.createdAt)} · ใช้ล่าสุด ${credential.lastUsedAt?formatDate(credential.lastUsedAt):'ยังไม่เคยใช้'}`));row.append(meta);if(credential.status==='active'){const actions=element('div','care-ops__actions');actions.append(button('หมุน Credential',async()=>{const result=await detailAction(buildCredentialRequest(clientId,'rotate',credential.credentialId),'หมุน Credential แล้ว',{confirmTitle:'หมุน Credential',confirmMessage:'หลังหมุน Credential ค่าเดิมจะไม่สามารถใช้งานได้อีก'});if(result?.token)openSecretModal(result.token,result.credential);}),button('เพิกถอน Credential',()=>detailAction(buildCredentialRequest(clientId,'revoke',credential.credentialId),'เพิกถอน Credential แล้ว',{confirmTitle:'เพิกถอน Credential',confirmMessage:'Credential นี้จะใช้งานไม่ได้ทันที'}),'danger'));row.append(actions);}credentials.append(row); });
+
+      const centerMappings = section('6. การเชื่อมรหัสศูนย์ภายนอก', 'ใช้รหัสตรงกันเท่านั้น การแก้ไขให้ปิดการเชื่อมเดิมแล้วสร้างใหม่');
+      const centerSearch=input('ค้นหา External Center ID',{maxLength:120,value:state.detail.centerSearch||'',placeholder:'ค้นหารหัสศูนย์ภายนอก'});centerSearch.control.addEventListener('change',()=>{state.detail.centerSearch=centerSearch.control.value.slice(0,120);refreshIntegrationDetail({centerPage:1});});centerMappings.append(centerSearch.label);
+      const centerMapForm = element('div','care-ops__inline-form'); const externalCenter = input('External Center ID',{required:true,maxLength:160,placeholder:'VENDOR_CENTER_01'});
+      const scopedCenter = selectField('PHIMOR Center',[{value:'',label:'เลือกศูนย์'},...safeArray(client.centers).map((item)=>({value:item.centerId,label:item.name||'ไม่ระบุชื่อ',disabled:item.status!=='active'}))]);
+      centerMapForm.append(externalCenter.label,scopedCenter.label,button('เพิ่มการเชื่อมรหัสศูนย์',async()=>{if(!externalCenter.control.value||!scopedCenter.control.value)return showDialogError(dialog,'กรุณากรอกรหัสภายนอกและเลือกศูนย์');await detailAction(buildCenterMappingRequest(clientId,externalCenter.control.value,scopedCenter.control.value),'เพิ่มการเชื่อมรหัสศูนย์แล้ว');},''));centerMappings.append(centerMapForm);
+      safeArray(state.detail.centerMappings).forEach((item)=>{const row=element('div','care-ops__managed-row');const meta=element('div');meta.append(element('strong','',item.externalCenterId),element('div','care-ops__meta',`${item.centerName||'ไม่ระบุศูนย์'} · ${item.status} · สร้าง ${formatDate(item.createdAt)}${item.deactivatedAt?` · ปิด ${formatDate(item.deactivatedAt)}`:''}`));row.append(meta);if(item.status==='active')row.append(button('ปิดการเชื่อม',()=>detailAction(buildDeactivateCenterMappingRequest(clientId,item.externalCenterId),'ปิดการเชื่อมรหัสศูนย์แล้ว',{confirmTitle:'ปิดการเชื่อมรหัสศูนย์',confirmMessage:'event ใหม่จากรหัสศูนย์นี้จะไม่ผ่านการตรวจสอบ'}),'secondary'));centerMappings.append(row);});
+      if(state.detail.centerPagination)centerMappings.append(pager(state.detail.centerPagination,(page)=>refreshIntegrationDetail({centerPage:page})));
+
+      const subjectMappings = section('7. การเชื่อมรหัสผู้พักภายนอก', 'เลือกผู้พักจริงในศูนย์ที่ map ไว้เท่านั้น ไม่มีการจับคู่จากชื่อหรือโทรศัพท์');
+      const subjectSearch=input('ค้นหา External Resident ID',{maxLength:120,value:state.detail.subjectSearch||'',placeholder:'ค้นหารหัสผู้พักภายนอก'});subjectSearch.control.addEventListener('change',()=>{state.detail.subjectSearch=subjectSearch.control.value.slice(0,120);refreshIntegrationDetail({subjectPage:1});});subjectMappings.append(subjectSearch.label);
+      const activeMappings=safeArray(state.detail.centerMappings).filter((item)=>item.status==='active');
+      const extCenterSelect=selectField('External Center ID',[{value:'',label:'เลือกการเชื่อมศูนย์'},...activeMappings.map((item)=>({value:item.externalCenterId,label:`${item.externalCenterId} → ${item.centerName||'ศูนย์'}`}))],state.detail.selectedExternalCenter||'');
+      extCenterSelect.control.addEventListener('change',()=>{state.detail.selectedExternalCenter=extCenterSelect.control.value;loadResidentOptions(extCenterSelect.control.value);});
+      const externalResident=input('External Resident ID',{required:true,maxLength:160,placeholder:'VENDOR_RESIDENT_01'});
+      const residentSelect=selectField('PHIMOR Resident',[{value:'',label:'เลือกผู้พัก'},...safeArray(state.detail.residentOptions).map((item)=>({value:item.residentId,label:`${item.displayName}${item.room?` · ห้อง ${item.room}`:''}${item.careProfileLinked?'':' · Care Profile ยังไม่พร้อม'}`,disabled:!item.careProfileLinked}))]);
+      const subjectForm=element('div','care-ops__inline-form');subjectForm.append(extCenterSelect.label,externalResident.label,residentSelect.label,button('เพิ่มการเชื่อมรหัสผู้พัก',async()=>{if(!extCenterSelect.control.value||!externalResident.control.value||!residentSelect.control.value)return showDialogError(dialog,'กรุณาเลือกศูนย์ กรอกรหัสผู้พัก และเลือกผู้พักใน PHIMOR');await detailAction(buildSubjectMappingRequest(clientId,extCenterSelect.control.value,externalResident.control.value,residentSelect.control.value),'เพิ่มการเชื่อมรหัสผู้พักแล้ว');},''));subjectMappings.append(subjectForm);
+      safeArray(state.detail.subjectMappings).forEach((item)=>{const row=element('div','care-ops__managed-row');const meta=element('div');meta.append(element('strong','',`${item.externalCenterId} · ${item.externalResidentId}`),element('div','care-ops__meta',`${item.centerName||'ไม่ระบุศูนย์'} · ${item.residentDisplayName||'ยังไม่เชื่อมผู้พัก'}${item.room?` · ห้อง ${item.room}`:''} · ${item.mappingStatus} · Care Profile ${item.careProfileReady?'พร้อม':'ยังไม่พร้อม'}`));row.append(meta);if(item.mappingStatus!=='inactive')row.append(button('ปิดการเชื่อม',()=>detailAction(buildDeactivateSubjectMappingRequest(clientId,item.externalCenterId,item.externalResidentId),'ปิดการเชื่อมรหัสผู้พักแล้ว',{confirmTitle:'ปิดการเชื่อมรหัสผู้พัก',confirmMessage:'การเชื่อมนี้จะไม่ใช้กับ event ใหม่ ข้อมูลประวัติเดิมจะไม่ถูกลบ'}),'secondary'));subjectMappings.append(row);});
+      if(state.detail.subjectPagination)subjectMappings.append(pager(state.detail.subjectPagination,(page)=>refreshIntegrationDetail({subjectPage:page})));
+
+      const readiness=section('8. ความพร้อมใช้งาน','รายการนี้เป็นข้อมูลช่วยตรวจสอบ สิทธิ์จริงยังบังคับจาก status, scope และ mapping ที่ backend');readiness.append(renderReadiness(client.readiness));
+      body.replaceChildren(info,status,scopes,events,credentials,centerMappings,subjectMappings,readiness);
+    }
     function renderIntegrations() {
-      if (!state.integrations.length) return renderEmpty('ยังไม่มี External Integration');
-      const list = element('div', 'care-ops__list');
-      state.integrations.forEach((client) => {
-        const card = itemCard(client.displayName || client.clientCode || 'Integration', `${client.organizationName} · ${client.status || '-'}`);
-        const grid = element('div', 'care-ops__integration-grid');
-        const fields = [
-          ['Source system', client.sourceSystem || '-'],
-          ['ศูนย์ที่อนุญาต', safeArray(client.centers).map((scope) => scope.center_name || scope.centerId || scope.center_id).filter(Boolean).join(', ') || '-'],
-          ['Event ที่อนุญาต', safeArray(client.eventScopes).join(', ') || '-'],
-          ['Credential', safeArray(client.credentials).map((credential) => `${credential.status}${credential.lastUsedAt ? ` · ใช้ล่าสุด ${formatDate(credential.lastUsedAt)}` : ''}`).join('\n') || 'ยังไม่มี'],
-        ];
-        fields.forEach(([label, value]) => { const box = element('div'); box.append(element('strong', '', label), element('div', 'care-ops__meta', value)); grid.append(box); });
-        card.append(grid, element('p', 'care-ops__secret-note', 'ระบบไม่แสดง Secret เดิม การออกหรือหมุน Credential ควรทำผ่านขั้นตอนควบคุมแยกต่างหาก'));
-        list.append(card);
-      }); content.replaceChildren(list);
+      const header = element('div','care-ops__directory-tools');
+      const search = input('ค้นหาระบบเชื่อมต่อ',{maxLength:120,value:state.integrationSearch,placeholder:'ชื่อ, client code หรือ source system'});
+      header.append(search.label,button('+ เพิ่มระบบเชื่อมต่อ',openCreateClient,''));
+      const list=element('div','care-ops__list');
+      const renderClientList=()=>{const needle=state.integrationSearch.trim().toLocaleLowerCase('th-TH');const clients=state.integrations.filter((client)=>!needle||[client.displayName,client.clientCode,client.sourceSystem].some((value)=>String(value||'').toLocaleLowerCase('th-TH').includes(needle))).sort((a,b)=>String(a.displayName||a.clientCode).localeCompare(String(b.displayName||b.clientCode),'th'));list.replaceChildren();if(!clients.length)list.append(element('div','care-ops__empty',state.integrations.length?'ไม่พบระบบเชื่อมต่อที่ค้นหา':'ยังไม่มีระบบเชื่อมต่อ'));clients.forEach((client)=>{const card=itemCard(client.displayName||client.clientCode||'Integration',`${client.organizationName} · ${client.clientCode}`);card.append(statusBadge(client.status));const grid=element('div','care-ops__integration-grid');[['Source system',client.sourceSystem||'-'],['ศูนย์ที่อนุญาต',String(safeArray(client.centers).length)],['Event ที่อนุญาต',safeArray(client.eventScopes).join(', ')||'-'],['Credential ที่ใช้งาน',String(client.activeCredentialCount||0)],['ใช้ล่าสุด',client.lastUsedAt?formatDate(client.lastUsedAt):'ยังไม่เคยใช้'],['Mapping',`ศูนย์ ${client.mappingCounts?.activeCenters||0} · ผู้พัก ${client.mappingCounts?.mappedResidents||0}`]].forEach(([label,value])=>{const box=element('div');box.append(element('strong','',label),element('div','care-ops__meta',value));grid.append(box);});const readiness=element('p','care-ops__meta',`ความพร้อม: ${client.readiness?.label||'ตั้งค่ายังไม่ครบ'}`);const actions=element('div','care-ops__actions');actions.append(button('จัดการระบบเชื่อมต่อ',()=>openIntegrationDetail(client.integrationClientId),''));card.append(grid,readiness,actions);list.append(card);});};
+      search.control.addEventListener('input',()=>{state.integrationSearch=search.control.value.slice(0,120);renderClientList();});
+      content.replaceChildren(header,list);renderClientList();
     }
     async function startMapping(item) {
       const token = generation; state.feedback = null; state.mapping = { key:`${item.integrationClientId}:${item.externalCenterId}:${item.externalResidentId}`, loading:true, residents:[], selected:null, error:null }; render();
@@ -296,7 +567,17 @@
     }
     function setTab(tab) { state.activeTab = tab; state.mapping = null; render(); }
     tabs.forEach((tab) => tab.addEventListener('click', () => setTab(tab.dataset.careOpsTab)));
+    if (doc.defaultView && !doc.defaultView.__phimorIntegrationSecretCleanupBound) {
+      doc.defaultView.addEventListener('pagehide', () => oneTimeSecret.clear());
+      doc.defaultView.__phimorIntegrationSecretCleanupBound = true;
+    }
     return { load, render, setTab, snapshot:() => ({ ...state, capabilities:new Map(state.capabilities) }) };
   }
-  return { CAPABILITY_LABELS, GROUP_LABELS, EVENT_STATUS_LABELS, REJECTION_REASON_LABELS, buildResidentOptionsRequest, buildMappingRequest, buildCapabilityRequest, buildReconcileRequest, truncateGroupId, mappingConfirmationMessage, createController };
+  return { CAPABILITY_LABELS, SUPPORTED_EVENT_TYPES, CLIENT_STATUS_LABELS, GROUP_LABELS,
+    EVENT_STATUS_LABELS, REJECTION_REASON_LABELS, buildResidentOptionsRequest, buildMappingRequest,
+    buildCapabilityRequest, buildReconcileRequest, normalizeClientCode, buildCreateClientRequest,
+    buildClientStatusRequest, buildCenterScopeRequest, buildEventScopeRequest, buildCredentialRequest,
+    buildCenterMappingListRequest, buildCenterMappingRequest, buildDeactivateCenterMappingRequest,
+    buildSubjectMappingListRequest, buildSubjectMappingRequest, buildDeactivateSubjectMappingRequest,
+    createOneTimeSecretState, truncateGroupId, mappingConfirmationMessage, createController };
 }));

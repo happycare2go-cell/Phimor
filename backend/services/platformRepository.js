@@ -112,8 +112,9 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
         `INSERT INTO integration_clients (
           integration_client_id, organization_id, client_code,
           display_name, source_system, status
-        ) VALUES ($1, $2, $3, $4, $5, 'active') RETURNING *`,
-        [record.integrationClientId, record.organizationId, record.clientCode, record.displayName, record.sourceSystem]
+        ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [record.integrationClientId, record.organizationId, record.clientCode,
+          record.displayName, record.sourceSystem, record.status || 'active']
       );
     },
 
@@ -295,6 +296,33 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
       );
     },
 
+    listExternalCenterMappings({ integrationClientId, status = null, search = null, limit = 50, offset = 0 }) {
+      return many(
+        `SELECT external_center_mapping_id, integration_client_id, organization_id,
+          external_center_id, center_id, display_name, status, created_at,
+          updated_at, deactivated_at
+         FROM external_center_mappings
+         WHERE integration_client_id = $1
+           AND ($2::text IS NULL OR status = $2)
+           AND ($3::text IS NULL OR external_center_id ILIKE ('%' || $3 || '%'))
+         ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+           updated_at DESC, external_center_id ASC
+         LIMIT $4 OFFSET $5`,
+        [integrationClientId, status, search, limit, offset]
+      );
+    },
+
+    countExternalCenterMappings({ integrationClientId, status = null, search = null }) {
+      return one(
+        `SELECT COUNT(*)::integer AS total
+         FROM external_center_mappings
+         WHERE integration_client_id = $1
+           AND ($2::text IS NULL OR status = $2)
+           AND ($3::text IS NULL OR external_center_id ILIKE ('%' || $3 || '%'))`,
+        [integrationClientId, status, search]
+      ).then((row) => Number(row?.total || 0));
+    },
+
     upsertExternalCenterMapping(record) {
       return one(
         `INSERT INTO external_center_mappings (
@@ -329,6 +357,35 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
            AND external_resident_id = $3`,
         [integrationClientId, externalCenterId, externalResidentId]
       );
+    },
+
+    listExternalSubjectMappings({ integrationClientId, status = null, search = null, limit = 50, offset = 0 }) {
+      return many(
+        `SELECT external_subject_mapping_id, integration_client_id, organization_id,
+          external_center_id, external_resident_id, center_id, resident_id,
+          care_profile_id, mapping_status, room, created_at, updated_at,
+          deactivated_at
+         FROM external_subject_mappings
+         WHERE integration_client_id = $1
+           AND ($2::text IS NULL OR mapping_status = $2)
+           AND ($3::text IS NULL OR external_resident_id ILIKE ('%' || $3 || '%'))
+         ORDER BY CASE mapping_status WHEN 'mapped' THEN 0
+           WHEN 'pending_subject_mapping' THEN 1 ELSE 2 END,
+           updated_at DESC, external_center_id ASC, external_resident_id ASC
+         LIMIT $4 OFFSET $5`,
+        [integrationClientId, status, search, limit, offset]
+      );
+    },
+
+    countExternalSubjectMappings({ integrationClientId, status = null, search = null }) {
+      return one(
+        `SELECT COUNT(*)::integer AS total
+         FROM external_subject_mappings
+         WHERE integration_client_id = $1
+           AND ($2::text IS NULL OR mapping_status = $2)
+           AND ($3::text IS NULL OR external_resident_id ILIKE ('%' || $3 || '%'))`,
+        [integrationClientId, status, search]
+      ).then((row) => Number(row?.total || 0));
     },
 
     upsertExternalSubjectMapping(record) {

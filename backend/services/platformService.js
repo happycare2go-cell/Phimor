@@ -68,6 +68,44 @@ function organizationProjection(row) {
   };
 }
 
+function externalCenterMappingProjection(row, center = null) {
+  return {
+    externalCenterId: row.external_center_id,
+    centerId: row.center_id,
+    centerName: center?.name || null,
+    centerStatus: center?.status || null,
+    displayName: row.display_name || null,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deactivatedAt: row.deactivated_at || null,
+  };
+}
+
+function externalSubjectMappingProjection(row, resident = null, center = null) {
+  const residentActive = resident?.status === 'active';
+  return {
+    externalCenterId: row.external_center_id,
+    externalResidentId: row.external_resident_id,
+    centerId: row.center_id,
+    centerName: center?.name || null,
+    residentDisplayName: resident?.full_name || null,
+    room: resident?.room || row.room || null,
+    residentStatus: resident?.status || null,
+    mappingStatus: row.mapping_status,
+    careProfileReady: Boolean(residentActive && resident?.care_profile_id),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deactivatedAt: row.deactivated_at || null,
+  };
+}
+
+function paginationInput({ page = 1, limit = 50 } = {}) {
+  const normalizedPage = Math.max(1, Number.parseInt(page, 10) || 1);
+  const normalizedLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
+  return { page: normalizedPage, limit: normalizedLimit, offset: (normalizedPage - 1) * normalizedLimit };
+}
+
 function createPlatformService(overrides = {}) {
   const repository = overrides.repository || createPlatformRepository();
   const centers = overrides.Centers || Centers;
@@ -79,7 +117,7 @@ function createPlatformService(overrides = {}) {
 
   async function audit(eventType, actorReference, scope = {}, metadata = {}) {
     const safeMetadata = {};
-    for (const key of ['capabilityKey', 'enabled', 'clientCode', 'eventType', 'externalCenterId',
+    for (const key of ['capabilityKey', 'enabled', 'clientCode', 'clientStatus', 'eventType', 'externalCenterId',
       'externalResidentId', 'mappingStatus', 'previousOrganizationId', 'credentialId', 'overlapSeconds']) {
       if (metadata[key] !== undefined && metadata[key] !== null) safeMetadata[key] = metadata[key];
     }
@@ -121,6 +159,15 @@ function createPlatformService(overrides = {}) {
       throw new PlatformError('INTEGRATION_CLIENT_INACTIVE', 'Integration Client ไม่พร้อมใช้งาน', 403);
     }
     await requireOrganization(client.organization_id, { active });
+    return client;
+  }
+
+  async function requireConfigurableClient(integrationClientId) {
+    const client = await requireClient(integrationClientId, { active: false });
+    if (client.status === 'revoked') {
+      throw new PlatformError('INTEGRATION_CLIENT_REVOKED', 'Integration Client ถูกเพิกถอนแล้ว', 409);
+    }
+    await requireOrganization(client.organization_id);
     return client;
   }
 
@@ -254,29 +301,83 @@ function createPlatformService(overrides = {}) {
     return { centerId, capabilityKey, enabled: Boolean(row.enabled), enabledAt: row.enabled_at || null, updatedAt: row.updated_at };
   }
 
-  async function createIntegrationClient({ organizationId, clientCode, displayName, sourceSystem, actorReference }) {
+  async function createIntegrationClient({ organizationId, clientCode, displayName, sourceSystem, initialStatus = 'active', actorReference }) {
     const organization = await requireOrganization(organizationId);
     if (organization.organization_type !== 'external_care_center') {
       throw new PlatformError('INTERNAL_ORGANIZATION_NOT_EXTERNAL_CLIENT', 'องค์กรภายในไม่ใช่ external integration tenant', 409);
     }
     const code = requiredText(clientCode, { code: 'CLIENT_CODE_REQUIRED', label: 'client code', max: 100 }).toLowerCase();
     if (!/^[a-z0-9][a-z0-9_-]{2,99}$/.test(code)) throw new PlatformError('INVALID_CLIENT_CODE', 'client code ไม่ถูกต้อง', 400);
-    const client = await repository.createIntegrationClient({
-      integrationClientId: idFactory('INTC'), organizationId, clientCode: code,
-      displayName: requiredText(displayName, { code: 'CLIENT_NAME_REQUIRED', label: 'ชื่อ Integration Client', max: 240 }),
-      sourceSystem: requiredText(sourceSystem, { code: 'SOURCE_SYSTEM_REQUIRED', label: 'source system', max: 100 }),
+    assertEnum(initialStatus, ['active', 'suspended'], 'INVALID_INITIAL_CLIENT_STATUS', 'สถานะเริ่มต้น');
+    const name = requiredText(displayName, { code: 'CLIENT_NAME_REQUIRED', label: 'ชื่อ Integration Client', max: 240 });
+    const source = requiredText(sourceSystem, { code: 'SOURCE_SYSTEM_REQUIRED', label: 'source system', max: 100 });
+    return runTransaction(`integration-client-code:${code}`, async () => {
+      try {
+        const client = await repository.createIntegrationClient({
+          integrationClientId: idFactory('INTC'), organizationId, clientCode: code,
+          displayName: name, sourceSystem: source, status: initialStatus,
+        });
+        await audit('integration.client_created', actorReference, { organizationId, integrationClientId: client.integration_client_id }, { clientCode: code });
+        return clientProjection(client);
+      } catch (error) {
+        if (error?.code === '23505') throw new PlatformError('CLIENT_CODE_EXISTS', 'client code นี้ถูกใช้งานแล้ว', 409);
+        throw error;
+      }
     });
-    await audit('integration.client_created', actorReference, { organizationId, integrationClientId: client.integration_client_id }, { clientCode: code });
-    return clientProjection(client);
   }
 
   async function inspectIntegrationClient(integrationClientId) {
     const client = await requireClient(integrationClientId, { active: false });
+    const organization = await requireOrganization(client.organization_id, { active: false });
+    const centerScopes = await repository.listClientCenterScopes(integrationClientId);
+    const centersWithNames = [];
+    for (const scope of centerScopes) {
+      const center = await centers.findOne((row) => row.center_id === scope.center_id);
+      centersWithNames.push({
+        centerId: scope.center_id, name: center?.name || null, status: center?.status || null,
+        createdAt: scope.created_at,
+      });
+    }
+    const eventScopes = (await repository.listClientEventScopes(integrationClientId)).map((row) => row.event_type);
+    const credentials = (await repository.listCredentials(integrationClientId)).map(credentialProjection);
+    const activeCredentials = credentials.filter((item) => item.status === 'active'
+      && (!item.expiresAt || new Date(item.expiresAt).getTime() > now().getTime()));
+    const [centerMappingCount, activeCenterMappingCount, subjectMappingCount, mappedSubjectCount] = await Promise.all([
+      repository.countExternalCenterMappings({ integrationClientId }),
+      repository.countExternalCenterMappings({ integrationClientId, status:'active' }),
+      repository.countExternalSubjectMappings({ integrationClientId }),
+      repository.countExternalSubjectMappings({ integrationClientId, status:'mapped' }),
+    ]);
+    const checks = {
+      organization: organization.status === 'active', centerScope: centerScopes.length > 0,
+      eventScope: eventScopes.length > 0, activeCredential: activeCredentials.length > 0,
+      externalCenterMapping: activeCenterMappingCount > 0,
+      externalResidentMapping: mappedSubjectCount > 0,
+      clientActive: client.status === 'active',
+    };
+    const configurationComplete = checks.organization && checks.centerScope && checks.eventScope
+      && checks.activeCredential && checks.externalCenterMapping;
+    const readinessState = client.status === 'revoked' ? 'revoked'
+      : client.status === 'suspended' ? 'suspended'
+        : configurationComplete ? 'ready' : 'incomplete';
     return {
       ...clientProjection(client),
-      centers: await repository.listClientCenterScopes(integrationClientId),
-      eventScopes: (await repository.listClientEventScopes(integrationClientId)).map((row) => row.event_type),
-      credentials: (await repository.listCredentials(integrationClientId)).map(credentialProjection),
+      organization: organizationProjection(organization), centers: centersWithNames,
+      eventScopes, credentials,
+      mappingCounts: {
+        centers: centerMappingCount, activeCenters: activeCenterMappingCount,
+        residents: subjectMappingCount, mappedResidents: mappedSubjectCount,
+      },
+      activeCredentialCount: activeCredentials.length,
+      lastUsedAt: credentials.map((item) => item.lastUsedAt).filter(Boolean).sort().at(-1) || null,
+      readiness: {
+        state: readinessState,
+        label: readinessState === 'ready' ? 'พร้อมรับข้อมูล'
+          : readinessState === 'suspended' ? 'ระงับการใช้งาน'
+            : readinessState === 'revoked' ? 'เพิกถอนแล้ว' : 'ตั้งค่ายังไม่ครบ',
+        configurationComplete, checks,
+        residentMappingRecommended: !checks.externalResidentMapping,
+      },
     };
   }
 
@@ -285,20 +386,40 @@ function createPlatformService(overrides = {}) {
     return (await repository.listIntegrationClients(organizationId)).map(clientProjection);
   }
 
-  async function revokeIntegrationClient({ integrationClientId, actorReference }) {
-    const client = await requireClient(integrationClientId, { active: false });
-    const updated = await repository.updateIntegrationClientStatus(integrationClientId, 'revoked');
-    for (const credential of await repository.listCredentials(integrationClientId)) {
-      if (credential.status === 'active') await repository.revokeCredential(credential.credential_id);
-    }
-    await audit('integration.client_revoked', actorReference, {
-      organizationId: client.organization_id, integrationClientId,
+  async function setIntegrationClientStatus({ integrationClientId, status, actorReference }) {
+    assertEnum(status, ['active', 'suspended'], 'INVALID_CLIENT_STATUS_TRANSITION', 'สถานะ Integration Client');
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      const client = await requireClient(integrationClientId, { active: false });
+      if (client.status === 'revoked') {
+        throw new PlatformError('REVOKED_CLIENT_TERMINAL', 'Integration Client ที่เพิกถอนแล้วไม่สามารถเปิดใช้งานใหม่ได้', 409);
+      }
+      if (status === 'active') await requireOrganization(client.organization_id);
+      if (client.status === status) return clientProjection(client);
+      const updated = await repository.updateIntegrationClientStatus(integrationClientId, status);
+      await audit('integration.client_status_changed', actorReference, {
+        organizationId: client.organization_id, integrationClientId,
+      }, { clientCode: client.client_code, clientStatus: status });
+      return clientProjection(updated);
     });
-    return clientProjection(updated);
+  }
+
+  async function revokeIntegrationClient({ integrationClientId, actorReference }) {
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      const client = await requireClient(integrationClientId, { active: false });
+      if (client.status === 'revoked') return clientProjection(client);
+      const updated = await repository.updateIntegrationClientStatus(integrationClientId, 'revoked');
+      for (const credential of await repository.listCredentials(integrationClientId)) {
+        if (credential.status === 'active') await repository.revokeCredential(credential.credential_id);
+      }
+      await audit('integration.client_revoked', actorReference, {
+        organizationId: client.organization_id, integrationClientId,
+      });
+      return clientProjection(updated);
+    });
   }
 
   async function addClientCenterScope({ integrationClientId, centerId, actorReference }) {
-    const client = await requireClient(integrationClientId);
+    const client = await requireConfigurableClient(integrationClientId);
     await requireCenter(centerId);
     const organization = await repository.findOrganizationForCenter(centerId);
     if (!organization || organization.organization_id !== client.organization_id) {
@@ -326,7 +447,7 @@ function createPlatformService(overrides = {}) {
 
   async function addClientEventScope({ integrationClientId, eventType, actorReference }) {
     assertEventType(eventType);
-    const client = await requireClient(integrationClientId);
+    const client = await requireConfigurableClient(integrationClientId);
     await repository.addClientEventScope({ integrationClientId, eventType, actorReference: safeActorReference(actorReference) });
     await audit('integration.event_scope_added', actorReference, {
       organizationId: client.organization_id, integrationClientId,
@@ -366,15 +487,17 @@ function createPlatformService(overrides = {}) {
   }
 
   async function issueCredential({ integrationClientId, actorReference }) {
-    const client = await requireClient(integrationClientId);
-    if ((await repository.listActiveCredentials(integrationClientId)).length) {
-      throw new PlatformError('ACTIVE_CREDENTIAL_EXISTS', 'มี credential ที่ใช้งานอยู่แล้ว กรุณาใช้การหมุนกุญแจ', 409);
-    }
-    return createCredentialRecord({ client, actorReference });
+    const client = await requireConfigurableClient(integrationClientId);
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      if ((await repository.listActiveCredentials(integrationClientId)).length) {
+        throw new PlatformError('ACTIVE_CREDENTIAL_EXISTS', 'มี credential ที่ใช้งานอยู่แล้ว กรุณาใช้การหมุนกุญแจ', 409);
+      }
+      return createCredentialRecord({ client, actorReference });
+    });
   }
 
   async function rotateCredential({ integrationClientId, credentialId, overlapSeconds = 0, actorReference }) {
-    const client = await requireClient(integrationClientId);
+    const client = await requireConfigurableClient(integrationClientId);
     const current = await repository.findCredential(credentialId);
     if (!current || current.integration_client_id !== integrationClientId || current.status !== 'active') {
       throw new PlatformError('ACTIVE_CREDENTIAL_NOT_FOUND', 'ไม่พบ credential ที่ใช้งานอยู่', 404);
@@ -383,7 +506,7 @@ function createPlatformService(overrides = {}) {
     if (!Number.isInteger(overlap) || overlap < 0 || overlap > MAX_ROTATION_OVERLAP_SECONDS) {
       throw new PlatformError('INVALID_ROTATION_OVERLAP', 'ช่วง overlap ไม่ถูกต้อง', 400);
     }
-    return runTransaction(`integration-credential:${integrationClientId}`, async () => {
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
       const active = await repository.listActiveCredentials(integrationClientId);
       if (active.length !== 1 || active[0].credential_id !== credentialId) {
         throw new PlatformError('CREDENTIAL_ROTATION_IN_PROGRESS', 'มี credential overlap อยู่ ต้องสิ้นสุดหรือเพิกถอนก่อนหมุนอีกครั้ง', 409);
@@ -403,44 +526,60 @@ function createPlatformService(overrides = {}) {
 
   async function revokeCredential({ integrationClientId, credentialId, actorReference }) {
     const client = await requireClient(integrationClientId, { active: false });
-    const credential = await repository.findCredential(credentialId);
-    if (!credential || credential.integration_client_id !== integrationClientId) {
-      throw new PlatformError('CREDENTIAL_NOT_FOUND', 'ไม่พบ credential', 404);
-    }
-    const revoked = await repository.revokeCredential(credentialId);
-    await audit('integration.credential_revoked', actorReference, {
-      organizationId: client.organization_id, integrationClientId,
-    }, { credentialId });
-    return credentialProjection(revoked || credential);
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      const credential = await repository.findCredential(credentialId);
+      if (!credential || credential.integration_client_id !== integrationClientId) {
+        throw new PlatformError('CREDENTIAL_NOT_FOUND', 'ไม่พบ credential', 404);
+      }
+      const revoked = await repository.revokeCredential(credentialId);
+      if (revoked) {
+        await audit('integration.credential_revoked', actorReference, {
+          organizationId: client.organization_id, integrationClientId,
+        }, { credentialId });
+      }
+      return credentialProjection(revoked || credential);
+    });
   }
 
   async function authenticateCredential(token) {
     const match = TOKEN_PATTERN.exec(String(token || ''));
     if (!match) throw new PlatformError('INVALID_INTEGRATION_TOKEN', 'Integration credential ไม่ถูกต้อง', 401);
-    const row = await repository.findCredentialByPrefix(match[1]);
-    if (!row || row.status !== 'active' || row.client_status !== 'active' || row.organization_status !== 'active') {
-      throw new PlatformError('INTEGRATION_CREDENTIAL_REVOKED', 'Integration credential ไม่พร้อมใช้งาน', 401);
+    const candidate = await repository.findCredentialByPrefix(match[1]);
+    if (!candidate) throw new PlatformError('INTEGRATION_CREDENTIAL_REVOKED', 'Integration credential ไม่พร้อมใช้งาน', 401);
+    return runTransaction(`integration-client-control:${candidate.integration_client_id}`, async () => {
+      const row = await repository.findCredentialByPrefix(match[1]);
+      if (!row || row.status !== 'active' || row.client_status !== 'active' || row.organization_status !== 'active') {
+        throw new PlatformError('INTEGRATION_CREDENTIAL_REVOKED', 'Integration credential ไม่พร้อมใช้งาน', 401);
+      }
+      if (row.expires_at && new Date(row.expires_at).getTime() <= now().getTime()) {
+        throw new PlatformError('INTEGRATION_CREDENTIAL_EXPIRED', 'Integration credential หมดอายุ', 401);
+      }
+      const actual = crypto.scryptSync(match[2], Buffer.from(row.secret_salt), Buffer.from(row.secret_hash).length);
+      const expected = Buffer.from(row.secret_hash);
+      if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+        throw new PlatformError('INVALID_INTEGRATION_TOKEN', 'Integration credential ไม่ถูกต้อง', 401);
+      }
+      await repository.touchCredential(row.credential_id);
+      return {
+        credentialId: row.credential_id,
+        integrationClientId: row.integration_client_id,
+        organizationId: row.organization_id,
+        clientCode: row.client_code,
+        sourceSystem: row.source_system,
+      };
+    });
+  }
+
+  async function assertIntegrationIdentityActive(identity) {
+    const client = await requireClient(identity?.integrationClientId);
+    if (client.organization_id !== identity?.organizationId) {
+      throw new PlatformError('INVALID_INTEGRATION_IDENTITY', 'Integration identity ไม่ถูกต้อง', 401);
     }
-    if (row.expires_at && new Date(row.expires_at).getTime() <= now().getTime()) {
-      throw new PlatformError('INTEGRATION_CREDENTIAL_EXPIRED', 'Integration credential หมดอายุ', 401);
-    }
-    const actual = crypto.scryptSync(match[2], Buffer.from(row.secret_salt), Buffer.from(row.secret_hash).length);
-    const expected = Buffer.from(row.secret_hash);
-    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
-      throw new PlatformError('INVALID_INTEGRATION_TOKEN', 'Integration credential ไม่ถูกต้อง', 401);
-    }
-    await repository.touchCredential(row.credential_id);
-    return {
-      credentialId: row.credential_id,
-      integrationClientId: row.integration_client_id,
-      organizationId: row.organization_id,
-      clientCode: row.client_code,
-      sourceSystem: row.source_system,
-    };
+    return true;
   }
 
   async function mapExternalCenter({ integrationClientId, externalCenterId, centerId, displayName, actorReference }) {
-    const client = await requireClient(integrationClientId);
+    const client = await requireConfigurableClient(integrationClientId);
     await requireCenter(centerId);
     const organization = await repository.findOrganizationForCenter(centerId);
     if (!organization || organization.organization_id !== client.organization_id) {
@@ -450,39 +589,64 @@ function createPlatformService(overrides = {}) {
       throw new PlatformError('CENTER_SCOPE_DENIED', 'Integration Client ไม่มีสิทธิ์ใช้ศูนย์นี้', 403);
     }
     const externalId = requiredText(externalCenterId, { code: 'EXTERNAL_CENTER_REQUIRED', label: 'external Center ID', max: 160 });
-    const existing = await repository.findExternalCenterMapping(integrationClientId, externalId);
-    if (existing?.status === 'active' && existing.center_id !== centerId) {
-      throw new PlatformError('EXTERNAL_CENTER_MAPPING_CONFLICT', 'external Center ID ถูก map ไปยังศูนย์อื่นแล้ว', 409);
-    }
-    const mapping = await repository.upsertExternalCenterMapping({
-      mappingId: existing?.external_center_mapping_id || idFactory('ECM'),
-      integrationClientId, organizationId: client.organization_id, externalCenterId: externalId,
-      centerId, displayName: optionalText(displayName, 240),
+    return runTransaction(`integration-center-mapping:${integrationClientId}:${externalId}`, async () => {
+      const existing = await repository.findExternalCenterMapping(integrationClientId, externalId);
+      if (existing?.status === 'active' && existing.center_id !== centerId) {
+        throw new PlatformError('EXTERNAL_CENTER_MAPPING_CONFLICT', 'รหัสภายนอกนี้ถูกเชื่อมอยู่แล้ว', 409);
+      }
+      const mapping = await repository.upsertExternalCenterMapping({
+        mappingId: existing?.external_center_mapping_id || idFactory('ECM'),
+        integrationClientId, organizationId: client.organization_id, externalCenterId: externalId,
+        centerId, displayName: optionalText(displayName, 240),
+      });
+      if (!existing || existing.status !== 'active') {
+        await audit('integration.external_center_mapping_created', actorReference, {
+          organizationId: client.organization_id, centerId, integrationClientId,
+        }, { externalCenterId: externalId });
+      }
+      return mapping;
     });
-    await audit(existing ? 'integration.external_center_mapping_changed' : 'integration.external_center_mapping_created', actorReference, {
-      organizationId: client.organization_id, centerId, integrationClientId,
-    }, { externalCenterId: externalId });
-    return mapping;
   }
 
   async function deactivateExternalCenterMapping({ integrationClientId, externalCenterId, actorReference }) {
     const client = await requireClient(integrationClientId, { active: false });
-    const mapping = await repository.deactivateExternalCenterMapping(integrationClientId, externalCenterId);
+    const externalId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
+    const mapping = await repository.deactivateExternalCenterMapping(integrationClientId, externalId);
     if (!mapping) throw new PlatformError('EXTERNAL_CENTER_MAPPING_NOT_FOUND', 'ไม่พบ external Center mapping', 404);
     await audit('integration.external_center_mapping_deactivated', actorReference, {
       organizationId: client.organization_id, centerId: mapping.center_id, integrationClientId,
-    }, { externalCenterId });
+    }, { externalCenterId:externalId });
     return mapping;
+  }
+
+  async function listExternalCenterMappings(integrationClientId, { status = null, search = null, page = 1, limit = 50 } = {}) {
+    const client = await requireClient(integrationClientId, { active: false });
+    if (status !== null && status !== '') assertEnum(status, ['active', 'inactive'], 'INVALID_CENTER_MAPPING_STATUS', 'สถานะการเชื่อมรหัสศูนย์');
+    const needle = optionalText(search, 120);
+    const paging = paginationInput({ page, limit });
+    const query = { integrationClientId, status:status || null, search:needle, limit:paging.limit, offset:paging.offset };
+    const [rows, total] = await Promise.all([
+      repository.listExternalCenterMappings(query), repository.countExternalCenterMappings(query),
+    ]);
+    const items = [];
+    for (const row of rows) {
+      if (row.organization_id !== client.organization_id) continue;
+      const center = await centers.findOne((item) => item.center_id === row.center_id);
+      items.push(externalCenterMappingProjection(row, center));
+    }
+    return { items, pagination:{ page:paging.page, limit:paging.limit, total,
+      totalPages:total ? Math.ceil(total / paging.limit) : 0 } };
   }
 
   async function mapExternalSubject({
     integrationClientId, externalCenterId, externalResidentId, residentId = null,
     firstName, lastName, displayName, room, actorReference,
   }) {
-    const client = await requireClient(integrationClientId);
-    const centerMapping = await repository.findExternalCenterMapping(integrationClientId, requiredText(externalCenterId, {
+    const client = await requireConfigurableClient(integrationClientId);
+    const extCenterId = requiredText(externalCenterId, {
       code: 'EXTERNAL_CENTER_REQUIRED', label: 'external Center ID', max: 160,
-    }));
+    });
+    const centerMapping = await repository.findExternalCenterMapping(integrationClientId, extCenterId);
     if (!centerMapping || centerMapping.status !== 'active') {
       throw new PlatformError('EXTERNAL_CENTER_MAPPING_NOT_FOUND', 'ไม่พบ external Center mapping ที่ใช้งานได้', 404);
     }
@@ -494,26 +658,33 @@ function createPlatformService(overrides = {}) {
       resident = await residents.findOne((row) => row.resident_id === residentId
         && row.center_id === centerMapping.center_id && row.status === 'active');
       if (!resident) throw new PlatformError('RESIDENT_NOT_IN_MAPPED_CENTER', 'ผู้พักไม่ได้อยู่ในศูนย์ที่ map ไว้', 403);
+      if (!resident.care_profile_id) {
+        throw new PlatformError('RESIDENT_CARE_PROFILE_NOT_READY', 'ผู้พักยังไม่มี Care Profile ที่พร้อมเชื่อม', 409);
+      }
     }
     const extResidentId = requiredText(externalResidentId, { code: 'EXTERNAL_RESIDENT_REQUIRED', label: 'external Resident ID', max: 160 });
-    const existing = await repository.findExternalSubjectMapping(integrationClientId, externalCenterId, extResidentId);
-    if (existing?.mapping_status === 'mapped' && resident && existing.resident_id !== resident.resident_id) {
-      throw new PlatformError('EXTERNAL_SUBJECT_MAPPING_CONFLICT', 'external Resident ID ถูก map ไปยังผู้พักอื่นแล้ว', 409);
-    }
-    const mappingStatus = resident ? 'mapped' : 'pending_subject_mapping';
-    const mapping = await repository.upsertExternalSubjectMapping({
-      mappingId: existing?.external_subject_mapping_id || idFactory('ESM'),
-      integrationClientId, organizationId: client.organization_id,
-      externalCenterId, externalResidentId: extResidentId, centerId: centerMapping.center_id,
-      residentId: resident?.resident_id || null, careProfileId: resident?.care_profile_id || null,
-      mappingStatus, firstName: optionalText(firstName, 120), lastName: optionalText(lastName, 120),
-      displayName: optionalText(displayName, 240), room: optionalText(room, 80),
-      lastSeenAt: now().toISOString(),
+    return runTransaction(`integration-subject-mapping:${integrationClientId}:${extCenterId}:${extResidentId}`, async () => {
+      const existing = await repository.findExternalSubjectMapping(integrationClientId, extCenterId, extResidentId);
+      if (existing?.mapping_status === 'mapped' && resident && existing.resident_id !== resident.resident_id) {
+        throw new PlatformError('EXTERNAL_SUBJECT_MAPPING_CONFLICT', 'รหัสภายนอกนี้ถูกเชื่อมอยู่แล้ว', 409);
+      }
+      const mappingStatus = resident ? 'mapped' : 'pending_subject_mapping';
+      const mapping = await repository.upsertExternalSubjectMapping({
+        mappingId: existing?.external_subject_mapping_id || idFactory('ESM'),
+        integrationClientId, organizationId: client.organization_id,
+        externalCenterId:extCenterId, externalResidentId: extResidentId, centerId: centerMapping.center_id,
+        residentId: resident?.resident_id || null, careProfileId: resident?.care_profile_id || null,
+        mappingStatus, firstName: optionalText(firstName, 120), lastName: optionalText(lastName, 120),
+        displayName: optionalText(displayName, 240), room: optionalText(room, 80),
+        lastSeenAt: now().toISOString(),
+      });
+      if (!existing || existing.mapping_status !== mappingStatus) {
+        await audit('integration.external_subject_mapping_created', actorReference, {
+          organizationId: client.organization_id, centerId: centerMapping.center_id, integrationClientId,
+        }, { externalCenterId:extCenterId, externalResidentId: extResidentId, mappingStatus });
+      }
+      return mapping;
     });
-    await audit(existing ? 'integration.external_subject_mapping_changed' : 'integration.external_subject_mapping_created', actorReference, {
-      organizationId: client.organization_id, centerId: centerMapping.center_id, integrationClientId,
-    }, { externalCenterId, externalResidentId: extResidentId, mappingStatus });
-    return mapping;
   }
 
   async function observeExternalSubject({
@@ -554,12 +725,38 @@ function createPlatformService(overrides = {}) {
 
   async function deactivateExternalSubjectMapping({ integrationClientId, externalCenterId, externalResidentId, actorReference }) {
     const client = await requireClient(integrationClientId, { active: false });
-    const mapping = await repository.deactivateExternalSubjectMapping(integrationClientId, externalCenterId, externalResidentId);
+    const extCenterId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
+    const extResidentId = requiredText(externalResidentId, { code:'EXTERNAL_RESIDENT_REQUIRED', label:'external Resident ID', max:160 });
+    const mapping = await repository.deactivateExternalSubjectMapping(integrationClientId, extCenterId, extResidentId);
     if (!mapping) throw new PlatformError('EXTERNAL_SUBJECT_MAPPING_NOT_FOUND', 'ไม่พบ external subject mapping', 404);
     await audit('integration.external_subject_mapping_deactivated', actorReference, {
       organizationId: client.organization_id, centerId: mapping.center_id, integrationClientId,
-    }, { externalCenterId, externalResidentId, mappingStatus: 'inactive' });
+    }, { externalCenterId:extCenterId, externalResidentId:extResidentId, mappingStatus: 'inactive' });
     return mapping;
+  }
+
+  async function listExternalSubjectMappings(integrationClientId, { status = null, search = null, page = 1, limit = 50 } = {}) {
+    const client = await requireClient(integrationClientId, { active: false });
+    if (status !== null && status !== '') {
+      assertEnum(status, ['mapped', 'pending_subject_mapping', 'inactive'], 'INVALID_SUBJECT_MAPPING_STATUS', 'สถานะการเชื่อมรหัสผู้พัก');
+    }
+    const needle = optionalText(search, 120);
+    const paging = paginationInput({ page, limit });
+    const query = { integrationClientId, status:status || null, search:needle, limit:paging.limit, offset:paging.offset };
+    const [rows, total] = await Promise.all([
+      repository.listExternalSubjectMappings(query), repository.countExternalSubjectMappings(query),
+    ]);
+    const items = [];
+    for (const row of rows) {
+      if (row.organization_id !== client.organization_id) continue;
+      const [resident, center] = await Promise.all([
+        row.resident_id ? residents.findOne((item) => item.resident_id === row.resident_id && item.center_id === row.center_id) : null,
+        centers.findOne((item) => item.center_id === row.center_id),
+      ]);
+      items.push(externalSubjectMappingProjection(row, resident, center));
+    }
+    return { items, pagination:{ page:paging.page, limit:paging.limit, total,
+      totalPages:total ? Math.ceil(total / paging.limit) : 0 } };
   }
 
   return {
@@ -567,15 +764,16 @@ function createPlatformService(overrides = {}) {
     ensureOrganizationForCenter, listOrganizationCenters, relinkCenter,
     listCenterCapabilities, listCenterResidentOptions, isCenterCapabilityEnabled, setCenterCapability,
     createIntegrationClient, inspectIntegrationClient, listIntegrationClients,
-    revokeIntegrationClient, addClientCenterScope, removeClientCenterScope,
+    setIntegrationClientStatus, revokeIntegrationClient, addClientCenterScope, removeClientCenterScope,
     addClientEventScope, removeClientEventScope,
-    issueCredential, rotateCredential, revokeCredential, authenticateCredential,
-    mapExternalCenter, deactivateExternalCenterMapping,
-    mapExternalSubject, observeExternalSubject, deactivateExternalSubjectMapping,
+    issueCredential, rotateCredential, revokeCredential, authenticateCredential, assertIntegrationIdentityActive,
+    mapExternalCenter, deactivateExternalCenterMapping, listExternalCenterMappings,
+    mapExternalSubject, observeExternalSubject, deactivateExternalSubjectMapping, listExternalSubjectMappings,
     repository,
   };
 }
 
 const platformService = createPlatformService();
 
-module.exports = { createPlatformService, platformService, credentialProjection, clientProjection, organizationProjection };
+module.exports = { createPlatformService, platformService, credentialProjection, clientProjection,
+  organizationProjection, externalCenterMappingProjection, externalSubjectMappingProjection };
