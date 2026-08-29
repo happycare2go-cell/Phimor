@@ -7,6 +7,13 @@ const DAY_MS = 86400000;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
 const MONTHLY_RENEWAL_DAYS = 30;
 const MAX_MONTHLY_RENEWAL_UNITS = 3;
+const RESIDENT_HISTORY_STATUS_LABELS = Object.freeze({
+  discharged:'สิ้นสุดการพัก',
+  transferred:'ย้ายสถานที่ดูแล',
+  cancelled:'ยกเลิกการเข้าพัก',
+  inactive:'ไม่ได้พักอยู่แล้ว',
+  completed:'สิ้นสุดการรับบริการ',
+});
 
 function parseDate(value, field) {
   const date = new Date(value);
@@ -199,6 +206,91 @@ async function sendExpiryReminders(referenceDate = new Date()) {
   return { queued };
 }
 
+function firstStoredTimestamp(...values) {
+  for (const value of values) {
+    if (!value) continue;
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  return null;
+}
+
+function residentStartAt(resident) {
+  return firstStoredTimestamp(
+    resident.admitted_at,
+    resident.admission_at,
+    resident.started_at,
+    resident.created_at,
+    resident._createdAt,
+  );
+}
+
+function residentEndAt(resident) {
+  const status = String(resident.status || '').toLowerCase();
+  const statusTimestamp = {
+    discharged:resident.discharged_at,
+    transferred:resident.transferred_at,
+    cancelled:resident.cancelled_at,
+    inactive:resident.inactivated_at || resident.deactivated_at,
+    completed:resident.completed_at,
+  }[status];
+  return firstStoredTimestamp(statusTimestamp, resident.ended_at, resident.status_changed_at);
+}
+
+function emergencyContact(resident, profile) {
+  const name = String(profile?.emergency_contact_name || '').trim() || null;
+  const phone = String(
+    profile?.emergency_contact_phone
+      || profile?.family_phone
+      || resident.family_phone
+      || '',
+  ).trim() || null;
+  return { name, phone };
+}
+
+function residentHistoryLabel(status) {
+  return RESIDENT_HISTORY_STATUS_LABELS[String(status || '').toLowerCase()]
+    || 'ไม่ได้พักอยู่แล้ว';
+}
+
+function projectAdminResident(resident, profile, { historical }) {
+  const contact = emergencyContact(resident, profile);
+  const base = {
+    displayName:String(resident.full_name || profile?.patient_name || 'ไม่ระบุชื่อ').trim(),
+    room:String(resident.room || '').trim() || null,
+    emergencyContactName:contact.name,
+    emergencyContactPhone:contact.phone,
+  };
+  if (!historical) return base;
+  return {
+    ...base,
+    startedAt:residentStartAt(resident),
+    endedAt:residentEndAt(resident),
+    statusLabel:residentHistoryLabel(resident.status),
+  };
+}
+
+function classifyAdminResidents(residents, profiles) {
+  const profileById = new Map(profiles.map((profile) => [profile.care_profile_id, profile]));
+  const currentResidents = [];
+  const residentHistory = [];
+  for (const resident of residents) {
+    const profile = resident.care_profile_id ? profileById.get(resident.care_profile_id) : null;
+    if (resident.status === 'active') currentResidents.push(projectAdminResident(resident, profile, { historical:false }));
+    else residentHistory.push(projectAdminResident(resident, profile, { historical:true }));
+  }
+  currentResidents.sort((left, right) => left.displayName.localeCompare(right.displayName, 'th'));
+  residentHistory.sort((left, right) => {
+    const byEnd = String(right.endedAt || '').localeCompare(String(left.endedAt || ''));
+    return byEnd || left.displayName.localeCompare(right.displayName, 'th');
+  });
+  return {
+    currentResidents,
+    residentHistory,
+    counts:{ currentResidents:currentResidents.length, historicalResidents:residentHistory.length },
+  };
+}
+
 async function getAdminCenterDetails(centerId) {
   const center = await Centers.findOne((c) => c.center_id === centerId);
   if (!center) return null;
@@ -207,6 +299,7 @@ async function getAdminCenterDetails(centerId) {
   const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
   const profiles = await CareProfiles.findWhere((p) => profileIds.has(p.care_profile_id));
   const owner = staff.find((row) => row.role === 'owner' && row.line_user_id === center.owner_line_id) || staff.find((row) => row.role === 'owner');
+  const residentClassification = classifyAdminResidents(residents, profiles);
   return {
     center:{
       centerId:center.center_id, name:center.name, status:center.status,
@@ -218,6 +311,7 @@ async function getAdminCenterDetails(centerId) {
     staff:staff.map((row) => ({ staffId:row.staff_id, role:row.role, status:row.status || 'active', displayIdentity:displayIdentity({ displayName:row.display_name, lineUserId:row.line_user_id }) })),
     residents:residents.map((row) => ({ residentId:row.resident_id, displayName:row.full_name, room:row.room || null, status:row.status, careProfileLinked:Boolean(row.care_profile_id) })),
     profiles:profiles.map((row) => ({ careProfileId:row.care_profile_id, displayName:row.patient_name, status:row.status })),
+    ...residentClassification,
   };
 }
 
@@ -226,5 +320,7 @@ module.exports = {
   entitlement, subscriptionChronology, addBangkokCalendarMonth,
   MonthlyRenewalInputError, normalizeRenewalUnits, calculateMonthlyRenewal,
   previewMonthlyRenewal, renewMonthlySubscription,
+  RESIDENT_HISTORY_STATUS_LABELS, residentStartAt, residentEndAt,
+  emergencyContact, residentHistoryLabel, projectAdminResident, classifyAdminResidents,
   setSubscription, sendExpiryReminders, getAdminCenterDetails,
 };
