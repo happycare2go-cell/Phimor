@@ -115,6 +115,13 @@ function staffProjection(input, code, { required = false } = {}) {
     if (required) throw new IntegrationEventError(code, 'ไม่พบผู้ยืนยันข้อมูล', 400);
     return null;
   }
+  if (typeof input === 'string') {
+    const externalStaffId = input.trim();
+    if (!externalStaffId || externalStaffId.length > 160 || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(externalStaffId)) {
+      throw new IntegrationEventError(code, 'ข้อมูลผู้บันทึกหรือผู้ยืนยันไม่ถูกต้อง', 400);
+    }
+    return { externalStaffId, displayName:null };
+  }
   exactKeys(input, ['externalStaffId', 'external_staff_id', 'displayName', 'display_name'], code);
   const result = {
     externalStaffId:text(aliased(input, 'externalStaffId', 'external_staff_id'), 160),

@@ -24,8 +24,8 @@ function finalizedEvent({ eventId, recordId, shiftCode, shiftLabel, recordedAt, 
         { type:'spo2', value:97, unit:'%' },
       ],
       care_items:[{ item_type:'symptom_note', value_type:'text', value:'ข้อความตัวอย่างที่ผู้จัดการตรวจสอบแล้ว' }],
-      recorded_by:{ external_staff_id:'pilot-staff-417', display_name:'ผู้ดูแลตัวอย่าง' },
-      finalized_by:{ external_staff_id:'pilot-manager-02', display_name:'ผู้จัดการตัวอย่าง' },
+      recorded_by:'STAFF_123',
+      finalized_by:'MANAGER_456',
       recorded_at:recordedAt, finalized_at:finalizedAt,
     },
   };
@@ -33,23 +33,23 @@ function finalizedEvent({ eventId, recordId, shiftCode, shiftLabel, recordedAt, 
 
 function buildScenarios() {
   const day = finalizedEvent({
-    eventId:'pilot-day-final-20260827', recordId:'pilot-daily-day-20260827', shiftCode:'day', shiftLabel:'D',
+    eventId:'pilot-day-final-20260827', recordId:'pilot-daily-day-20260827', shiftCode:'day', shiftLabel:'Day',
     recordedAt:'2026-08-27T19:55:00+07:00', finalizedAt:'2026-08-27T20:05:00+07:00',
   });
   const night = finalizedEvent({
-    eventId:'pilot-night-final-20260827', recordId:'pilot-daily-night-20260827', shiftCode:'night', shiftLabel:'N',
+    eventId:'pilot-night-final-20260827', recordId:'pilot-daily-night-20260827', shiftCode:'night', shiftLabel:'Night',
     recordedAt:'2026-08-28T07:45:00+07:00', finalizedAt:'2026-08-28T08:00:00+07:00',
   });
   const pending = finalizedEvent({
-    eventId:'pilot-pending-subject-20260827', recordId:'pilot-daily-pending-20260827', shiftCode:'day', shiftLabel:'D',
+    eventId:'pilot-pending-subject-20260827', recordId:'pilot-daily-pending-20260827', shiftCode:'day', shiftLabel:'Day',
     recordedAt:'2026-08-27T19:55:00+07:00', finalizedAt:'2026-08-27T20:05:00+07:00', residentExternalId:'pilot-resident-not-mapped',
   });
   const mismatch = finalizedEvent({
-    eventId:'pilot-group-mismatch-20260827', recordId:'pilot-daily-mismatch-20260827', shiftCode:'day', shiftLabel:'D',
+    eventId:'pilot-group-mismatch-20260827', recordId:'pilot-daily-mismatch-20260827', shiftCode:'day', shiftLabel:'Day',
     recordedAt:'2026-08-27T19:55:00+07:00', finalizedAt:'2026-08-27T20:05:00+07:00', expectedLineGroupId:'Cfictionaldifferentgroup',
   });
   const invalidCenter = finalizedEvent({
-    eventId:'pilot-invalid-center-20260827', recordId:'pilot-daily-invalid-center-20260827', shiftCode:'day', shiftLabel:'D',
+    eventId:'pilot-invalid-center-20260827', recordId:'pilot-daily-invalid-center-20260827', shiftCode:'day', shiftLabel:'Day',
     recordedAt:'2026-08-27T19:55:00+07:00', finalizedAt:'2026-08-27T20:05:00+07:00', centerExternalId:'pilot-branch-not-mapped',
   });
   const invalidPayload = clone(day);

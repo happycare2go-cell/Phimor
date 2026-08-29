@@ -63,6 +63,7 @@ function createIntegrationEventService(overrides={}){const repository=overrides.
               externalStaffDisplayName:recordedBy?.displayName||null,
               recorderDisplayName:recordedBy?.displayName||null,
               sourceRecordedAt:envelope.data.recordedAt,finalizedAt:envelope.data.finalizedAt,
+              externalFinalizerReference:finalizedBy?.externalStaffId||null,
               finalizedByActorReference:`integration_client:${claimed.integration_client_id}`,
               finalizerDisplayName:finalizedBy?.displayName||null}});
           resourceType='daily_care_report';

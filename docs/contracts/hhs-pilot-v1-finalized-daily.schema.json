@@ -70,15 +70,23 @@
     "timestamp": { "type": "string", "format": "date-time" },
     "name": { "type": "string", "minLength": 1, "maxLength": 120 },
     "staff": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "external_staff_id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "display_name": { "type": "string", "minLength": 1, "maxLength": 160 }
-      },
-      "anyOf": [
-        { "required": ["external_staff_id"] },
-        { "required": ["display_name"] }
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "external_staff_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+            "display_name": { "type": "string", "minLength": 1, "maxLength": 160 }
+          },
+          "anyOf": [
+            { "required": ["external_staff_id"] },
+            { "required": ["display_name"] }
+          ]
+        }
       ]
     },
     "observation": {

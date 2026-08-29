@@ -51,8 +51,10 @@ test('HHS-like simulator contains the nine fictional contract scenarios and neve
 test('valid Day and Night finalized payloads normalize with the locked shift mapping and HHS Vital subset', () => {
   const day = normalizeEnvelope(scenario('day').payload).envelope;
   const night = normalizeEnvelope(scenario('night').payload).envelope;
-  assert.deepEqual([day.data.shift.code, day.data.shift.sourceLabel], ['day','D']);
-  assert.deepEqual([night.data.shift.code, night.data.shift.sourceLabel], ['night','N']);
+  assert.deepEqual([day.data.shift.code, day.data.shift.sourceLabel], ['day','Day']);
+  assert.deepEqual([night.data.shift.code, night.data.shift.sourceLabel], ['night','Night']);
+  assert.deepEqual(day.data.recordedBy, { externalStaffId:'STAFF_123', displayName:null });
+  assert.deepEqual(day.data.finalizedBy, { externalStaffId:'MANAGER_456', displayName:null });
   assert.deepEqual(day.data.observations.map((item) => item.measurementType), ['temperature','blood_pressure_systolic','blood_pressure_diastolic','pulse','spo2']);
   assert.equal(day.data.careItems[0].itemType, 'symptom_note');
 });
@@ -123,7 +125,9 @@ test('checked-in JSON Schema and mapping contract match supported fields without
   assert.equal(schema.properties.event_type.const, 'care.daily_report.finalized');
   assert.equal(schema.properties.data.properties.care_items.minItems, 1);
   const contract = fs.readFileSync(path.resolve(__dirname, '..', 'docs', 'HHS_PILOT_V1_CONTRACT.md'), 'utf8');
-  assert.match(contract, /D.*Day.*→ `day`/); assert.match(contract, /N.*Night.*→ `night`/);
+  assert.match(contract, /Code is `day`\/`night`; source label is `Day`\/`Night`/);
+  assert.equal(schema.$defs.staff.oneOf[0].type, 'string');
+  assert.match(contract, /rejected.*dead.*terminal non-2xx/s);
   assert.match(contract, /final human-reviewed text/); assert.match(contract, /symptom_note/);
   assert.doesNotMatch(fs.readFileSync(path.resolve(__dirname, '..', 'backend', 'services', 'integrationEventService.js'), 'utf8'), /vendor\s*===?\s*['"]hhs|sourceSystem\s*===?\s*['"]hhs/i);
 });

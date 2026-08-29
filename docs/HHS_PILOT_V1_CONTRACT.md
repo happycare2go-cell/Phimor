@@ -48,11 +48,11 @@ or data-dependent requirement without making it a global platform rule.
 | `data.care_date` | REQUIRED | Calendar date `YYYY-MM-DD`. |
 | `data.shift` | CONDITIONAL | Required by HHS Pilot operations; optional to the generic platform. |
 | `data.shift.code` | CONDITIONAL | HHS maps Day to `day`, Night to `night`. Other vendors may use other bounded normalized codes. |
-| `data.shift.source_label` | OPTIONAL | Preserve source label such as `D` or `N`. |
+| `data.shift.source_label` | OPTIONAL | Preserve the HHS source label `Day` or `Night`. |
 | `data.observations` | OPTIONAL | Send only measurements actually recorded. Absence means no linked Vital set. |
-| `data.care_items` | REQUIRED | 1–30 final factual care items. |
-| `data.recorded_by` | OPTIONAL | At least staff ID or display name when supplied. |
-| `data.finalized_by` | REQUIRED | At least manager ID or display name. |
+| `data.care_items` | REQUIRED | A typed array of 1–30 final factual care items. It is never a keyed object. HHS final text uses `{ "item_type":"symptom_note", "value_type":"text", "value":"..." }`. |
+| `data.recorded_by` | OPTIONAL | HHS may send a scalar external reference such as `STAFF_123`. The existing strict object form with `external_staff_id` and/or `display_name` remains accepted. |
+| `data.finalized_by` | REQUIRED | HHS may send a scalar external reference such as `MANAGER_456`. The existing strict object form remains accepted. Scalar values are provenance only and never grant authorization. |
 | `data.recorded_at` | REQUIRED | RFC 3339 timestamp of source recording. |
 | `data.finalized_at` | REQUIRED | RFC 3339 timestamp, not earlier than `recorded_at`. |
 
@@ -66,7 +66,7 @@ All identifiers and people in this example are fictional.
 ```json
 {
   "schema_version": "1.0",
-  "event_id": "pilot-final-resident-10025-20260827-day",
+  "event_id": "hhs-health-record-123",
   "event_type": "care.daily_report.finalized",
   "occurred_at": "2026-08-27T20:05:00+07:00",
   "subject": {
@@ -80,9 +80,9 @@ All identifiers and people in this example are fictional.
     }
   },
   "data": {
-    "external_record_id": "pilot-daily-10025-20260827-day",
+    "external_record_id": "HHS_HEALTH_RECORD_123",
     "care_date": "2026-08-27",
-    "shift": { "code": "day", "source_label": "D" },
+    "shift": { "code": "day", "source_label": "Day" },
     "observations": [
       { "type": "temperature", "value": 36.6, "unit": "Cel" },
       { "type": "blood_pressure_systolic", "value": 128, "unit": "mm[Hg]" },
@@ -97,14 +97,8 @@ All identifiers and people in this example are fictional.
         "value": "ข้อความสรุปที่ผู้จัดการตรวจสอบและยืนยันแล้ว"
       }
     ],
-    "recorded_by": {
-      "external_staff_id": "pilot-staff-417",
-      "display_name": "ผู้ดูแลกะกลางวัน"
-    },
-    "finalized_by": {
-      "external_staff_id": "pilot-manager-02",
-      "display_name": "ผู้จัดการเวร"
-    },
+    "recorded_by": "STAFF_123",
+    "finalized_by": "MANAGER_456",
     "recorded_at": "2026-08-27T19:55:00+07:00",
     "finalized_at": "2026-08-27T20:05:00+07:00"
   }
@@ -125,17 +119,17 @@ Do not infer the left column from the concept label.
 | `TBD` | Room | `subject.display.room` | OPTIONAL | Operational hint/factual display. |
 | `TBD` | LINE Group ID | `subject.expected_line_group_id` | SHOULD | Cross-check only; never direct routing. |
 | `TBD` | Daily report record ID | `data.external_record_id` | REQUIRED | Stable after finalization. |
-| `TBD` | Day/Night | `data.shift.code` + `data.shift.source_label` | HHS REQUIRED | `D`/Day → `day`; `N`/Night → `night`. |
+| `TBD` | Day/Night | `data.shift.code` + `data.shift.source_label` | HHS REQUIRED | Code is `day`/`night`; source label is `Day`/`Night`. |
 | `TBD` | Temperature | observation `temperature` | CONDITIONAL | Send if recorded, unit `Cel`, `°C`, or `C`. |
 | `TBD` | BP systolic | observation `blood_pressure_systolic` | CONDITIONAL | Send if recorded, unit `mm[Hg]` or `mmHg`. |
 | `TBD` | BP diastolic | observation `blood_pressure_diastolic` | CONDITIONAL | Send if recorded, unit `mm[Hg]` or `mmHg`. |
 | `TBD` | Pulse | observation `pulse` | CONDITIONAL | Send if recorded, unit `/min` or `bpm`. |
 | `TBD` | SpO2 | observation `spo2` | CONDITIONAL | Send if recorded, unit `%`. |
 | `TBD` | Final human-reviewed text | care item `symptom_note` | REQUIRED for HHS note flow | No audio, URL, Base64, AI draft, or raw transcription. |
-| `TBD` | Recorder ID | `data.recorded_by.external_staff_id` | OPTIONAL | Source provenance. |
-| `TBD` | Recorder name | `data.recorded_by.display_name` | OPTIONAL | Safe display provenance. |
-| `TBD` | Manager ID | `data.finalized_by.external_staff_id` | CONDITIONAL | Either finalizer ID or name is required. |
-| `TBD` | Manager name | `data.finalized_by.display_name` | CONDITIONAL | Either finalizer ID or name is required. |
+| `TBD` | Recorder ID | `data.recorded_by` | OPTIONAL | HHS sends scalar `STAFF_{id}`. Object `external_staff_id` remains accepted for other senders. |
+| `TBD` | Recorder name | `data.recorded_by.display_name` | OPTIONAL | Available only when the object form is used; PHIMOR does not infer a name from the scalar. |
+| `TBD` | Manager ID | `data.finalized_by` | REQUIRED | HHS sends scalar `MANAGER_{id}`; PHIMOR preserves it as external finalizer provenance. |
+| `TBD` | Manager name | `data.finalized_by.display_name` | OPTIONAL | Available only when the object form is used. |
 | `TBD` | Recorded time | `data.recorded_at` | REQUIRED | RFC 3339 with offset. |
 | `TBD` | Finalized time | `data.finalized_at` | REQUIRED | After successful final DB commit. |
 
@@ -200,7 +194,7 @@ SQL errors, stack traces, credentials, LINE IDs, or the clinical payload.
 | `202 processed` | Accepted and canonicalized. Do not resend. |
 | `202 pending_subject_mapping` | Accepted durably; PHIMOR will reprocess after exact mapping. Do not resend. |
 | `202 retrying` | Accepted durably; PHIMOR owns bounded internal retry. Do not resend. |
-| `200` with `duplicate:true` | Safe duplicate of the same normalized payload. Stop retrying. |
+| `200` with `duplicate:true` and accepted/durable state | The same normalized payload is already processed or durably owned by PHIMOR. Stop retrying. |
 | `400`, `401`, `403`, `409`, `413`, `422` with `retryable:false` | Terminal. Alert operations and correct contract/configuration. |
 | `429` with `retryable:true` | Retry using the same event and payload after `Retry-After`. |
 | `5xx` with `retryable:true` | Acceptance was not confirmed; retry same event/payload with backoff. |
@@ -208,6 +202,11 @@ SQL errors, stack traces, credentials, LINE IDs, or the clinical payload.
 `pending_subject_mapping` is an accepted state, not an error. Group mismatch or
 missing binding also does not invalidate canonical care; it holds only the
 notification path.
+
+A duplicate of an inbox event already in terminal `rejected` or `dead` state
+returns a terminal non-2xx response, never an accepted HTTP 200. This remains
+true when the original terminal response was lost and HHS retries the same
+event and payload.
 
 Representative terminal public codes include `CENTER_MAPPING_NOT_FOUND`,
 `RESIDENT_MAPPING_INVALID`, `CARE_PROFILE_RELATIONSHIP_INVALID`,
@@ -220,6 +219,8 @@ Representative terminal public codes include `CENTER_MAPPING_NOT_FOUND`,
 
 - Identity is Integration Client + `event_id` + normalized SHA-256 payload.
 - Same client, `event_id`, and normalized payload returns a safe duplicate.
+- A same-payload retry never changes terminal `rejected`/`dead` state into an
+  accepted response.
 - Same `event_id` with different normalized content returns HTTP 409
   `EVENT_ID_REUSED`.
 - `data.external_record_id` is an additional canonical dedupe boundary.

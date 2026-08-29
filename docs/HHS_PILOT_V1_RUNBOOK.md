@@ -27,7 +27,7 @@ task.
 ## Production migration readiness
 
 The repository migration chain currently ends at
-`0014_create_shared_rate_limit_windows.js`. Application startup (`npm
+`0016_add_center_family_linking_integrity.js`. Application startup (`npm
 start`) does not run migrations.
 
 The supported commands are only the following, run from `backend` with the
@@ -59,11 +59,12 @@ Production sequence:
    `0012_align_care_finalization_and_routing`, then
    `0013_add_consultation_payment_recovery`, then
    `0014_create_shared_rate_limit_windows`, then
-   `0015_add_plus_payment_v1`;
+   `0015_add_plus_payment_v1`, then
+   `0016_add_center_family_linking_integrity`;
 6. if older than `0007`, review every reported pending migration rather than
    assuming the starting state;
 7. run `npm run migrate` once; do not interrupt the runner;
-8. run `npm run migrate:status` again and require current version `0015`, no
+8. run `npm run migrate:status` again and require current version `0016`, no
    pending migration, and no checksum mismatch;
 9. deploy/redeploy `phimor-backend` from the approved commit;
 10. verify `/health`, `/ready`, scheduler heartbeat, notification health, and
@@ -82,8 +83,9 @@ truth. A checksum mismatch is a stop condition.
 `render.yaml` defines `phimor-backend` and `phimor-liff` but does not set
 `autoDeploy:false`; its header also describes automatic Blueprint deployment.
 It has no migration `preDeployCommand`. Therefore a merge can deploy backend
-code requiring migrations 0008–0015 before schema preparation. Migration 0015
-adds the separately gated Plus payment domain and does not change the HHS event contract.
+code requiring migrations 0008–0016 before schema preparation. Migrations 0015
+and 0016 add separately scoped Plus payment and Center–Family linking integrity;
+neither changes the HHS event contract.
 
 Before merging/deploying the pilot release, an authorized operator must disable
 or pause auto-deploy for both production services in Render (or otherwise hold

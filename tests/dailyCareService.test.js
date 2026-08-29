@@ -91,13 +91,16 @@ function externalInput(extra={}) {
     expectedLineGroupId:null,
     provenance:{sourceType:'external_integration',sourceSystem:'vendor_a',integrationClientId:'INT-A',externalRecordId:'EXT-D-1',
       externalStaffDisplayName:'ผู้ดูแลภายนอก',actorReference:'integration_client:INT-A',sourceRecordedAt:'2026-08-27T01:55:00Z',
-      finalizedAt:'2026-08-27T02:00:00Z',finalizedByActorReference:'integration_client:INT-A',finalizerDisplayName:'ผู้จัดการภายนอก'},...extra};
+      finalizedAt:'2026-08-27T02:00:00Z',finalizedByActorReference:'integration_client:INT-A',
+      externalFinalizerReference:'MANAGER_456',finalizerDisplayName:'ผู้จัดการภายนอก'},...extra};
 }
 
 test('external finalized snapshot is idempotent and mismatched client tenant is denied',async()=>{
   const{service,repository}=fixture();await seed();const input=externalInput();
   assert.equal((await service.recordCanonical(input)).duplicate,false);assert.equal((await service.recordCanonical(input)).duplicate,true);
   assert.equal(repository.state.reports.length,1);assert.equal(repository.state.reports[0].status,'finalized');
+  assert.equal(repository.state.events[0].metadata.externalFinalizerReference,'MANAGER_456');
+  assert.doesNotMatch(JSON.stringify((await service.listHistory({lineUserId:'U-OWNER',careProfileId:'CP-A'})).items),/MANAGER_456/);
   await assert.rejects(service.recordCanonical({...input,provenance:{...input.provenance,integrationClientId:'INT-B',externalRecordId:'EXT-D-2'}}),{code:'INTEGRATION_TENANT_MISMATCH'});
 });
 

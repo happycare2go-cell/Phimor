@@ -169,6 +169,8 @@ function createDailyCareService(overrides={}) {
       ? requiredId(provenance?.integrationClientId,'Integration Client ID'):null;
     const externalRecordId=sourceType==='external_integration'
       ? requiredId(provenance?.externalRecordId,'External record ID'):null;
+    const externalFinalizerReference=sourceType==='external_integration'
+      ? optionalText(provenance?.externalFinalizerReference,160):null;
     const actorType=sourceType==='external_integration'?'integration_client':'center_staff';
     const actor=actorReference(provenance?.actorReference);
     if(integrationClientId)await validateExternalClient({integrationClientId,organizationId,centerId});
@@ -220,6 +222,7 @@ function createDailyCareService(overrides={}) {
       await repository.insertEvent({dailyEventId:idFactory('DCE'),dailyReportId,eventType,
         actorType,actorReference:actor,metadata:{itemTypes:normalized.map((item)=>item.itemType),
           hasVitalSigns:storedVitals.length>0,sourceType,versionNo,
+          ...(externalFinalizerReference?{externalFinalizerReference}:{}),
           ...(versionNo>1&&provenance?.correctionReason?{correctionReason:provenance.correctionReason}:{})}});
       return {duplicate:false,item:{...projectReport(row,stored,[]),vitalSigns:storedVitals}};
     });
