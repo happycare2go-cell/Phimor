@@ -20,6 +20,14 @@
   .hdr{background:var(--navy);color:#fff;padding:16px 18px}
   .hdr .logo{font-size:19px;font-weight:700}
   .hdr .sub{font-size:12px;opacity:.8;margin-top:2px}
+  .center-line-identity{display:flex;align-items:center;gap:11px;margin-top:12px;min-width:0}
+  .center-line-identity__avatar{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;flex:0 0 46px;background:#fff;color:var(--navy);font-size:18px;font-weight:700;overflow:hidden;border:2px solid rgba(255,255,255,.72)}
+  .center-line-identity__avatar img{width:100%;height:100%;object-fit:cover;display:block}
+  .center-line-identity__avatar img[hidden]{display:none}
+  .center-line-identity__copy{min-width:0;flex:1}
+  .center-line-identity__name{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .center-line-identity__context{font-size:12px;line-height:1.45;opacity:.86;overflow-wrap:anywhere}
+  #centerSelector{min-height:44px}
   .tabs{display:flex;background:#fff;border-bottom:1px solid #E3E7F0;overflow-x:auto}
   .tab{padding:12px 16px;font-size:13px;color:var(--gray);white-space:nowrap;cursor:pointer;border-bottom:3px solid transparent}
   .tab.active{color:var(--navy);font-weight:700;border-color:var(--gold)}
@@ -87,7 +95,16 @@
 
 <div class="hdr">
   <div class="logo">พี่หมอ <span style="font-weight:400;font-size:13px;opacity:.85">· ศูนย์</span></div>
-  <div class="sub" id="centerNameLabel">กำลังโหลด...</div>
+  <div class="center-line-identity" aria-label="บัญชี LINE และสิทธิ์ศูนย์ที่กำลังใช้งาน">
+    <div class="center-line-identity__avatar" aria-hidden="true">
+      <img id="lineProfilePicture" alt="" hidden>
+      <span id="lineProfileFallback">L</span>
+    </div>
+    <div class="center-line-identity__copy">
+      <div class="center-line-identity__name" id="lineDisplayName">กำลังโหลด...</div>
+      <div class="center-line-identity__context" id="centerNameLabel">กำลังตรวจสอบสิทธิ์ศูนย์...</div>
+    </div>
+  </div>
   <select id="centerSelector" onchange="selectCenter(this.value)" style="display:none;margin-top:10px;background:#fff"></select>
 </div>
 
@@ -375,6 +392,7 @@
 <script>
 let BACKEND_URL = null;
 let LINE_USER_ID = null;
+let LINE_PROFILE = null;
 let LINE_ID_TOKEN = null;
 let CENTER_ID = null;
 let CENTERS = [];
@@ -384,6 +402,30 @@ let centerMedicationDraftImage = null;
 let centerMedicationAwaitingConfirmation = false;
 let centerMedicationConditions = [];
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
+
+function safeLineProfilePictureUrl(value){
+  if(typeof value!=='string'||!value.trim())return '';
+  try{
+    const parsed=new URL(value,location.origin);
+    const loopback=/^(?:localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+    if(parsed.protocol==='https:'||(loopback&&parsed.origin===location.origin))return parsed.href;
+  }catch(_){}
+  return '';
+}
+function renderLineIdentity(profile){
+  const name=document.getElementById('lineDisplayName');
+  const image=document.getElementById('lineProfilePicture');
+  const fallback=document.getElementById('lineProfileFallback');
+  const displayName=typeof profile?.displayName==='string'&&profile.displayName.trim()
+    ?profile.displayName.trim().slice(0,100):'ผู้ใช้ LINE';
+  const pictureUrl=safeLineProfilePictureUrl(profile?.pictureUrl);
+  name.textContent=displayName;
+  fallback.textContent=Array.from(displayName)[0]||'L';
+  fallback.hidden=false;image.hidden=true;image.removeAttribute('src');
+  image.onload=()=>{if(image.src===pictureUrl){fallback.hidden=true;image.hidden=false;}};
+  image.onerror=()=>{image.hidden=true;fallback.hidden=false;image.removeAttribute('src');};
+  if(pictureUrl)image.src=pictureUrl;
+}
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._hideTimer); t._hideTimer=setTimeout(()=>t.classList.remove('show'),Math.max(3200,Math.min(6500,String(msg).length*90))); }
 function openModal(id){ document.getElementById(id).classList.add('show'); }
@@ -715,18 +757,37 @@ async function copyForwardText(text){
 
 async function selectCenter(centerId) {
   centerCareUi.clear();
-  CENTER_ID = centerId;
   const center = CENTERS.find(c => c.center_id === centerId);
-  CURRENT_ROLE = center.myRole;
-  document.getElementById('centerNameLabel').textContent = center.name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[center.myRole]||center.myRole);
-  document.getElementById('staffTab').style.display = center.myRole === 'owner' ? '' : 'none';
-  if (!applySubscription(center)) return;
+  if (!center) return toast('ไม่พบสาขาที่คุณมีสิทธิ์');
+  if (!applySelectedCenterContext(center)) return;
   await loadResidents();
   await syncCenterCareContext();
   const activeView = document.querySelector('.tab.active')?.dataset.view;
   if (activeView === 'staff') await loadStaff();
   if (activeView === 'transport') await loadTransport();
   if (activeView === 'ratecard') await loadRateCard();
+}
+
+function applyRoleControls(role){
+  const canManage=role==='owner'||role==='manager';
+  document.getElementById('addResidentCard').style.display=canManage?'':'none';
+  document.querySelector('.tab[data-view="transport"]').style.display=canManage?'':'none';
+  document.querySelector('.tab[data-view="ratecard"]').style.display=canManage?'':'none';
+  document.getElementById('staffTab').style.display=role==='owner'?'':'none';
+  const active=document.querySelector('.tab.active');
+  if(active&&active.style.display==='none')document.querySelector('.tab[data-view="residents"]').click();
+}
+
+function applySelectedCenterContext(center){
+  CENTER_ID=center.center_id;
+  CURRENT_ROLE=center.myRole;
+  const roleLabel=({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[center.myRole]||center.myRole);
+  document.getElementById('centerNameLabel').textContent=`${roleLabel} · ${center.name}`;
+  document.getElementById('centerSelector').value=center.center_id;
+  applyRoleControls(center.myRole);
+  const allowed=applySubscription(center);
+  if(allowed&&!document.querySelector('.tab.active'))document.querySelector('.tab[data-view="residents"]').click();
+  return allowed;
 }
 async function removeManager(id) {
   if (!await askConfirm('ถอนสิทธิ์บุคลากร','บุคคลนี้จะไม่สามารถเข้าถึงข้อมูลของสาขาได้ทันที หากกลับมาทำงาน สามารถเข้ากลุ่มและรออนุมัติใหม่ได้','ถอนสิทธิ์')) return;
@@ -1125,24 +1186,17 @@ async function main() {
   if (!liff.isLoggedIn()) { liff.login(); return; }
   const profile = await liff.getProfile();
   LINE_USER_ID = profile.userId;
+  LINE_PROFILE = { displayName:profile.displayName, pictureUrl:profile.pictureUrl };
+  renderLineIdentity(LINE_PROFILE);
   LINE_ID_TOKEN = liff.getIDToken();
 
   const me = await api('/api/center/me');
   CENTERS = me.centers.filter(Boolean);
   if (CENTERS.length === 0) throw new Error('ไม่พบสาขาที่คุณมีสิทธิ์');
   const selector = document.getElementById('centerSelector');
-  selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${{owner:'เจ้าของ',manager:'ผู้จัดการ',staff:'พนักงาน'}[c.myRole]||c.myRole}</option>`).join('');
+  selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${{owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[c.myRole]||c.myRole}</option>`).join('');
   selector.style.display = CENTERS.length > 1 ? 'block' : 'none';
-  CENTER_ID = CENTERS[0].center_id;
-  CURRENT_ROLE = CENTERS[0].myRole;
-  document.getElementById('staffTab').style.display = CENTERS[0].myRole === 'owner' ? '' : 'none';
-  document.getElementById('centerNameLabel').textContent = CENTERS[0].name + ' · ' + ({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[CENTERS[0].myRole]||CENTERS[0].myRole);
-  if (!applySubscription(CENTERS[0])) return;
-  if (CURRENT_ROLE === 'staff') {
-    document.getElementById('addResidentCard').style.display='none';
-    document.querySelector('.tab[data-view="transport"]').style.display='none';
-    document.querySelector('.tab[data-view="ratecard"]').style.display='none';
-  }
+  if (!applySelectedCenterContext(CENTERS[0])) return;
 
   // อ่าน URL Parameter เพื่อ Route ไปหน้าที่ถูกต้อง (ใช้กับปุ่ม Rich Menu และลิงก์แก้ไขการ์ดจาก LINE)
   const view = new URLSearchParams(location.search).get('view');

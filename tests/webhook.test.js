@@ -51,6 +51,101 @@ test('LINE Verify ส่ง events ว่างมา ต้องตอบ 200 
   assert.strictEqual((await db.WebhookInbox.findAll()).length, 0);
 });
 
+test('private opencenter aliases reply with one runtime LIFF registration action and create no Center', async () => {
+  const previous = process.env.LIFF_ID_REGISTER;
+  process.env.LIFF_ID_REGISTER = '2000000000-AbCdEf12';
+  try {
+    const aliases = ['opencenter', '  OPEN   CENTER  ', 'เปิดศูนย์', 'สมัครศูนย์', 'ลงทะเบียนศูนย์'];
+    for (const [index, text] of aliases.entries()) {
+      lineClient.clearSentLog();
+      await require('../backend/routes/webhook').processEvent({
+        type:'message', replyToken:`RT-OPEN-${index}`,
+        message:{ type:'text', text }, source:{ type:'user', userId:'U-OWNER' },
+      });
+      const sent = lineClient.getSentLog();
+      assert.strictEqual(sent.length, 1);
+      assert.strictEqual(sent[0].type, 'reply');
+      assert.strictEqual(sent[0].messages[0].type, 'template');
+      assert.strictEqual(sent[0].messages[0].template.actions[0].label, 'ลงทะเบียนศูนย์ใหม่');
+      assert.strictEqual(sent[0].messages[0].template.actions[0].uri, 'https://liff.line.me/2000000000-AbCdEf12');
+    }
+    assert.strictEqual((await db.Centers.findAll()).length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.LIFF_ID_REGISTER;
+    else process.env.LIFF_ID_REGISTER = previous;
+  }
+});
+
+test('opencenter exact matching does not accept substring commands', async () => {
+  const previous = process.env.LIFF_ID_REGISTER;
+  process.env.LIFF_ID_REGISTER = '2000000000-AbCdEf12';
+  try {
+    await require('../backend/routes/webhook').processEvent({
+      type:'message', replyToken:'RT-NOT-COMMAND',
+      message:{ type:'text', text:'please opencenter now' }, source:{ type:'user', userId:'U-OWNER' },
+    });
+    assert.strictEqual(lineClient.getSentLog().length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.LIFF_ID_REGISTER;
+    else process.env.LIFF_ID_REGISTER = previous;
+  }
+});
+
+test('opencenter aliases are silently consumed in group and room sources', async () => {
+  const previous = process.env.LIFF_ID_REGISTER;
+  process.env.LIFF_ID_REGISTER = '2000000000-AbCdEf12';
+  try {
+    for (const source of [
+      { type:'group', groupId:'G-FAMILY', userId:'U-1' },
+      { type:'room', roomId:'R-CARE2GO', userId:'U-1' },
+    ]) {
+      await require('../backend/routes/webhook').processEvent({
+        type:'message', replyToken:`RT-${source.type}`,
+        message:{ type:'text', text:'เปิดศูนย์' }, source,
+      });
+    }
+    assert.strictEqual(lineClient.getSentLog().length, 0);
+    assert.strictEqual((await db.CenterStaff.findAll()).length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.LIFF_ID_REGISTER;
+    else process.env.LIFF_ID_REGISTER = previous;
+  }
+});
+
+test('missing LIFF_ID_REGISTER returns a safe private reply without a broken URI', async () => {
+  const previous = process.env.LIFF_ID_REGISTER;
+  delete process.env.LIFF_ID_REGISTER;
+  try {
+    await require('../backend/routes/webhook').processEvent({
+      type:'message', replyToken:'RT-MISSING-LIFF',
+      message:{ type:'text', text:'opencenter' }, source:{ type:'user', userId:'U-OWNER' },
+    });
+    const text = lineClient.getSentLog()[0].messages[0].text;
+    assert.match(text, /ติดต่อทีมงานพี่หมอ/);
+    assert.doesNotMatch(text, /YOUR_LIFF_ID|undefined|https:\/\/liff\.line\.me\/$/);
+  } finally {
+    if (previous !== undefined) process.env.LIFF_ID_REGISTER = previous;
+  }
+});
+
+test('opencenter webhook redelivery with the same event ID produces one reply', async () => {
+  const previous = process.env.LIFF_ID_REGISTER;
+  process.env.LIFF_ID_REGISTER = '2000000000-AbCdEf12';
+  try {
+    const event = {
+      webhookEventId:'EVT-OPEN-CENTER', type:'message', replyToken:'RT-OPEN',
+      deliveryContext:{ isRedelivery:false }, message:{ type:'text', text:'opencenter' },
+      source:{ type:'user', userId:'U-OWNER' },
+    };
+    await Promise.all([postWebhook([event]), postWebhook([{ ...event, deliveryContext:{ isRedelivery:true } }])]);
+    assert.strictEqual((await db.WebhookInbox.findWhere((row) => row.event_key === event.webhookEventId)).length, 1);
+    assert.strictEqual(lineClient.getSentLog().filter((item) => item.type === 'reply').length, 1);
+  } finally {
+    if (previous === undefined) delete process.env.LIFF_ID_REGISTER;
+    else process.env.LIFF_ID_REGISTER = previous;
+  }
+});
+
 test('ลายเซ็น LINE แบบ HMAC-SHA256 ถูกต้องผ่าน และ body ที่ถูกแก้ต้องไม่ผ่าน', () => {
   const secret = 'test-channel-secret';
   const rawBody = JSON.stringify({ destination:'U_TEST', events:[] });

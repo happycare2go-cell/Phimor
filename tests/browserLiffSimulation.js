@@ -285,7 +285,10 @@ async function centerFamilyLinkingJourney(browser) {
   let centerLinkCreates=0;
   await mockBackend(centerPage,async(url,request)=>{
     if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
-    if(url.pathname==='/api/center/me')return{centers:[{center_id:'CTR1',name:'ศูนย์ตัวอย่าง',myRole:'owner',status:'active',subscription:{allowed:true,remainingDays:30}}]};
+    if(url.pathname==='/api/center/me')return{centers:[
+      {center_id:'CTR1',name:'ศูนย์ตัวอย่าง',myRole:'owner',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}},
+      {center_id:'CTR2',name:'ศูนย์สาขาพนักงาน',myRole:'staff',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}},
+    ]};
     if(url.pathname==='/api/residents')return{residents:[]};
     if(url.pathname==='/api/center/appointments')return{appointments:[]};
     if(url.pathname==='/api/center/care-profile-link-requests'&&request.method()==='POST'){
@@ -295,6 +298,7 @@ async function centerFamilyLinkingJourney(browser) {
   });
   await centerPage.setContent(localHtml('center-admin'),{waitUntil:'domcontentloaded'});
   await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('ศูนย์ตัวอย่าง'));
+  assert.equal(await centerPage.locator('#lineDisplayName').textContent(),'ผู้ใช้จำลอง');
   const existingChoice=centerPage.getByRole('button',{name:/เชื่อม Care Profile ที่มีอยู่แล้ว/});
   const newChoice=centerPage.getByRole('button',{name:/สร้าง Care Profile ใหม่/}).first();
   assert.equal(await existingChoice.isVisible(),true);
@@ -315,6 +319,17 @@ async function centerFamilyLinkingJourney(browser) {
   }));
   assert.equal(centerMobile.overflow,true);assert.ok(centerMobile.choiceHeight>=44);
   assert.equal(centerMobile.toastPointer,'none');assert.ok(centerMobile.modalZ>centerMobile.toastZ);
+  assert.ok((await centerPage.locator('#centerSelector').boundingBox()).height>=44);
+  await centerPage.locator('#centerSelector').selectOption('CTR2');
+  await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('พนักงาน · ศูนย์สาขาพนักงาน'));
+  assert.equal(await centerPage.locator('#addResidentCard').isHidden(),true);
+  assert.equal(await centerPage.locator('.tab[data-view="transport"]').isHidden(),true);
+  assert.equal(await centerPage.locator('#staffTab').isHidden(),true);
+  await centerPage.locator('#centerSelector').selectOption('CTR1');
+  await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('เจ้าของศูนย์ · ศูนย์ตัวอย่าง'));
+  assert.equal(await centerPage.locator('#addResidentCard').isVisible(),true);
+  assert.equal(await centerPage.locator('.tab[data-view="transport"]').isVisible(),true);
+  assert.equal(await centerPage.locator('#staffTab').isVisible(),true);
   await centerPage.close();
 
   const familyPage=await browser.newPage({viewport:{width:390,height:844}});
@@ -337,6 +352,9 @@ async function centerFamilyLinkingJourney(browser) {
     if(url.pathname==='/api/plus/entitlement')return{status:'basic',plus:false};
     return{status:404,body:{message:`unmocked ${url.pathname}`}};
   });
+  // Give storage assertions a non-opaque test origin before replacing the
+  // document with the real Family LIFF markup.
+  await familyPage.goto(SIMULATED_BACKEND_URL);
   await familyPage.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
   await familyPage.waitForFunction(()=>getComputedStyle(document.querySelector('#app')).display==='block');
   await familyPage.locator('[data-family-destination="access"]').first().click();
@@ -405,8 +423,8 @@ async function centerPendingFailureIsVisible(browser) {
 async function registerJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
-    if (url.pathname === '/config/liff') return { registerLiffId: 'SIM_REGISTER' };
-    if (url.pathname === '/api/external/register-center') return { success:true, centerId:'CTR1' };
+    if (url.pathname === '/config/liff') return { publicBackendUrl:SIMULATED_BACKEND_URL, registerLiffId:'SIM_REGISTER' };
+    if (url.pathname === '/api/external/register-center') return { success:true, centerId:'CTR1', subscription:{state:'trial',expiresAt:'2026-09-29T03:00:00.000Z'} };
     return { status:404, body:{ message:`unmocked ${url.pathname}` } };
   });
   await page.setContent(localHtml('register'), { waitUntil: 'domcontentloaded' });
@@ -416,22 +434,26 @@ async function registerJourney(browser) {
   await page.locator('#address').fill('กรุงเทพฯ');
   await page.locator('#contactPhone').fill('0812345678');
   await page.getByRole('button', { name: 'ยืนยันเปิดศูนย์' }).click();
-  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('ลงทะเบียนศูนย์แล้ว'));
+  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('ทดลองใช้พี่หมอได้ฟรี 1 เดือน'));
+  assert.match(await page.locator('#status').textContent(),/29 ก\.ย\. 2569/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
   await page.close();
 }
 
 async function adminSubscriptionJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   let saved = false;
-  const center = { centerId:'CTR1',name:'ศูนย์จำลอง',ownerLineId:'U_OWNER',status:'active',address:'กรุงเทพฯ',activeResidentCount:1,subscriptionStartAt:null,subscriptionEndAt:null,packageType:null,subscription:{allowed:false,code:'subscription_unconfigured'} };
+  const center = { centerId:'CTR1',name:'ศูนย์จำลอง',ownerIdentity:'บัญชี LINE ••••0001',status:'active',operationalStatus:'active',directoryStatus:'not_configured',address:'กรุงเทพฯ',activeResidentCount:1,subscriptionStartAt:null,subscriptionEndAt:null,packageType:null,subscription:{allowed:false,state:'not_configured',code:'subscription_unconfigured'} };
   await mockBackend(page, async (url, request) => {
     if (url.pathname === '/config/liff') return { systemAdminLiffId:'SIM_ADMIN' };
-    if (url.pathname === '/api/admin/centers' && request.method()==='GET') return { centers:[center] };
+    if (url.pathname === '/api/admin/centers' && request.method()==='GET') return { centers:[center],items:[center],counts:{all:1,active:0,trial:0,expired:0,notConfigured:1,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:1,totalPages:1} };
     if (url.pathname === '/api/admin/centers/CTR1/subscription') { saved=true; center.subscriptionStartAt='2030-01-01';center.subscriptionEndAt='2030-12-31';center.packageType='annual';center.subscription={allowed:true,remainingDays:365}; return { ok:true }; }
     return { status:404, body:{message:`unmocked ${url.pathname}`} };
   });
   await page.setContent(localHtml('system-admin'), { waitUntil:'domcontentloaded' });
   await page.waitForSelector('#app:not([hidden])');
+  const adminMobile=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,searchHeight:document.querySelector('#search').getBoundingClientRect().height,chipHeight:document.querySelector('.directory-filter').getBoundingClientRect().height,filterOverflow:getComputedStyle(document.querySelector('.directory-filters')).overflowX}));
+  assert.equal(adminMobile.overflow,true);assert.ok(adminMobile.searchHeight>=44);assert.ok(adminMobile.chipHeight>=44);assert.equal(adminMobile.filterOverflow,'auto');
   await page.getByRole('button', { name:'ปรับสิทธิ' }).click();
   await page.locator('#subscriptionStart').fill('2030-12-31');
   await page.locator('#subscriptionEnd').fill('2030-01-01');

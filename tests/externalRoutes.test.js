@@ -32,6 +32,50 @@ test('ข้อ J4: สร้างศูนย์แล้วต้องได
   assert.ok(center.external_api_key, 'ทุกศูนย์ต้องมี API Key สำหรับระบบภายนอกตั้งแต่สร้าง');
 });
 
+test('self-registration grants a server-authored calendar-month trial and ignores browser dates', async () => {
+  const nativeFetch = global.fetch;
+  const previousChannel = process.env.LINE_LOGIN_CHANNEL_ID;
+  process.env.LINE_LOGIN_CHANNEL_ID = 'test-line-login-channel';
+  global.fetch = async (input, options) => {
+    if (String(input).startsWith('https://api.line.me/oauth2/v2.1/verify')) {
+      return new Response(JSON.stringify({ sub:'U-SELF-REGISTER' }), {
+        status:200, headers:{ 'content-type':'application/json' },
+      });
+    }
+    return nativeFetch(input, options);
+  };
+  try {
+    const response = await callExternal('/api/external/register-center', {
+      method:'POST',
+      body:JSON.stringify({
+        centerName:'ศูนย์สมัครเอง', address:'กรุงเทพฯ', contactPhone:'0812345678',
+        idToken:'verified-test-token', lineUserId:'U-FORGED',
+        subscriptionStartAt:'1900-01-01T00:00:00Z', subscriptionEndAt:'2999-01-01T00:00:00Z',
+      }),
+    });
+    assert.strictEqual(response.status, 201);
+    const body = await response.json();
+    assert.match(body.message, /ทดลองใช้พี่หมอได้ฟรี 1 เดือน/);
+    assert.strictEqual(body.subscription.state, 'trial');
+    assert.strictEqual(body.subscription.allowed, true);
+    const center = await db.Centers.findOne((item) => item.name === 'ศูนย์สมัครเอง');
+    assert.strictEqual(center.owner_line_id, 'U-SELF-REGISTER');
+    assert.strictEqual(center.subscription_package_type, 'trial');
+    assert.notStrictEqual(center.subscription_start_at, '1900-01-01T00:00:00Z');
+    assert.notStrictEqual(center.subscription_end_at, '2999-01-01T00:00:00Z');
+    assert.strictEqual(
+      center.subscription_end_at,
+      require('../backend/services/subscriptionService').addBangkokCalendarMonth(center.subscription_start_at).toISOString(),
+    );
+    const owner = await db.CenterStaff.findOne((item) => item.center_id === center.center_id && item.role === 'owner');
+    assert.strictEqual(owner.line_user_id, 'U-SELF-REGISTER');
+  } finally {
+    global.fetch = nativeFetch;
+    if (previousChannel === undefined) delete process.env.LINE_LOGIN_CHANNEL_ID;
+    else process.env.LINE_LOGIN_CHANNEL_ID = previousChannel;
+  }
+});
+
 test('ส่งสัญญาณชีพโดยไม่มี API Key ต้องถูกปฏิเสธ 401', async () => {
   const res = await callExternal('/api/external/vitals', {
     method: 'POST', body: JSON.stringify({ residentId: 'R-1', systolic: 120 }),

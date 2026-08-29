@@ -32,8 +32,18 @@ router.post('/register-center', asyncHandler(async (req, res) => {
   const lineUserId = identity.lineUserId;
   const duplicate = await Centers.findOne((c) => c.owner_line_id === lineUserId && c.name.trim() === centerName.trim() && c.status === 'active');
   if (duplicate) return res.status(409).json({ error: 'ศูนย์ชื่อนี้ถูกลงทะเบียนกับบัญชีของคุณแล้ว', center: projectCenter(duplicate) });
-  const newCenter = await centerService.createCenter({ name: centerName, ownerLineId: lineUserId, address, contactPhone });
-  res.status(201).json({ success: true, message: 'ลงทะเบียนศูนย์สำเร็จ รอผู้ดูแลระบบกำหนดสิทธิแพ็กเกจ', center: projectCenter(newCenter), subscription: require('../services/subscriptionService').entitlement(newCenter) });
+  // Trial dates are server-authored and committed atomically with the Center
+  // and Owner membership. Browser-supplied subscription fields are ignored.
+  const newCenter = await centerService.createCenter({
+    name: centerName, ownerLineId: lineUserId, address, contactPhone,
+    subscriptionRequired:true, selfRegistrationTrial:true,
+  });
+  res.status(201).json({
+    success:true,
+    message:'ลงทะเบียนศูนย์เรียบร้อยแล้ว คุณสามารถทดลองใช้พี่หมอได้ฟรี 1 เดือน',
+    center:projectCenter(newCenter),
+    subscription:require('../services/subscriptionService').entitlement(newCenter),
+  });
 }));
 
 router.post('/vitals', requireCenterApiKey, requireLegacyCenterRateLimit, asyncHandler(async (req, res) => {

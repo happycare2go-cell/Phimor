@@ -18,6 +18,7 @@ const { createConsultationPaymentSupportService } = require('../services/consult
 const privacyService = require('../services/privacyService');
 const { displayIdentity } = require('../utils/safeIdentity');
 const { createPlusPaymentSupportService } = require('../services/plusPaymentSupportService');
+const adminCenterDirectoryService = require('../services/adminCenterDirectoryService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
 const plusPaymentSupport = createPlusPaymentSupportService();
@@ -141,23 +142,21 @@ router.post('/centers', asyncHandler(async (req, res) => {
 
 // GET /api/admin/centers — รายชื่อศูนย์ทั้งหมดในระบบ (ใช้ตรวจสอบ/ค้นหา)
 router.get('/centers', asyncHandler(async (req, res) => {
-  const centers = await Centers.findAll();
-  const rows = [];
-  for (const c of centers) {
-    const residents = await Residents.findWhere((r) => r.center_id === c.center_id && r.status === 'active');
-    const owner = await require('../db').CenterStaff.findOne((staff) => staff.center_id === c.center_id && staff.line_user_id === c.owner_line_id && staff.role === 'owner');
-    rows.push({
-      centerId: c.center_id, name: c.name,
-      ownerIdentity:displayIdentity({ displayName:owner?.display_name, lineUserId:c.owner_line_id }),
-      status: c.status, groupBound: !!c.group_id, createdAt: c.created_at,
-      address: c.address || '', contactPhone: c.contact_phone || '', activeResidentCount: residents.length,
-      subscriptionStartAt: c.subscription_start_at || null, subscriptionEndAt: c.subscription_end_at || null,
-      packageType: c.subscription_package_type || null, subscription: subscriptionService.entitlement(c),
+  try {
+    const result = await adminCenterDirectoryService.listAdminCenters({
+      search:req.query.search,
+      subscriptionStatus:req.query.subscriptionStatus,
+      page:req.query.page,
+      limit:req.query.limit,
     });
+    // `centers` remains as a compatibility alias for existing consumers.
+    res.json({ centers:result.items, ...result });
+  } catch (error) {
+    if (error instanceof adminCenterDirectoryService.CenterDirectoryInputError) {
+      return res.status(400).json({ error:'bad_request', message:error.message });
+    }
+    throw error;
   }
-  res.json({
-    centers: rows,
-  });
 }));
 
 router.get('/centers/:centerId', asyncHandler(async (req, res) => {

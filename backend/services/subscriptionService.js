@@ -4,6 +4,7 @@ const { formatThaiDateTime } = require('../utils/thaiDate');
 const { displayIdentity, maskedInternalReference } = require('../utils/safeIdentity');
 
 const DAY_MS = 86400000;
+const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 function parseDate(value, field) {
   const date = new Date(value);
@@ -11,21 +12,65 @@ function parseDate(value, field) {
   return date;
 }
 
+// Center trials use one Bangkok calendar month, not 30 elapsed days. Shifting
+// to Bangkok local time before doing UTC calendar arithmetic keeps the helper
+// deterministic without depending on the host timezone (Thailand has no DST).
+function addBangkokCalendarMonth(value) {
+  const start = parseDate(value, 'วันเริ่มทดลองใช้');
+  const local = new Date(start.getTime() + BANGKOK_OFFSET_MS);
+  const sourceYear = local.getUTCFullYear();
+  const sourceMonth = local.getUTCMonth();
+  const targetMonthIndex = sourceMonth + 1;
+  const targetYear = sourceYear + Math.floor(targetMonthIndex / 12);
+  const targetMonth = targetMonthIndex % 12;
+  const lastTargetDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const targetDay = Math.min(local.getUTCDate(), lastTargetDay);
+  const targetLocalTime = Date.UTC(
+    targetYear, targetMonth, targetDay,
+    local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds(), local.getUTCMilliseconds(),
+  );
+  return new Date(targetLocalTime - BANGKOK_OFFSET_MS);
+}
+
+function subscriptionChronology(center, at = new Date()) {
+  const packageType = center?.subscription_package_type || null;
+  const startsAt = center?.subscription_start_at || null;
+  const expiresAt = center?.subscription_end_at || null;
+  if (!startsAt || !expiresAt) {
+    return { state:'not_configured', packageType, startsAt:null, expiresAt:null, remainingDays:null, needsConfiguration:true };
+  }
+  const start = new Date(startsAt);
+  const end = new Date(expiresAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return { state:'not_configured', packageType, startsAt:null, expiresAt:null, remainingDays:null, needsConfiguration:true };
+  }
+  if (at < start) {
+    return { state:'not_started', packageType, startsAt:start.toISOString(), expiresAt:end.toISOString(), remainingDays:null, needsConfiguration:false };
+  }
+  if (at > end) {
+    return { state:'expired', packageType, startsAt:start.toISOString(), expiresAt:end.toISOString(), remainingDays:0, needsConfiguration:false };
+  }
+  return {
+    state:packageType === 'trial' ? 'trial' : 'active', packageType,
+    startsAt:start.toISOString(), expiresAt:end.toISOString(),
+    remainingDays:Math.max(0, Math.ceil((end.getTime() - at.getTime()) / DAY_MS)), needsConfiguration:false,
+  };
+}
+
 function entitlement(center, at = new Date()) {
-  if (!center) return { allowed: false, code: 'center_not_found' };
-  if (center.status !== 'active') return { allowed: false, code: 'center_suspended' };
+  if (!center) return { allowed:false, code:'center_not_found', operationalStatus:'not_found', state:'not_configured', packageType:null, startsAt:null, expiresAt:null, remainingDays:null, needsConfiguration:true };
+  const chronology = subscriptionChronology(center, at);
+  const operationalStatus = center.status === 'active' ? 'active' : 'suspended';
+  if (operationalStatus !== 'active') return { ...chronology, allowed:false, code:'center_suspended', operationalStatus };
   // Existing installations are not locked out until an administrator has set
   // their first package period.
-  if (!center.subscription_start_at || !center.subscription_end_at) {
-    if (center.subscription_required) return { allowed: false, code: 'subscription_unconfigured' };
-    return { allowed: true, code: 'legacy_unconfigured', needsConfiguration: true };
+  if (chronology.state === 'not_configured') {
+    const code = center.subscription_required ? 'subscription_unconfigured' : 'legacy_unconfigured';
+    return { ...chronology, allowed:!center.subscription_required, code, operationalStatus };
   }
-  const start = new Date(center.subscription_start_at);
-  const end = new Date(center.subscription_end_at);
-  if (at < start) return { allowed: false, code: 'subscription_not_started', startsAt: start.toISOString(), expiresAt: end.toISOString() };
-  if (at > end) return { allowed: false, code: 'subscription_expired', expiresAt: end.toISOString() };
-  const remainingDays = Math.max(0, Math.ceil((end.getTime() - at.getTime()) / DAY_MS));
-  return { allowed: true, code: 'active', startsAt: start.toISOString(), expiresAt: end.toISOString(), remainingDays };
+  if (chronology.state === 'not_started') return { ...chronology, allowed:false, code:'subscription_not_started', operationalStatus };
+  if (chronology.state === 'expired') return { ...chronology, allowed:false, code:'subscription_expired', operationalStatus };
+  return { ...chronology, allowed:true, code:'active', operationalStatus };
 }
 
 async function setSubscription({ centerId, startsAt, expiresAt, packageType = 'custom', note = '', actor = 'admin' }) {
@@ -97,4 +142,7 @@ async function getAdminCenterDetails(centerId) {
   };
 }
 
-module.exports = { entitlement, setSubscription, sendExpiryReminders, getAdminCenterDetails };
+module.exports = {
+  entitlement, subscriptionChronology, addBangkokCalendarMonth,
+  setSubscription, sendExpiryReminders, getAdminCenterDetails,
+};

@@ -54,6 +54,49 @@ async function handleUserIdCommand(event) {
   return true;
 }
 
+const OPEN_CENTER_COMMANDS = new Set([
+  'opencenter', 'open center', 'เปิดศูนย์', 'สมัครศูนย์', 'ลงทะเบียนศูนย์',
+]);
+
+function normalizeTextCommand(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function isOpenCenterCommand(event) {
+  return event?.type === 'message'
+    && event.message?.type === 'text'
+    && OPEN_CENTER_COMMANDS.has(normalizeTextCommand(event.message.text));
+}
+
+async function handleOpenCenterCommand(event) {
+  if (!isOpenCenterCommand(event)) return false;
+  // Recognized aliases are deliberately consumed without a response outside a
+  // one-to-one chat. Registration onboarding must never appear in any group.
+  if (event.source?.type !== 'user') return true;
+  if (!event.replyToken) return true;
+  const registerLiffId = String(process.env.LIFF_ID_REGISTER || '').trim();
+  if (!registerLiffId) {
+    await safeReply(event.replyToken, {
+      type:'text',
+      text:'ขณะนี้ยังไม่สามารถเปิดหน้าลงทะเบียนศูนย์ได้\nกรุณาติดต่อทีมงานพี่หมอ',
+    });
+    return true;
+  }
+  await safeReply(event.replyToken, {
+    type:'template',
+    altText:'เปิดศูนย์ใหม่กับพี่หมอ',
+    template:{
+      type:'buttons',
+      text:'สำหรับเจ้าของศูนย์ดูแลที่ต้องการเริ่มใช้งานพี่หมอ\nกดด้านล่างเพื่อลงทะเบียนศูนย์',
+      actions:[{
+        type:'uri', label:'ลงทะเบียนศูนย์ใหม่',
+        uri:`https://liff.line.me/${registerLiffId}`,
+      }],
+    },
+  });
+  return true;
+}
+
 async function handleJoinEvent(event) {
   const groupId = event.source.groupId;
   if (!groupId) return;
@@ -248,7 +291,9 @@ async function handlePostback(event) {
 }
 
 async function processEvent(event) {
-      if (await handleUserIdCommand(event)) {
+      if (await handleOpenCenterCommand(event)) {
+        return;
+      } else if (await handleUserIdCommand(event)) {
         return;
       } else if (event.type === 'memberLeft') {
         const groupId = event.source.groupId || event.source.roomId;
@@ -373,6 +418,9 @@ module.exports.processPendingWebhookEvents = processPendingWebhookEvents;
 module.exports.requireMessagingCapability = requireMessagingCapability;
 module.exports.isUserIdCommand = isUserIdCommand;
 module.exports.handleUserIdCommand = handleUserIdCommand;
+module.exports.normalizeTextCommand = normalizeTextCommand;
+module.exports.isOpenCenterCommand = isOpenCenterCommand;
+module.exports.handleOpenCenterCommand = handleOpenCenterCommand;
 module.exports.processEvent = processEvent;
 module.exports.enqueueWebhookEvent = enqueueWebhookEvent;
 module.exports.webhookRetryKey = webhookRetryKey;

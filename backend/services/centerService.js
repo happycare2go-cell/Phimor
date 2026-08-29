@@ -3,6 +3,7 @@
 const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, audit, id, now, withTransaction } = require('../db');
 const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenterBinding, listActiveBindingsForGroup, isActiveGroupBinding } = require('./groupBindingRepository');
 const richMenuService = require('./richMenuService');
+const { addBangkokCalendarMonth } = require('./subscriptionService');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
 
@@ -15,8 +16,13 @@ function linkMenuBestEffort(lineUserId) {
 }
 
 // ── FR-A1: ทีมงานสร้างบัญชีศูนย์ ──
-async function createCenter({ name, ownerLineId, address = '', contactPhone = '', subscriptionRequired = process.env.NODE_ENV !== 'test' }) {
+async function createCenter({
+  name, ownerLineId, address = '', contactPhone = '',
+  subscriptionRequired = process.env.NODE_ENV !== 'test', selfRegistrationTrial = false,
+}) {
   return withTransaction(`center-create:${ownerLineId}:${name}`, async () => {
+    const registrationTime = now();
+    const trialEnd = selfRegistrationTrial ? addBangkokCalendarMonth(registrationTime).toISOString() : null;
     const center = await Centers.insert({
       center_id: id('CTR'),
       name,
@@ -25,10 +31,11 @@ async function createCenter({ name, ownerLineId, address = '', contactPhone = ''
       group_id: null,
       external_api_key: id('EXT'), // deprecated compatibility credential; never project to Center users
       status: 'active',
-      subscription_required: !!subscriptionRequired,
-      subscription_start_at: null,
-      subscription_end_at: null,
-      created_at: now(),
+      subscription_required: selfRegistrationTrial ? true : !!subscriptionRequired,
+      subscription_package_type: selfRegistrationTrial ? 'trial' : null,
+      subscription_start_at: selfRegistrationTrial ? registrationTime : null,
+      subscription_end_at: trialEnd,
+      created_at: registrationTime,
     });
     await CenterStaff.insert({
       staff_id: id('STF'),

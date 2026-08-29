@@ -128,6 +128,46 @@ test('GET /api/admin/centers คืนรายชื่อศูนย์ทั
   const body = await res.json();
   assert.strictEqual(body.centers.length, 2);
   assert.strictEqual(body.centers[0].groupBound, false, 'ยังไม่ผูกกลุ่ม ต้องแสดง false');
+  assert.deepStrictEqual(body.centers, body.items, 'centers ต้องยังเป็น compatibility alias ของ items');
+  assert.strictEqual(body.pagination.page, 1);
+  assert.strictEqual(body.pagination.limit, 20);
+});
+
+test('Admin Center directory searches names server-side, filters authoritative states and returns search-scoped counts', async () => {
+  const seed = async (center) => {
+    await db.Centers.insert(center);
+    await db.CenterStaff.insert({
+      staff_id:`S-${center.center_id}`, center_id:center.center_id,
+      line_user_id:center.owner_line_id, role:'owner', status:'active',
+    });
+  };
+  await seed({ center_id:'C-A', name:'Happy Home Chiang Mai', owner_line_id:'U-A', status:'active', subscription_required:true, subscription_package_type:'monthly', subscription_start_at:'2020-01-01T00:00:00Z', subscription_end_at:'2099-01-01T00:00:00Z' });
+  await seed({ center_id:'C-B', name:'Happy Home ทดลอง', owner_line_id:'U-B', status:'active', subscription_required:true, subscription_package_type:'trial', subscription_start_at:'2020-01-01T00:00:00Z', subscription_end_at:'2099-01-01T00:00:00Z' });
+  await seed({ center_id:'C-C', name:'ศูนย์อื่น', owner_line_id:'U-C', status:'suspended', subscription_required:true, subscription_package_type:'monthly', subscription_start_at:'2020-01-01T00:00:00Z', subscription_end_at:'2099-01-01T00:00:00Z' });
+  let response = await callAdmin('/api/admin/centers?search=happy%20HOME&subscriptionStatus=trial&page=1&limit=1', { headers:{ 'X-Admin-Key':REAL_ADMIN_KEY } });
+  assert.strictEqual(response.status, 200);
+  let body = await response.json();
+  assert.deepStrictEqual(body.items.map((item) => item.centerId), ['C-B']);
+  assert.strictEqual(body.pagination.total, 1);
+  assert.strictEqual(body.counts.all, 2, 'counts ต้องนับ search scope ก่อนเลือก chip');
+  assert.strictEqual(body.counts.active, 1);
+  assert.strictEqual(body.counts.trial, 1);
+  assert.doesNotMatch(JSON.stringify(body), /blood_group|chronic_conditions|allergies/);
+
+  response = await callAdmin('/api/admin/centers?subscriptionStatus=suspended', { headers:{ 'X-Admin-Key':REAL_ADMIN_KEY } });
+  body = await response.json();
+  assert.deepStrictEqual(body.items.map((item) => item.centerId), ['C-C']);
+  assert.strictEqual(body.items[0].operationalStatus, 'suspended');
+  assert.strictEqual(body.items[0].directoryStatus, 'suspended');
+  assert.strictEqual(body.items[0].subscription.state, 'active');
+});
+
+test('Admin Center directory rejects overlong search and unknown status safely', async () => {
+  let response = await callAdmin(`/api/admin/centers?search=${'x'.repeat(101)}`, { headers:{ 'X-Admin-Key':REAL_ADMIN_KEY } });
+  assert.strictEqual(response.status, 400);
+  assert.doesNotMatch(await response.text(), /SELECT|postgres|stack/i);
+  response = await callAdmin('/api/admin/centers?subscriptionStatus=paid-ish', { headers:{ 'X-Admin-Key':REAL_ADMIN_KEY } });
+  assert.strictEqual(response.status, 400);
 });
 
 test('ถ้าไม่ได้ตั้งค่า ADMIN_API_KEY บน Server ต้องปิดกั้นทุกคำขอด้วย 503 (กันลืมตั้งค่าตอน Deploy)', async () => {

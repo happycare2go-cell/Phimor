@@ -15,6 +15,7 @@ const { buildPublicLiffConfig } = require('../backend/config/runtimeCapabilities
 const root = path.resolve(__dirname, '..');
 const familyHtml = fs.readFileSync(path.join(root, 'liff-app', 'family', 'index.html'), 'utf8');
 const centerHtml = fs.readFileSync(path.join(root, 'liff-app', 'center-admin', 'index.html'), 'utf8');
+const registerHtml = fs.readFileSync(path.join(root, 'liff-app', 'register', 'index.html'), 'utf8');
 const stagingBlueprint = fs.readFileSync(path.join(root, 'render.staging.yaml'), 'utf8');
 const productionBlueprint = fs.readFileSync(path.join(root, 'render.yaml'), 'utf8');
 
@@ -147,6 +148,16 @@ test('Center LIFF obtains backend and LIFF ID from the authoritative runtime pro
   assert.match(centerHtml, /assertBackendConfig\(BACKEND_URL, config\)/);
   assert.match(centerHtml, /liff\.init\(\{ liffId: config\.centerAdminLiffId \}\)/);
   assert.doesNotMatch(centerHtml, /2011043561-Dyp03JGR|const BACKEND_URL\s*=\s*['"]https:\/\//);
+});
+
+test('Register LIFF obtains backend and registration LIFF ID from the authoritative runtime projection', () => {
+  assert.match(registerHtml, /<script src="\.\.\/environment\.js"><\/script>/);
+  assert.match(registerHtml, /<script src="\.\.\/runtime-config\.js"><\/script>/);
+  assert.match(registerHtml, /requireBackendUrl\(window\.PHIMOR_PUBLIC_BACKEND_URL\)/);
+  assert.match(registerHtml, /assertBackendConfig\(BACKEND_URL, config\)/);
+  assert.match(registerHtml, /liff\.init\(\{ liffId: config\.registerLiffId \}\)/);
+  assert.doesNotMatch(registerHtml, /const BACKEND_URL\s*=\s*['"]https:\/\//);
+  assert.doesNotMatch(registerHtml, /2011043561-cC9jBw5t|YOUR_LIFF_ID/);
 });
 
 test('staging blueprint declares the pharmacist LIFF ID without a repository value', () => {
