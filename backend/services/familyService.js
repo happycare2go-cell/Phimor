@@ -1,10 +1,10 @@
 // services/familyService.js — FR-H (ฝั่งครอบครัว) และ FR-N (Care Profile อิสระ)
 
 const { createHash } = require('crypto');
-const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, AccessRequests, audit, id, now, withTransaction } = require('../db');
+const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, AccessRequests, audit, id, now, withTransaction, withTransactionLocks } = require('../db');
 const { isPast } = require('./cardService');
 const pdfService = require('./pdfService');
-const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, listActiveBindingsForGroup } = require('./groupBindingRepository');
+const { GROUP_BINDING_TRANSACTION_KEY, bindFamilyDestinationInCurrentTransaction } = require('./groupBindingRepository');
 
 const CONSENT_VERSION = '2569-08-1'; // ข้อ H6: ต้องบันทึกเวอร์ชันเอกสารที่ยอมรับ
 
@@ -81,58 +81,84 @@ async function hasPermission(careProfileId, lineUserId, permission) {
 
 // ── FR-H1: ผูกบัญชีผ่านลิงก์เชิญ → สร้าง Care Profile โดยครอบครัวเป็นเจ้าของ ──
 async function acceptInvite(token, lineUserId, profileData = {}) {
-  return withTransaction(`invite:${token}`, async () => {
-  const invite = await Invites.findOne((i) => i.invite_token === token);
-  if (!invite) return { ok: false, reason: 'ลิงก์เชิญไม่ถูกต้อง' };
-  // Rows created before Invite.status existed are treated as active so the
-  // Center-managed Care Profile claim flow remains backward compatible.
-  if (invite.used_at || (invite.status && invite.status !== 'active')) return { ok: false, reason: 'ลิงก์เชิญนี้ถูกใช้ ปฏิเสธ หรือยกเลิกแล้ว' };
-  if (new Date(invite.expires_at).getTime() < Date.now()) return { ok: false, reason: 'ลิงก์เชิญหมดอายุแล้ว' };
+  const probe = await Invites.findOne((item) => item.invite_token === token);
+  if (!probe) return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง' };
+  const initialResident = await Residents.findOne((item) => item.resident_id === probe.resident_id);
+  const lockKeys = [`invite:${token}`, `ownership-claim:resident:${probe.resident_id}`];
+  if (initialResident?.care_profile_id) lockKeys.push(`ownership-claim:profile:${initialResident.care_profile_id}`);
+  const result = await withTransactionLocks(lockKeys, async () => {
+    const invite = await Invites.findOne((item) => item.invite_token === token);
+    if (!invite) return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง' };
+    const resident = await Residents.findOne((item) => item.resident_id === invite.resident_id);
+    if (!resident || resident.status !== 'active') return { ok:false, reason:'ผู้พักไม่ได้อยู่ในศูนย์นี้แล้ว' };
 
-  const resident = await Residents.findOne((r) => r.resident_id === invite.resident_id);
-  if (!resident || resident.status !== 'active') return { ok: false, reason: 'ผู้พักไม่ได้อยู่ในศูนย์นี้แล้ว' };
-  if (resident.care_profile_id) {
-    const existingProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
-    if (!existingProfile || existingProfile.owner_line_id) return { ok: false, reason: 'ผู้พักรายนี้ผูก Care Profile แล้ว กรุณาเปิด Family LIFF เพื่อตรวจสอบ' };
-    const claimed = await CareProfiles.update((p) => p.care_profile_id === existingProfile.care_profile_id && !p.owner_line_id, {
-      owner_line_id:lineUserId, family_phone:profileData.familyPhone || existingProfile.family_phone || resident.family_phone || null,
-      family_claimed_at:now(), managed_by_center:false,
+    if (invite.used_at || invite.status === 'used') {
+      const claimedProfile = resident.care_profile_id
+        ? await CareProfiles.findOne((item) => item.care_profile_id === resident.care_profile_id) : null;
+      if (invite.used_by === lineUserId && claimedProfile?.owner_line_id === lineUserId) {
+        return { ok:true, duplicate:true, careProfile:claimedProfile, residentId:resident.resident_id };
+      }
+      return { ok:false, reason:'ลิงก์เชิญนี้ถูกใช้ ปฏิเสธ หรือยกเลิกแล้ว' };
+    }
+    if (invite.status && invite.status !== 'active') return { ok:false, reason:'ลิงก์เชิญนี้ถูกใช้ ปฏิเสธ หรือยกเลิกแล้ว' };
+    if (new Date(invite.expires_at).getTime() < Date.now()) return { ok:false, reason:'ลิงก์เชิญหมดอายุแล้ว' };
+
+    if (resident.care_profile_id) {
+      const existingProfile = await CareProfiles.findOne((item) => item.care_profile_id === resident.care_profile_id);
+      if (!existingProfile) return { ok:false, reason:'ไม่พบ Care Profile ของผู้พักรายนี้' };
+      if (existingProfile.owner_line_id) {
+        return { ok:false, reason:'Care Profile นี้มีเจ้าของข้อมูลหลักแล้ว' };
+      }
+      const claimed = await CareProfiles.update(
+        (item) => item.care_profile_id === existingProfile.care_profile_id && !item.owner_line_id,
+        { owner_line_id:lineUserId,
+          family_phone:profileData.familyPhone || existingProfile.family_phone || resident.family_phone || null,
+          family_claimed_at:now(), managed_by_center:false }
+      );
+      if (!claimed) return { ok:false, reason:'Care Profile นี้มีเจ้าของข้อมูลหลักแล้ว' };
+      await Residents.update((item) => item.resident_id === resident.resident_id, { link_status:'linked' });
+      await Invites.update((item) => item.invite_token === token && !item.used_at,
+        { used_at:now(), used_by:lineUserId, status:'used' });
+      await AccessRequests.updateAll((item) => item.resident_id === resident.resident_id && item.status === 'pending',
+        { status:'superseded', responded_at:now() });
+      await audit('family.center_managed_profile_claimed', lineUserId, {
+        residentId:resident.resident_id, careProfileId:claimed.care_profile_id,
+        centerId:resident.center_id, sourceFlow:'center_ownership_claim',
+      });
+      return { ok:true, careProfile:claimed, residentId:resident.resident_id };
+    }
+
+    // Legacy Resident-only Invite compatibility: old rows may not yet have a
+    // Center-managed Care Profile. The claim still creates exactly one profile.
+    const profile = await CareProfiles.insert({
+      care_profile_id:id('CP'), owner_line_id:lineUserId, patient_name:resident.full_name,
+      center_id:resident.center_id, family_phone:resident.family_phone || null, status:'linked',
+      gender:profileData.gender || null, blood_type:profileData.bloodType || null,
+      height_cm:profileData.heightCm ? Number(profileData.heightCm) : null,
+      weight_kg:profileData.weightKg ? Number(profileData.weightKg) : null,
+      chronic_conditions:Array.isArray(profileData.chronicConditions) ? profileData.chronicConditions : [],
+      drug_allergies:profileData.drugAllergies || '', food_allergies:profileData.foodAllergies || '',
+      mobility_limitations:profileData.mobilityLimitations || '',
+      emergency_contact_name:profileData.emergencyContactName || '',
+      emergency_contact_phone:profileData.emergencyContactPhone || '', created_at:now(),
     });
-    await Residents.update((r) => r.resident_id === resident.resident_id, { link_status:'linked' });
-    await Invites.update((i) => i.invite_token === token && !i.used_at, { used_at:now(), used_by:lineUserId, status:'used' });
-    await AccessRequests.updateAll((r) => r.resident_id === resident.resident_id && r.status === 'pending', { status:'superseded', responded_at:now() });
-    await audit('family.center_managed_profile_claimed', lineUserId, { residentId:resident.resident_id, careProfileId:claimed.care_profile_id });
-    await require('./deliveryService').deliverPendingForResident(resident.resident_id, claimed.care_profile_id);
-    return { ok:true, careProfile:claimed };
+    await Residents.update((item) => item.resident_id === resident.resident_id
+      && item.status === 'active' && !item.care_profile_id,
+    { care_profile_id:profile.care_profile_id, link_status:'linked' });
+    await Invites.update((item) => item.invite_token === token && !item.used_at,
+      { used_at:now(), used_by:lineUserId, status:'used' });
+    await AccessRequests.updateAll((item) => item.resident_id === resident.resident_id && item.status === 'pending',
+      { status:'superseded', responded_at:now() });
+    await audit('family.invite_accepted', lineUserId, {
+      residentId:resident.resident_id, careProfileId:profile.care_profile_id,
+      centerId:resident.center_id, sourceFlow:'legacy_resident_ownership_claim',
+    });
+    return { ok:true, careProfile:profile, residentId:resident.resident_id };
+  });
+  if (result.ok && !result.duplicate) {
+    await require('./deliveryService').deliverPendingForResident(result.residentId, result.careProfile.care_profile_id);
   }
-
-  const profile = await CareProfiles.insert({
-    care_profile_id: id('CP'),
-    owner_line_id: lineUserId,
-    patient_name: resident.full_name,
-    center_id: resident.center_id,
-    family_phone: resident.family_phone || null, // เก็บเบอร์ไว้ด้วย เผื่อข้อ O1 ต้องค้นหาเบอร์นี้ในอนาคต
-    status: 'linked', // linked | independent
-    gender: profileData.gender || null,
-    blood_type: profileData.bloodType || null,
-    height_cm: profileData.heightCm ? Number(profileData.heightCm) : null,
-    weight_kg: profileData.weightKg ? Number(profileData.weightKg) : null,
-    chronic_conditions: Array.isArray(profileData.chronicConditions) ? profileData.chronicConditions : [],
-    drug_allergies: profileData.drugAllergies || '', food_allergies: profileData.foodAllergies || '',
-    mobility_limitations: profileData.mobilityLimitations || '',
-    emergency_contact_name: profileData.emergencyContactName || '',
-    emergency_contact_phone: profileData.emergencyContactPhone || '',
-    created_at: now(),
-  });
-
-  await Residents.update((r) => r.resident_id === resident.resident_id && r.status === 'active' && !r.care_profile_id, { care_profile_id: profile.care_profile_id, link_status: 'linked' });
-  await Invites.update((i) => i.invite_token === token && !i.used_at, { used_at: now(), used_by: lineUserId, status: 'used' });
-  await AccessRequests.updateAll((r) => r.resident_id === resident.resident_id && r.status === 'pending', { status: 'superseded', responded_at: now() });
-  await audit('family.invite_accepted', lineUserId, { residentId: resident.resident_id, careProfileId: profile.care_profile_id });
-  await require('./deliveryService').deliverPendingForResident(resident.resident_id, profile.care_profile_id);
-
-  return { ok: true, careProfile: profile };
-  });
+  return result;
 }
 
 async function declineInvite(token, lineUserId) {
@@ -231,27 +257,14 @@ async function createIndependentProfile({ ownerLineId, patientName, familyPhone,
 
 // ── FR-N1: ผูกกลุ่มไลน์ครอบครัวด้วยตนเอง ──
 async function bindFamilyGroupInCurrentTransaction({ careProfileId, groupId, requesterLineId }) {
-    const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
-    if (!profile) return { ok: false, reason: 'ไม่พบ Care Profile', code:'CARE_PROFILE_NOT_FOUND' };
-    if (profile.owner_line_id !== requesterLineId) {
-      return { ok: false, reason: 'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้', code:'FAMILY_OWNER_REQUIRED' };
-    }
-    if (!groupId) return { ok:false, reason:'ไม่พบข้อมูลกลุ่ม LINE', code:'GROUP_CONTEXT_REQUIRED' };
-
-    const groupBindings = await listActiveBindingsForGroup(groupId);
-    if (groupBindings.some((binding) => binding.kind !== 'family')) {
-      return { ok: false, reason: 'กลุ่มนี้ถูกผูกเป็นกลุ่มประเภทอื่นแล้ว', code:'GROUP_KIND_CONFLICT' };
-    }
-    const current = await findActiveFamilyBinding(careProfileId);
-    if (current?.line_group_id === groupId) return { ok: true, existing: true, binding:current };
-    if (current) {
-      return { ok:false, reason:'Care Profile นี้เชื่อมกลุ่มครอบครัวแล้ว', code:'FAMILY_GROUP_ALREADY_BOUND' };
-    }
-    const binding = await GroupBindings.insert({
-      binding_id: id('GB'), care_profile_id: careProfileId, line_group_id: groupId, kind: 'family', bound_at: now(),
-      center_id: null, status: 'active', bound_by_line_user_id: requesterLineId,
-    });
-    return { ok: true, binding };
+  const profile = await CareProfiles.findOne((item) => item.care_profile_id === careProfileId);
+  if (!profile) return { ok:false, reason:'ไม่พบ Care Profile', code:'CARE_PROFILE_NOT_FOUND' };
+  if (profile.owner_line_id !== requesterLineId) {
+    return { ok:false, reason:'เฉพาะเจ้าของ Care Profile เท่านั้นที่ผูกกลุ่มได้', code:'FAMILY_OWNER_REQUIRED' };
+  }
+  return bindFamilyDestinationInCurrentTransaction({
+    careProfileId, groupId, boundByLineUserId:requesterLineId, sourceFlow:'family_owner_code',
+  });
 }
 
 async function bindFamilyGroup(input) {

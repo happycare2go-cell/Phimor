@@ -15,8 +15,11 @@ router.post('/center/:centerId/group-binding-token', requireCenterStaff(), async
 router.post('/care-profile/:careProfileId/group-binding-token', requireFamilyAccess(), asyncHandler(async (req, res) => {
   const result = await service.createFamilyBindingToken(req.params.careProfileId, req.user.lineUserId);
   if (!result.ok) {
-    const status = result.code === 'FAMILY_GROUP_ALREADY_BOUND' ? 409 : 403;
-    return res.status(status).json({ error: result.code === 'FAMILY_GROUP_ALREADY_BOUND' ? 'already_bound' : 'forbidden', message: result.reason });
+    const conflict = ['FAMILY_GROUP_ALREADY_BOUND', 'FAMILY_GROUP_CODE_ACTIVE'].includes(result.code);
+    const status = conflict ? 409 : 403;
+    const error = result.code === 'FAMILY_GROUP_ALREADY_BOUND' ? 'already_bound'
+      : result.code === 'FAMILY_GROUP_CODE_ACTIVE' ? 'binding_code_active' : 'forbidden';
+    return res.status(status).json({ error, message:result.reason });
   }
   res.status(201).json(result);
 }));

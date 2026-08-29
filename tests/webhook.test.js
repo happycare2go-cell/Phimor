@@ -398,8 +398,33 @@ test('เชิญบอทเข้ากลุ่มอย่างเดี�
   assert.strictEqual(updated.group_id, null);
   const prompt = lineClient.getSentLog().find((x) => x.type === 'push' && x.to === 'G_NEW');
   assert.ok(prompt.messages[0].text.includes('STAFF-'));
+  assert.ok(prompt.messages[0].text.includes('FAMILY-'));
+  assert.ok(prompt.messages[0].text.includes('CGROUP-'));
   assert.match(prompt.retryKey, /^[0-9a-f-]{36}$/);
   assert.strictEqual(lineClient.getSentLog().filter((item) => item.type === 'reply').length, 0);
+});
+
+test('CGROUP message binds the canonical Family destination and returns no internal IDs', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์ทดสอบ', ownerLineId:'U-OWNER' });
+  await db.CareProfiles.insert({ care_profile_id:'CP-CGROUP', owner_line_id:null,
+    patient_name:'คุณสมใจ', center_id:center.center_id, status:'linked', managed_by_center:true });
+  await db.Residents.insert({ resident_id:'R-CGROUP', center_id:center.center_id, full_name:'คุณสมใจ',
+    care_profile_id:'CP-CGROUP', status:'active', link_status:'center_managed' });
+  const token = await require('../backend/services/groupBindingService').createCenterFamilyBindingToken({
+    centerId:center.center_id, residentId:'R-CGROUP', requesterLineId:'U-OWNER',
+  });
+  lineClient.clearSentLog();
+  await postWebhook([{
+    webhookEventId:'EVT-CGROUP', type:'message', replyToken:'RT-CGROUP',
+    message:{ type:'text', text:token.code },
+    source:{ type:'group', groupId:'G-CGROUP', userId:'U-FAMILY-MEMBER' },
+  }]);
+  const binding = await db.GroupBindings.findOne((item) => item.care_profile_id === 'CP-CGROUP');
+  assert.equal(binding.kind, 'family');
+  assert.equal(binding.line_group_id, 'G-CGROUP');
+  const reply = lineClient.getSentLog().find((item) => item.type === 'reply');
+  assert.equal(reply.messages[0].text, '✅ เชื่อมกลุ่มนี้กับ Care Profile เรียบร้อยแล้ว');
+  assert.doesNotMatch(reply.messages[0].text, /CP-CGROUP|R-CGROUP|G-CGROUP|CTR-/);
 });
 
 test('ข้อ N4 (แก้ไขแล้ว): Care Profile อิสระส่งรูปแบบ 1-1 ต้องได้ข้อความสุภาพที่เสนอทางเลือก ไม่ใช่ข้อความปฏิเสธทั่วไป', async () => {

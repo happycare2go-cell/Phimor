@@ -13,6 +13,7 @@ const { projectCenter } = require('../services/centerProjection');
 const { platformService: defaultPlatformService } = require('../services/platformService');
 const { displayIdentity } = require('../utils/safeIdentity');
 const accessService = require('../services/accessService');
+const groupBindingService = require('../services/groupBindingService');
 
 function platformServiceFor(req) {
   return req.app.locals.platformService || defaultPlatformService;
@@ -159,9 +160,25 @@ router.post('/residents/:residentId/care-profile', requireCenterStaff(['owner', 
 }));
 
 router.post('/residents/:residentId/invite', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
-  const result = await centerService.getOrCreateResidentInvite({ centerId:req.centerId, residentId:req.params.residentId });
+  const result = await centerService.getOrCreateResidentInvite({
+    centerId:req.centerId, residentId:req.params.residentId, requesterLineId:req.user.lineUserId,
+  });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
   res.json(result);
+}));
+
+router.post('/residents/:residentId/family-group-binding-token', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
+  const result = await groupBindingService.createCenterFamilyBindingToken({
+    centerId:req.centerId, residentId:req.params.residentId, requesterLineId:req.user.lineUserId,
+  });
+  if (!result.ok) {
+    const status = ['RESIDENT_NOT_ELIGIBLE', 'CARE_PROFILE_NOT_ELIGIBLE'].includes(result.code) ? 404
+      : result.code === 'CENTER_MANAGER_REQUIRED' ? 403
+        : result.code === 'CENTER_NOT_ELIGIBLE' ? 402 : 409;
+    return res.status(status).json({ error:result.code || 'FAMILY_GROUP_CODE_UNAVAILABLE', message:result.reason,
+      expiresAt:result.expiresAt || null });
+  }
+  res.status(201).json({ code:result.code, expiresAt:result.expiresAt });
 }));
 
 // รายละเอียดสุขภาพเปิดให้เฉพาะ owner/manager เท่านั้น พนักงานทั่วไปไม่มี endpoint สำหรับอ่านข้อมูลนี้

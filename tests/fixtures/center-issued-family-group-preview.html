@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>PHIMOR Center-issued Family Group Review</title>
+<style>
+:root{--navy:#1C2B64;--gold:#DEB14E;--teal:#0F6E56;--bg:#F5F7FA;--ice:#E8ECF7;--gray:#5A6580}
+*{box-sizing:border-box}body{margin:0;font-family:'Sarabun','Noto Sans Thai',sans-serif;background:var(--bg);color:#1a1a2e;font-size:15px;padding-bottom:max(24px,env(safe-area-inset-bottom))}
+.hdr{background:var(--navy);color:#fff;padding:16px 18px}.logo{font-size:19px;font-weight:700}.identity{font-size:12px;opacity:.86;margin-top:6px}.view{padding:16px}.card{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.card h3{margin:0 0 10px;font-size:15px;color:var(--navy)}.resident-name{font-weight:600;font-size:14px}.resident-meta{font-size:12px;color:var(--gray);margin-top:3px}.badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;background:var(--ice);color:var(--navy)}
+.resident-care-grid{display:grid;grid-template-columns:1fr;gap:9px;margin-top:12px}.resident-care-section{border:1px solid #E3E7F0;border-radius:11px;padding:11px;background:#FAFBFD;min-width:0}.resident-care-section h4{font-size:12px;color:var(--navy);margin:0 0 5px}.resident-care-section p{font-size:12px;line-height:1.5;color:var(--gray);margin:0 0 9px}
+.btn{display:inline-grid;place-items:center;width:100%;min-height:44px;padding:9px 10px;border-radius:9px;border:1px solid var(--navy);font:600 13px inherit;background:#fff;color:var(--navy)}.btn:focus-visible{outline:3px solid rgba(222,177,78,.8);outline-offset:2px}.one-time-code{margin-top:9px;padding:10px;border-radius:9px;background:var(--ice);overflow-wrap:anywhere}.one-time-code strong{display:block;margin:4px 0;font-size:13px;color:var(--navy)}.code-guidance{display:block;margin-top:8px;font-size:12px;line-height:1.55;color:var(--gray)}
+.family-title{font-size:18px;margin:0;color:var(--navy)}.family-sub{font-size:12px;color:var(--gray);line-height:1.6}.family-status{display:flex;gap:10px;align-items:flex-start}.check{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#E3F5EC;color:var(--teal);font-weight:800;flex:0 0 30px}.label{font-weight:700;color:var(--navy)}.small{font-size:12px;color:var(--gray);line-height:1.55;margin-top:3px}
+.screen{display:none}.screen.active{display:block}.review-label{position:fixed;right:10px;top:10px;background:#fff;color:var(--navy);border-radius:999px;padding:5px 9px;font:700 11px system-ui;z-index:5}
+</style>
+</head>
+<body>
+<span class="review-label" id="reviewLabel">C1</span>
+<section class="screen" data-state="center-unbound">
+  <div class="hdr"><div class="logo">พี่หมอ · ศูนย์</div><div class="identity">เจ้าของศูนย์ · Happy Home สาขาตัวอย่าง</div></div>
+  <main class="view"><div class="card"><div class="resident-name">คุณสมใจ ใจดี · ห้อง A201</div><div class="resident-meta"><span class="badge">ศูนย์สร้าง Care Profile · รอญาติรับสิทธิ์</span></div>
+    <div class="resident-care-grid"><section class="resident-care-section"><h4>กลุ่มครอบครัว</h4><p>ยังไม่ได้เชื่อมกลุ่มครอบครัว</p><button class="btn">สร้างรหัสผูกกลุ่มครอบครัว</button></section>
+    <section class="resident-care-section"><h4>เจ้าของ Care Profile</h4><p>ยังไม่มีเจ้าของข้อมูลหลัก</p><button class="btn">สร้างลิงก์ส่งสิทธิ์ให้ญาติ</button></section></div>
+  </div></main>
+</section>
+<section class="screen" data-state="center-code">
+  <div class="hdr"><div class="logo">พี่หมอ · ศูนย์</div><div class="identity">ผู้จัดการ · Happy Home สาขาตัวอย่าง</div></div>
+  <main class="view"><div class="card"><div class="resident-name">คุณสมใจ ใจดี · ห้อง A201</div><div class="resident-meta"><span class="badge">Care Profile ที่ศูนย์ดูแล</span></div>
+    <div class="resident-care-grid"><section class="resident-care-section"><h4>กลุ่มครอบครัว</h4><p>มีรหัสผูกกลุ่มที่ยังใช้งานอยู่</p><div class="one-time-code"><span>รหัสผูกกลุ่มครอบครัว</span><strong>CGROUP-4A87D13B9E2C6F105A31B820C4129DEF</strong><span>หมดอายุ 15:45 น.</span><span class="code-guidance">ใช้รหัสนี้เฉพาะในกลุ่มครอบครัวของผู้พักรายนี้ รหัสใช้ได้ครั้งเดียวและหมดอายุใน 15 นาที การเชื่อมกลุ่มไม่โอนสิทธิ์เจ้าของ Care Profile ต้องส่งลิงก์สิทธิ์ให้ญาติยืนยันแยกต่างหาก</span><button class="btn" style="margin-top:8px;background:#111;color:#fff;border-color:#111">คัดลอกรหัส</button></div></section>
+    <section class="resident-care-section"><h4>เจ้าของ Care Profile</h4><p>ยังไม่มีเจ้าของข้อมูลหลัก</p><button class="btn">สร้างลิงก์ส่งสิทธิ์ให้ญาติ</button></section></div>
+  </div></main>
+</section>
+<section class="screen" data-state="center-bound">
+  <div class="hdr"><div class="logo">พี่หมอ · ศูนย์</div><div class="identity">เจ้าของศูนย์ · Happy Home สาขาตัวอย่าง</div></div>
+  <main class="view"><div class="card"><div class="resident-name">คุณสมใจ ใจดี · ห้อง A201</div><div class="resident-meta"><span class="badge">Care Profile ที่ศูนย์ดูแล</span></div>
+    <div class="resident-care-grid"><section class="resident-care-section"><h4>กลุ่มครอบครัว</h4><p>เชื่อมกลุ่มครอบครัวแล้ว</p></section><section class="resident-care-section"><h4>เจ้าของ Care Profile</h4><p>ญาติรับสิทธิ์เจ้าของข้อมูลแล้ว</p></section></div>
+  </div></main>
+</section>
+<section class="screen" data-state="family-bound">
+  <div class="hdr"><div class="logo">พี่หมอ · ครอบครัว</div><div class="identity">Care Profile · คุณสมใจ ใจดี</div></div>
+  <main class="view"><h1 class="family-title">ครอบครัวและการเข้าถึง</h1><p class="family-sub">ดูแลสิทธิ์สมาชิกและปลายทางการแจ้งเตือนของ Care Profile นี้</p><div class="card"><h3>กลุ่มครอบครัว</h3><div class="family-status"><span class="check">✓</span><div><div class="label">เชื่อมกลุ่มครอบครัวแล้ว</div><div class="small">พี่หมอจะส่งการแจ้งเตือนที่ได้รับอนุญาตไปยังกลุ่มครอบครัวที่ยืนยันแล้ว</div></div></div></div></main>
+</section>
+<script>
+const labels={'center-unbound':'C1','center-code':'C2','center-bound':'C3','family-bound':'F1'};
+function render(){const state=location.hash.slice(1)||'center-unbound';document.querySelectorAll('.screen').forEach(node=>node.classList.toggle('active',node.dataset.state===state));reviewLabel.textContent=labels[state]||'C1'}
+addEventListener('hashchange',render);render();
+</script>
+</body>
+</html>

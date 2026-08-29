@@ -50,8 +50,20 @@
   .row>*{flex:1}
   .resident-item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #EEF1F8}
   .resident-item:last-child{border:none}
+  .resident-item--care{display:block}
   .resident-name{font-weight:600;font-size:14px}
   .resident-meta{font-size:12px;color:var(--gray);margin-top:2px}
+  .resident-care-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}
+  .resident-care-section{border:1px solid #E3E7F0;border-radius:11px;padding:11px;background:#FAFBFD;min-width:0}
+  .resident-care-section h4{font-size:12px;color:var(--navy);margin:0 0 5px}
+  .resident-care-section p{font-size:12px;line-height:1.5;color:var(--gray);margin:0 0 9px}
+  .resident-care-section .btn{width:100%;min-height:44px;padding:9px 10px;white-space:normal}
+  .resident-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+  .resident-actions .btn{min-height:44px}
+  .one-time-code{margin-top:9px;padding:10px;border-radius:9px;background:var(--ice);overflow-wrap:anywhere}
+  .one-time-code strong{display:block;font-size:13px;color:var(--navy)}
+  .one-time-code .code-guidance{display:block;margin-top:8px;font-size:12px;line-height:1.55;color:var(--gray)}
+  @media(max-width:430px){.resident-care-grid{grid-template-columns:1fr}.resident-actions .btn{flex:1 1 130px}}
   .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600}
   .badge-linked{background:#E3F5EC;color:var(--teal)}
   .badge-pending{background:var(--ice);color:var(--navy)}
@@ -398,6 +410,7 @@ let CENTER_ID = null;
 let CENTERS = [];
 let residentsCache = [];
 let CURRENT_ROLE = null;
+const CENTER_GROUP_CODE_DISPLAY = new Map();
 let centerMedicationDraftImage = null;
 let centerMedicationAwaitingConfirmation = false;
 let centerMedicationConditions = [];
@@ -472,13 +485,46 @@ function renderResidents() {
   const box = document.getElementById('residentList');
   if (filtered.length === 0) { box.innerHTML = '<div class="empty">ยังไม่มีผู้พัก — เพิ่มคนแรกได้เลยด้านบน</div>'; return; }
   box.innerHTML = '<div class="card">' + filtered.map(r => `
-    <div class="resident-item">
+    <div class="resident-item resident-item--care">
       <div>
         <div class="resident-name">${esc(r.full_name)} ${r.room ? '· ห้อง '+esc(r.room):''}</div>
         <div class="resident-meta"><span class="badge ${r.care_profile_id ? 'badge-linked' : 'badge-pending'}">${r.link_status==='center_managed'?'ศูนย์สร้าง Care Profile · รอญาติรับสิทธิ์':r.care_profile_id?'ผูกครอบครัวแล้ว':'ยังไม่มี Care Profile'}</span></div>
       </div>
-      <div>${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">${CURRENT_ROLE==='staff'?'ข้อมูลสำคัญ':'ข้อมูลสุขภาพ'}</button>` : ''} ${CURRENT_ROLE!=='staff'&&!r.care_profile_id?`<button class="btn btn-primary btn-sm" onclick="openCreateCareProfile('${r.resident_id}')">สร้าง Care Profile</button>`:''} ${CURRENT_ROLE!=='staff'&&(!r.care_profile_id||r.link_status==='center_managed')?`<button class="btn btn-outline btn-sm" onclick="showFamilyInvite('${r.resident_id}')">ลิงก์ให้ญาติ</button>`:''} ${CURRENT_ROLE!=='staff'?`<button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>`:''}</div>
+      ${CURRENT_ROLE!=='staff'&&r.care_profile_id?`<div class="resident-care-grid">
+        <section class="resident-care-section" aria-label="สถานะกลุ่มครอบครัว">
+          <h4>กลุ่มครอบครัว</h4>
+          <p>${r.family_group_connected?'เชื่อมกลุ่มครอบครัวแล้ว':r.family_group_code_active_until?'มีรหัสผูกกลุ่มที่ยังใช้งานอยู่':'ยังไม่ได้เชื่อมกลุ่มครอบครัว'}</p>
+          ${!r.family_group_connected&&!r.family_group_code_active_until?`<button type="button" class="btn btn-outline btn-sm" data-group-code-resident="${esc(r.resident_id)}" onclick="createCenterFamilyGroupCode('${r.resident_id}')">สร้างรหัสผูกกลุ่มครอบครัว</button>`:''}
+          ${centerGroupCodeMarkup(r.resident_id)}
+        </section>
+        <section class="resident-care-section" aria-label="สถานะเจ้าของ Care Profile">
+          <h4>เจ้าของ Care Profile</h4>
+          <p>${r.ownership_claimed?'ญาติรับสิทธิ์เจ้าของข้อมูลแล้ว':'ยังไม่มีเจ้าของข้อมูลหลัก'}</p>
+          ${!r.ownership_claimed?`<button type="button" class="btn btn-outline btn-sm" onclick="showFamilyInvite('${r.resident_id}')">สร้างลิงก์ส่งสิทธิ์ให้ญาติ</button>`:''}
+        </section>
+      </div>`:''}
+      <div class="resident-actions">${r.care_profile_id ? `<button class="btn btn-outline btn-sm" onclick="viewCareProfile('${r.resident_id}')">${CURRENT_ROLE==='staff'?'ข้อมูลสำคัญ':'ข้อมูลสุขภาพ'}</button>` : ''} ${CURRENT_ROLE!=='staff'&&!r.care_profile_id?`<button class="btn btn-primary btn-sm" onclick="openCreateCareProfile('${r.resident_id}')">สร้าง Care Profile</button>`:''} ${CURRENT_ROLE!=='staff'&&!r.care_profile_id?`<button class="btn btn-outline btn-sm" onclick="showFamilyInvite('${r.resident_id}')">สร้างลิงก์ส่งสิทธิ์ให้ญาติ</button>`:''} ${CURRENT_ROLE!=='staff'?`<button class="btn btn-outline btn-sm" onclick="openEditResident('${r.resident_id}')">แก้ไข</button>`:''}</div>
     </div>`).join('') + '</div>';
+}
+
+function centerGroupCodeMarkup(residentId){
+  const shown=CENTER_GROUP_CODE_DISPLAY.get(residentId);if(!shown)return '';
+  return `<div class="one-time-code"><span>รหัสผูกกลุ่มครอบครัว</span><strong>${esc(shown.code)}</strong><span>หมดอายุ ${new Date(shown.expiresAt).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}</span><span class="code-guidance">ใช้รหัสนี้เฉพาะในกลุ่มครอบครัวของผู้พักรายนี้ รหัสใช้ได้ครั้งเดียวและหมดอายุใน 15 นาที การเชื่อมกลุ่มไม่โอนสิทธิ์เจ้าของ Care Profile ต้องส่งลิงก์สิทธิ์ให้ญาติยืนยันแยกต่างหาก</span><button type="button" class="btn btn-copy btn-sm" style="margin-top:8px" onclick="copyCenterFamilyGroupCode('${residentId}')">คัดลอกรหัส</button></div>`;
+}
+
+async function createCenterFamilyGroupCode(residentId){
+  const button=document.querySelector(`[data-group-code-resident="${CSS.escape(residentId)}"]`);if(button){button.disabled=true;button.textContent='กำลังสร้าง...'}
+  try{
+    const result=await api(`/api/residents/${encodeURIComponent(residentId)}/family-group-binding-token`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID})});
+    CENTER_GROUP_CODE_DISPLAY.set(residentId,{code:result.code,expiresAt:result.expiresAt});
+    const resident=residentsCache.find(item=>item.resident_id===residentId);if(resident)resident.family_group_code_active_until=result.expiresAt;
+    renderResidents();toast('สร้างรหัสแล้ว ส่งรหัสนี้ในกลุ่มครอบครัวภายใน 15 นาที');
+  }catch(error){if(button){button.disabled=false;button.textContent='สร้างรหัสผูกกลุ่มครอบครัว'}throw error}
+}
+
+function copyCenterFamilyGroupCode(residentId){
+  const shown=CENTER_GROUP_CODE_DISPLAY.get(residentId);if(!shown)return toast('รหัสไม่พร้อมใช้งาน กรุณาสร้างใหม่');
+  return copyForwardText(`พี่หมอ: รหัสผูกกลุ่มครอบครัว\n${shown.code}\n\nใช้รหัสนี้เฉพาะในกลุ่มครอบครัวของผู้พักรายนี้ รหัสใช้ได้ครั้งเดียวและหมดอายุใน 15 นาที การเชื่อมกลุ่มไม่ใช่การโอนสิทธิ์เจ้าของ Care Profile`);
 }
 function openCreateCareProfile(residentId){const r=residentsCache.find(x=>x.resident_id===residentId);cpResidentId.value=residentId;cpFamilyPhone.value=r?.family_phone||'';cpConditions.innerHTML=STANDARD_CONDITIONS.map((name,i)=>`<label class="choice-chip"><input type="checkbox" value="${esc(name)}"><span>${esc(name)}</span></label>`).join('');['cpGender','cpBloodType','cpHeight','cpWeight','cpOtherConditions','cpDrugAllergies','cpFoodAllergies','cpMobility','cpEmergencyName','cpEmergencyPhone'].forEach(id=>document.getElementById(id).value='');cpError.textContent='';openModal('createCareProfileModal')}
 async function saveCenterCareProfile(){const selected=[...cpConditions.querySelectorAll('input:checked')].map(x=>x.value),other=cpOtherConditions.value.split(',').map(x=>x.trim()).filter(Boolean);const b=cpSaveButton;b.disabled=true;b.textContent='กำลังสร้าง...';try{await api(`/api/residents/${cpResidentId.value}/care-profile`,{method:'POST',body:JSON.stringify({centerId:CENTER_ID,gender:cpGender.value,bloodType:cpBloodType.value,heightCm:cpHeight.value,weightKg:cpWeight.value,chronicConditions:[...selected,...other],drugAllergies:cpDrugAllergies.value.trim(),foodAllergies:cpFoodAllergies.value.trim(),mobilityLimitations:cpMobility.value.trim(),emergencyContactName:cpEmergencyName.value.trim(),emergencyContactPhone:cpEmergencyPhone.value.trim(),familyPhone:cpFamilyPhone.value.trim()})});closeModal('createCareProfileModal');toast('สร้าง Care Profile แล้ว สามารถส่งลิงก์ให้ญาติรับสิทธิ์ภายหลังได้');await loadResidents()}catch(e){cpError.textContent=e.message||'สร้าง Care Profile ไม่สำเร็จ'}finally{b.disabled=false;b.textContent='สร้าง Care Profile'}}
@@ -757,6 +803,7 @@ async function copyForwardText(text){
 
 async function selectCenter(centerId) {
   centerCareUi.clear();
+  CENTER_GROUP_CODE_DISPLAY.clear();
   const center = CENTERS.find(c => c.center_id === centerId);
   if (!center) return toast('ไม่พบสาขาที่คุณมีสิทธิ์');
   if (!applySelectedCenterContext(center)) return;
@@ -767,6 +814,8 @@ async function selectCenter(centerId) {
   if (activeView === 'transport') await loadTransport();
   if (activeView === 'ratecard') await loadRateCard();
 }
+
+window.addEventListener('pagehide',()=>CENTER_GROUP_CODE_DISPLAY.clear());
 
 function applyRoleControls(role){
   const canManage=role==='owner'||role==='manager';

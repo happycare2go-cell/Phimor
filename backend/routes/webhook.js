@@ -103,7 +103,7 @@ async function handleJoinEvent(event) {
   // join event ไม่รับประกัน userId ของผู้เชิญ จึงห้ามเดาว่าเป็นกลุ่มพนักงานหรือครอบครัว
   await lineClient.pushMessage(groupId, [{
     type: 'text',
-    text: 'พี่หมอเข้ากลุ่มแล้วค่ะ กรุณาส่งรหัส STAFF-xxxxxx หรือ FAMILY-xxxxxx ที่สร้างไว้ หรือรหัสตั้งค่ากลุ่ม Care2Go ตามที่ผู้ดูแลระบบกำหนด',
+    text: 'พี่หมอเข้ากลุ่มแล้วค่ะ กรุณาส่งรหัส STAFF-xxxxxx, FAMILY-xxxxxx หรือ CGROUP-xxxxxx ที่สร้างไว้ หรือรหัสตั้งค่ากลุ่ม Care2Go ตามที่ผู้ดูแลระบบกำหนด',
   }], { retryKey:webhookRetryKey(event, 'group-onboarding') });
 }
 
@@ -125,7 +125,7 @@ async function handleGroupBindingCode(event) {
       : `⚠️ ผูกกลุ่มไม่สำเร็จ: ${result.reason}`});
     return true;
   }
-  const match = raw.toUpperCase().match(/\b(STAFF|FAMILY)-[A-Z0-9]{6}\b/);
+  const match = raw.toUpperCase().match(/\b(?:CGROUP-[A-F0-9]{32}|(?:STAFF|FAMILY)-[A-Z0-9]{6})\b/);
   if (!match) return false;
   const groupBindingService = require('../services/groupBindingService');
   const result = await groupBindingService.consumeCodeFromGroup({
@@ -134,7 +134,9 @@ async function handleGroupBindingCode(event) {
   await safeReply(event.replyToken, {
     type: 'text',
     text: result.ok
-      ? (result.kind === 'center_staff' ? '✅ ผูกเป็นกลุ่มพนักงานของสาขาเรียบร้อยค่ะ' : '✅ ผูกเป็นกลุ่มครอบครัวเรียบร้อยค่ะ')
+      ? (result.kind === 'center_staff' ? '✅ ผูกเป็นกลุ่มพนักงานของสาขาเรียบร้อยค่ะ'
+        : result.kind === 'center_family' ? '✅ เชื่อมกลุ่มนี้กับ Care Profile เรียบร้อยแล้ว'
+          : '✅ ผูกเป็นกลุ่มครอบครัวเรียบร้อยค่ะ')
       : `⚠️ ผูกกลุ่มไม่สำเร็จ: ${result.reason}`,
   });
   return true;

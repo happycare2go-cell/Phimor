@@ -1019,6 +1019,9 @@ async function loadDashboard(preferredProfileId=null) {
   }
   if (INVITE_TOKEN) {
     const invite = await api('/api/invite/' + encodeURIComponent(INVITE_TOKEN));
+    // Keep the bearer capability in memory for this authenticated session, but
+    // remove it from browser history immediately after successful bootstrap.
+    history.replaceState({},'',location.pathname);
     document.getElementById('noProfileCard').style.display = 'block';
     document.getElementById('newProfileTitle').textContent = 'รับ Care Profile ที่ศูนย์สร้างไว้';
     document.getElementById('newProfileHelp').textContent = `ตรวจสอบข้อมูลของ ${invite.residentName || 'ผู้รับการดูแล'} แล้วกดยืนยันเพื่อรับสิทธิ์ใน Care Profile เดิม`;

@@ -1,6 +1,6 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
-const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, audit, id, now, withTransaction } = require('../db');
+const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, GroupBindingTokens, audit, id, now, withTransaction } = require('../db');
 const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenterBinding, listActiveBindingsForGroup, isActiveGroupBinding } = require('./groupBindingRepository');
 const richMenuService = require('./richMenuService');
 const { addBangkokCalendarMonth } = require('./subscriptionService');
@@ -243,16 +243,32 @@ async function createCenterManagedCareProfile({ centerId, residentId, profileDat
   });
 }
 
-async function getOrCreateResidentInvite({ centerId, residentId }) {
-  const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === centerId && r.status === 'active');
-  if (!resident) return { ok:false, reason:'ไม่พบผู้พักในสาขานี้' };
-  if (resident.care_profile_id) {
-    const profile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
-    if (profile?.owner_line_id) return { ok:false, reason:'Care Profile นี้มีเจ้าของครอบครัวแล้ว' };
-  }
-  let invite = await Invites.findOne((i) => i.resident_id === residentId && i.status === 'active' && !i.used_at && new Date(i.expires_at) > new Date());
-  if (!invite) invite = await Invites.insert({ invite_token:id('INV'), resident_id:residentId, expires_at:new Date(Date.now()+INVITE_EXPIRY_DAYS*86400000).toISOString(), used_at:null, status:'active', revoked_at:null });
-  return { ok:true, inviteUrl:`https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?token=${encodeURIComponent(invite.invite_token)}`, inviteExpiresAt:invite.expires_at };
+async function getOrCreateResidentInvite({ centerId, residentId, requesterLineId = 'center:legacy' }) {
+  return withTransaction(`ownership-claim:resident:${residentId}`, async () => {
+    const resident = await Residents.findOne((item) => item.resident_id === residentId
+      && item.center_id === centerId && item.status === 'active');
+    if (!resident) return { ok:false, reason:'ไม่พบผู้พักในสาขานี้' };
+    if (resident.care_profile_id) {
+      const profile = await CareProfiles.findOne((item) => item.care_profile_id === resident.care_profile_id);
+      if (profile?.owner_line_id) return { ok:false, reason:'Care Profile นี้มีเจ้าของครอบครัวแล้ว' };
+    }
+    let invite = await Invites.findOne((item) => item.resident_id === residentId && item.status === 'active'
+      && !item.used_at && new Date(item.expires_at) > new Date());
+    let created = false;
+    if (!invite) {
+      invite = await Invites.insert({ invite_token:id('INV'), resident_id:residentId,
+        expires_at:new Date(Date.now() + INVITE_EXPIRY_DAYS * 86400000).toISOString(),
+        used_at:null, status:'active', revoked_at:null, source_flow:'center_ownership_claim',
+        issued_by_line_user_id:requesterLineId, issued_at:now() });
+      created = true;
+      await audit('family.ownership_claim_link_issued', requesterLineId, {
+        centerId, residentId, careProfileId:resident.care_profile_id || null,
+        sourceFlow:'center_ownership_claim', expiresAt:invite.expires_at,
+      });
+    }
+    return { ok:true, inviteUrl:`https://liff.line.me/${process.env.LIFF_ID_FAMILY || 'YOUR_LIFF_ID'}?token=${encodeURIComponent(invite.invite_token)}`,
+      inviteExpiresAt:invite.expires_at, created };
+  });
 }
 
 async function approveStaff({ centerId, targetLineId, requesterLineId, role = 'staff' }) {
@@ -433,36 +449,44 @@ async function dischargeResident(centerId, residentId, requesterLineId) {
     const existing = await Residents.findOne((r) => r.resident_id === residentId);
     centerId = existing?.center_id;
   }
-  const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === centerId && r.status === 'active');
-  if (!resident) return { ok: false, reason: 'ไม่พบผู้พัก' };
-
-  await Residents.update((r) => r.resident_id === residentId && r.center_id === centerId && r.status === 'active', { status: 'discharged', discharged_at: now() });
-  await Invites.updateAll((i) => i.resident_id === residentId && !i.used_at && i.status !== 'revoked', { status: 'revoked', revoked_at: now(), revoke_reason: 'resident_discharged' });
-
+  const transition = await withTransaction(GROUP_BINDING_TRANSACTION_KEY, async () => {
+    const resident = await Residents.findOne((item) => item.resident_id === residentId
+      && item.center_id === centerId && item.status === 'active');
+    if (!resident) return { ok:false, reason:'ไม่พบผู้พัก' };
+    await Residents.update((item) => item.resident_id === residentId && item.center_id === centerId
+      && item.status === 'active', { status:'discharged', discharged_at:now() });
+    await Invites.updateAll((item) => item.resident_id === residentId && !item.used_at && item.status !== 'revoked',
+      { status:'revoked', revoked_at:now(), revoke_reason:'resident_discharged' });
+    const revokedAt = now();
+    const revokedCodes = await GroupBindingTokens.updateAll((item) => item.kind === 'center_family'
+      && item.resident_id === residentId && !item.used_at && !item.invalidated_at && !item.revoked_at,
+    { status:'revoked', revoked_at:revokedAt, invalidated_at:revokedAt, invalidated_reason:'resident_discharged' });
+    if (revokedCodes.length) await audit('family_group.center_code_revoked', requesterLineId, {
+      centerId, residentId, careProfileId:resident.care_profile_id || null,
+      sourceFlow:'center_issued_family_group', reason:'resident_discharged', count:revokedCodes.length,
+    });
+    if (!resident.care_profile_id) return { ok:true, resident, careProfile:null, target:null };
+    await CareProfiles.update((item) => item.care_profile_id === resident.care_profile_id,
+      { center_id:null, status:'independent' });
+    const groupBinding = await findActiveFamilyBinding(resident.care_profile_id);
+    const careProfile = await CareProfiles.findOne((item) => item.care_profile_id === resident.care_profile_id);
+    return { ok:true, resident, careProfile,
+      target:groupBinding?.line_group_id || careProfile?.owner_line_id || null };
+  });
+  if (!transition.ok) return transition;
   let familyNotice = null;
   let familyNotified = false;
-  if (resident.care_profile_id) {
-    const { CareProfiles } = require('../db');
-    const lineClient = require('../providers/lineClient');
-    await CareProfiles.update(
-      (p) => p.care_profile_id === resident.care_profile_id,
-      { center_id: null, status: 'independent' } // FR-N6
-    );
+  if (transition.careProfile) {
     familyNotice = 'ศูนย์แจ้งสิ้นสุดการดูแลแล้ว ข้อมูลทั้งหมดยังอยู่กับคุณครบถ้วน '
-      + 'ยังบันทึกนัด รับการเตือน และเรียกใช้บริการผู้ดูแลจาก Care2Go ได้ตามปกติ'; // ข้อความตามที่ตกลงไว้
-
-    // ⚠️ ข้อ B6 ระบุว่า "ระบบส่งข้อความแจ้งครอบครัว" — ต้อง Push จริง ไม่ใช่แค่คืนค่าไปให้ศูนย์เห็น
-    const groupBinding = await findActiveFamilyBinding(resident.care_profile_id);
-    const careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
-    const target = groupBinding ? groupBinding.line_group_id : (careProfile ? careProfile.owner_line_id : null);
-    if (target) {
-      await lineClient.pushMessage(target, [{ type: 'text', text: `${careProfile?.patient_name || resident.full_name} — ${familyNotice}` }]);
+      + 'ยังบันทึกนัด รับการเตือน และเรียกใช้บริการผู้ดูแลจาก Care2Go ได้ตามปกติ';
+    if (transition.target) {
+      await require('../providers/lineClient').pushMessage(transition.target, [{ type:'text',
+        text:`${transition.careProfile.patient_name || transition.resident.full_name} — ${familyNotice}` }]);
       familyNotified = true;
     }
   }
-
   await audit('resident.discharged', requesterLineId, { residentId, familyNotified });
-  return { ok: true, familyNotice, familyNotified };
+  return { ok:true, familyNotice, familyNotified };
 }
 
 async function listResidents(centerId, { search } = {}) {
@@ -473,7 +497,30 @@ async function listResidents(centerId, { search } = {}) {
       r.full_name.toLowerCase().includes(q) || (r.aliases || []).some((a) => a.toLowerCase().includes(q))
     );
   }
-  return rows;
+  const profileIds = new Set(rows.map((item) => item.care_profile_id).filter(Boolean));
+  const [profiles, bindings, tokens] = await Promise.all([
+    CareProfiles.findWhere((item) => profileIds.has(item.care_profile_id)),
+    GroupBindings.findWhere((item) => item.kind === 'family' && item.status === 'active'
+      && profileIds.has(item.care_profile_id)),
+    GroupBindingTokens.findWhere((item) => ['family', 'center_family'].includes(item.kind)
+      && profileIds.has(item.care_profile_id) && !item.used_at && !item.invalidated_at && !item.revoked_at
+      && new Date(item.expires_at).getTime() > Date.now()),
+  ]);
+  const profileById = new Map(profiles.map((item) => [item.care_profile_id, item]));
+  const boundProfiles = new Set(bindings.map((item) => item.care_profile_id));
+  const activeCodeByProfile = new Map();
+  for (const token of tokens.sort((a, b) => new Date(b.expires_at) - new Date(a.expires_at))) {
+    if (!activeCodeByProfile.has(token.care_profile_id)) activeCodeByProfile.set(token.care_profile_id, token);
+  }
+  return rows.map((resident) => {
+    const profile = profileById.get(resident.care_profile_id) || null;
+    const activeCode = activeCodeByProfile.get(resident.care_profile_id) || null;
+    return { ...resident,
+      family_group_connected:boundProfiles.has(resident.care_profile_id),
+      ownership_claimed:Boolean(profile?.owner_line_id),
+      family_group_code_active_until:activeCode?.expires_at || null,
+    };
+  });
 }
 
 // ── FR-J1: นำเข้ารายชื่อแบบชุด พร้อมตรวจชื่อซ้ำก่อนบันทึก ──
