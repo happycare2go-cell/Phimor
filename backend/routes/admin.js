@@ -179,6 +179,45 @@ router.patch('/centers/:centerId/subscription', asyncHandler(async (req, res) =>
   }
 }));
 
+router.get('/centers/:centerId/subscription/monthly-renewal-preview', asyncHandler(async (req, res) => {
+  try {
+    const result = await subscriptionService.previewMonthlyRenewal({
+      centerId:req.params.centerId,
+      renewalUnits:req.query.renewalUnits,
+    });
+    if (!result.ok) return res.status(404).json({ error:'not_found', message:result.reason });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof subscriptionService.MonthlyRenewalInputError) {
+      return res.status(400).json({ error:'bad_request', errorCode:error.code, message:error.message });
+    }
+    throw error;
+  }
+}));
+
+router.post('/centers/:centerId/subscription/monthly-renew', asyncHandler(async (req, res) => {
+  try {
+    if (req.body.packageType !== 'monthly') {
+      return res.status(400).json({ error:'bad_request', message:'รองรับเฉพาะการต่ออายุแพ็กเกจรายเดือน' });
+    }
+    if (Object.hasOwn(req.body, 'startsAt') || Object.hasOwn(req.body, 'expiresAt')) {
+      return res.status(400).json({ error:'bad_request', message:'วันเริ่มและวันหมดอายุต้องคำนวณโดยระบบ' });
+    }
+    const result = await subscriptionService.renewMonthlySubscription({
+      centerId:req.params.centerId,
+      renewalUnits:req.body.renewalUnits,
+      actor:req.admin.actor,
+    });
+    if (!result.ok) return res.status(404).json({ error:'not_found', message:result.reason });
+    res.json({ ok:true, renewal:result.renewal, entitlement:result.entitlement });
+  } catch (error) {
+    if (error instanceof subscriptionService.MonthlyRenewalInputError) {
+      return res.status(400).json({ error:'bad_request', errorCode:error.code, message:error.message });
+    }
+    throw error;
+  }
+}));
+
 router.post('/centers/:centerId/transfer-owner', asyncHandler(async (req, res) => {
   const newOwnerLineId = String(req.body.newOwnerLineId || '').trim();
   if (!newOwnerLineId) return res.status(400).json({ error:'bad_request', message:'กรุณาระบุ LINE User ID เจ้าของคนใหม่' });

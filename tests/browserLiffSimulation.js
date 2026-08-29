@@ -442,12 +442,13 @@ async function registerJourney(browser) {
 
 async function adminSubscriptionJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  let saved = false;
-  const center = { centerId:'CTR1',name:'ศูนย์จำลอง',ownerIdentity:'บัญชี LINE ••••0001',status:'active',operationalStatus:'active',directoryStatus:'not_configured',address:'กรุงเทพฯ',activeResidentCount:1,subscriptionStartAt:null,subscriptionEndAt:null,packageType:null,subscription:{allowed:false,state:'not_configured',code:'subscription_unconfigured'} };
+  let savedBody = null;
+  const center = { centerId:'CTR1',name:'ศูนย์จำลอง',ownerIdentity:'บัญชี LINE ••••0001',status:'active',operationalStatus:'active',directoryStatus:'trial',address:'กรุงเทพฯ',activeResidentCount:1,subscriptionStartAt:'2026-08-29T03:00:00.000Z',subscriptionEndAt:'2026-09-29T03:00:00.000Z',packageType:'trial',subscription:{allowed:true,state:'trial',expiresAt:'2026-09-29T03:00:00.000Z',remainingDays:31} };
   await mockBackend(page, async (url, request) => {
     if (url.pathname === '/config/liff') return { systemAdminLiffId:'SIM_ADMIN' };
-    if (url.pathname === '/api/admin/centers' && request.method()==='GET') return { centers:[center],items:[center],counts:{all:1,active:0,trial:0,expired:0,notConfigured:1,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:1,totalPages:1} };
-    if (url.pathname === '/api/admin/centers/CTR1/subscription') { saved=true; center.subscriptionStartAt='2030-01-01';center.subscriptionEndAt='2030-12-31';center.packageType='annual';center.subscription={allowed:true,remainingDays:365}; return { ok:true }; }
+    if (url.pathname === '/api/admin/centers' && request.method()==='GET') return { centers:[center],items:[center],counts:{all:1,active:0,trial:1,expired:0,notConfigured:0,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:1,totalPages:1} };
+    if (url.pathname === '/api/admin/centers/CTR1/subscription/monthly-renewal-preview') { const units=Number(url.searchParams.get('renewalUnits'));return {ok:true,packageType:'monthly',renewalUnits:units,renewalDays:units*30,previousExpiresAt:'2026-09-29T03:00:00.000Z',startsAt:'2026-08-29T03:00:00.000Z',expiresAt:units===1?'2026-10-29T03:00:00.000Z':'2026-11-28T03:00:00.000Z',preservesCurrentPeriod:true}; }
+    if (url.pathname === '/api/admin/centers/CTR1/subscription/monthly-renew' && request.method()==='POST') { savedBody=request.postDataJSON();center.subscriptionStartAt='2026-08-29T03:00:00.000Z';center.subscriptionEndAt='2026-11-28T03:00:00.000Z';center.packageType='monthly';center.directoryStatus='active';center.subscription={allowed:true,state:'active',expiresAt:center.subscriptionEndAt,remainingDays:90};return {ok:true,renewal:{renewalUnits:2,renewalDays:60,expiresAt:center.subscriptionEndAt},entitlement:center.subscription}; }
     return { status:404, body:{message:`unmocked ${url.pathname}`} };
   });
   await page.setContent(localHtml('system-admin'), { waitUntil:'domcontentloaded' });
@@ -455,15 +456,18 @@ async function adminSubscriptionJourney(browser) {
   const adminMobile=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,searchHeight:document.querySelector('#search').getBoundingClientRect().height,chipHeight:document.querySelector('.directory-filter').getBoundingClientRect().height,filterOverflow:getComputedStyle(document.querySelector('.directory-filters')).overflowX}));
   assert.equal(adminMobile.overflow,true);assert.ok(adminMobile.searchHeight>=44);assert.ok(adminMobile.chipHeight>=44);assert.equal(adminMobile.filterOverflow,'auto');
   await page.getByRole('button', { name:'ปรับสิทธิ' }).click();
-  await page.locator('#subscriptionStart').fill('2030-12-31');
-  await page.locator('#subscriptionEnd').fill('2030-01-01');
-  await page.locator('#subscriptionSaveButton').click();
-  assert.match(await page.locator('#subscriptionError').textContent(), /ต้องอยู่หลัง/);
-  await page.locator('#subscriptionStart').fill('2030-01-01');
-  await page.locator('#subscriptionEnd').fill('2030-12-31');
+  await page.waitForFunction(()=>document.querySelector('#renewalNewExpiry').textContent.includes('29/10/2569'));
+  assert.equal(await page.locator('#monthlyRenewalPanel').isVisible(),true);
+  assert.equal(await page.locator('#manualSubscriptionPeriod').isHidden(),true);
+  assert.ok((await page.locator('#renewalDecrease').boundingBox()).height>=44);
+  assert.ok((await page.locator('#renewalIncrease').boundingBox()).height>=44);
+  await page.locator('#renewalIncrease').click();
+  await page.waitForFunction(()=>document.querySelector('#renewalDays').textContent.includes('+60 วัน'));
+  await page.waitForFunction(()=>document.querySelector('#renewalNewExpiry').textContent.includes('28/11/2569'));
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
   await page.locator('#subscriptionSaveButton').click();
   await page.waitForFunction(() => !document.querySelector('#subscriptionDialog').open);
-  assert.strictEqual(saved, true);
+  assert.deepEqual(savedBody,{packageType:'monthly',renewalUnits:2});
   await page.close();
 }
 

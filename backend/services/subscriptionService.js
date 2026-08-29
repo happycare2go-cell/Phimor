@@ -1,10 +1,12 @@
-const { Centers, CenterStaff, Residents, CareProfiles, audit, now } = require('../db');
+const { Centers, CenterStaff, Residents, CareProfiles, audit, now, withTransaction } = require('../db');
 const notificationService = require('./notificationService');
 const { formatThaiDateTime } = require('../utils/thaiDate');
 const { displayIdentity, maskedInternalReference } = require('../utils/safeIdentity');
 
 const DAY_MS = 86400000;
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+const MONTHLY_RENEWAL_DAYS = 30;
+const MAX_MONTHLY_RENEWAL_UNITS = 3;
 
 function parseDate(value, field) {
   const date = new Date(value);
@@ -73,6 +75,91 @@ function entitlement(center, at = new Date()) {
   return { ...chronology, allowed:true, code:'active', operationalStatus };
 }
 
+class MonthlyRenewalInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.code = 'INVALID_MONTHLY_RENEWAL';
+    this.status = 400;
+  }
+}
+
+function normalizeRenewalUnits(value) {
+  const units = Number(value);
+  if (!Number.isSafeInteger(units) || units < 1 || units > MAX_MONTHLY_RENEWAL_UNITS) {
+    throw new MonthlyRenewalInputError(`จำนวนเดือนต้องเป็นเลขจำนวนเต็มระหว่าง 1 ถึง ${MAX_MONTHLY_RENEWAL_UNITS}`);
+  }
+  return units;
+}
+
+function validStoredDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Paid monthly packages intentionally use fixed 30 x 24-hour units. This is
+// separate from the Bangkok calendar-month helper used only for free trials.
+function calculateMonthlyRenewal(center, renewalUnits, referenceDate = new Date()) {
+  const units = normalizeRenewalUnits(renewalUnits);
+  const reference = parseDate(referenceDate, 'เวลาอ้างอิง');
+  const previousStart = validStoredDate(center?.subscription_start_at);
+  const previousEnd = validStoredDate(center?.subscription_end_at);
+  const preservesCurrentPeriod = Boolean(previousEnd && previousEnd > reference);
+  const base = preservesCurrentPeriod ? previousEnd : reference;
+  const startsAt = preservesCurrentPeriod && previousStart ? previousStart : reference;
+  const expiresAt = new Date(base.getTime() + units * MONTHLY_RENEWAL_DAYS * DAY_MS);
+  return {
+    packageType:'monthly', renewalUnits:units,
+    renewalDays:units * MONTHLY_RENEWAL_DAYS,
+    previousExpiresAt:previousEnd?.toISOString() || null,
+    baseAt:base.toISOString(), startsAt:startsAt.toISOString(), expiresAt:expiresAt.toISOString(),
+    preservesCurrentPeriod,
+  };
+}
+
+async function deliverSubscriptionUpdatedNotification(center, expiresAt) {
+  const owners = await CenterStaff.findWhere((s) => s.center_id === center.center_id && s.role === 'owner');
+  const text = `✅ สิทธิการใช้ระบบพี่หมอของ ${center.name} ได้รับการอัปเดตแล้ว\nท่านสามารถใช้งานระบบได้ถึงวันที่ ${formatThaiDateTime(expiresAt)}`;
+  for (const owner of owners) {
+    await notificationService.enqueueAndDeliver({
+      dedupeKey:`subscription-updated:${center.center_id}:${expiresAt}:${owner.line_user_id}`,
+      to:owner.line_user_id, kind:'subscription_updated', meta:{ centerId:center.center_id, expiresAt },
+      messages:[{ type:'text', text }],
+    });
+  }
+}
+
+async function previewMonthlyRenewal({ centerId, renewalUnits, referenceDate = new Date() }) {
+  const center = await Centers.findOne((item) => item.center_id === centerId);
+  if (!center) return { ok:false, reason:'ไม่พบศูนย์นี้' };
+  return { ok:true, ...calculateMonthlyRenewal(center, renewalUnits, referenceDate) };
+}
+
+async function renewMonthlySubscription({ centerId, renewalUnits, actor = 'admin', referenceDate = new Date() }) {
+  const units = normalizeRenewalUnits(renewalUnits);
+  const reference = parseDate(referenceDate, 'เวลาอ้างอิง');
+  const result = await withTransaction(`center-subscription-renew:${centerId}`, async () => {
+    const center = await Centers.findOne((item) => item.center_id === centerId);
+    if (!center) return { ok:false, reason:'ไม่พบศูนย์นี้' };
+    const renewal = calculateMonthlyRenewal(center, units, reference);
+    const updated = await Centers.update((item) => item.center_id === centerId, {
+      subscription_required:true,
+      subscription_start_at:renewal.startsAt,
+      subscription_end_at:renewal.expiresAt,
+      subscription_package_type:'monthly',
+      subscription_updated_at:now(),
+      subscription_updated_by:actor,
+    });
+    await audit('center.subscription_updated', actor, {
+      centerId, packageType:'monthly', renewalUnits:units, renewalDays:renewal.renewalDays,
+      previousEnd:renewal.previousExpiresAt, startsAt:renewal.startsAt, expiresAt:renewal.expiresAt,
+    });
+    return { ok:true, center:updated, renewal, entitlement:entitlement(updated, reference) };
+  });
+  if (result.ok) await deliverSubscriptionUpdatedNotification(result.center, result.renewal.expiresAt);
+  return result;
+}
+
 async function setSubscription({ centerId, startsAt, expiresAt, packageType = 'custom', note = '', actor = 'admin' }) {
   const center = await Centers.findOne((c) => c.center_id === centerId);
   if (!center) return { ok: false, reason: 'ไม่พบศูนย์นี้' };
@@ -86,15 +173,7 @@ async function setSubscription({ centerId, startsAt, expiresAt, packageType = 'c
     subscription_updated_at: now(), subscription_updated_by: actor,
   });
   await audit('center.subscription_updated', actor, { centerId, startsAt: start.toISOString(), expiresAt: end.toISOString(), packageType, previousEnd });
-  const owners = await CenterStaff.findWhere((s) => s.center_id === centerId && s.role === 'owner');
-  const text = `✅ สิทธิการใช้ระบบพี่หมอของ ${center.name} ได้รับการอัปเดตแล้ว\nท่านสามารถใช้งานระบบได้ถึงวันที่ ${formatThaiDateTime(end.toISOString())}`;
-  for (const owner of owners) {
-    await notificationService.enqueueAndDeliver({
-      dedupeKey: `subscription-updated:${centerId}:${end.toISOString()}:${owner.line_user_id}`,
-      to: owner.line_user_id, kind: 'subscription_updated', meta: { centerId, expiresAt: end.toISOString() },
-      messages: [{ type: 'text', text }],
-    });
-  }
+  await deliverSubscriptionUpdatedNotification(center, end.toISOString());
   return { ok: true, center: updated, entitlement: entitlement(updated) };
 }
 
@@ -143,6 +222,9 @@ async function getAdminCenterDetails(centerId) {
 }
 
 module.exports = {
+  DAY_MS, MONTHLY_RENEWAL_DAYS, MAX_MONTHLY_RENEWAL_UNITS,
   entitlement, subscriptionChronology, addBangkokCalendarMonth,
+  MonthlyRenewalInputError, normalizeRenewalUnits, calculateMonthlyRenewal,
+  previewMonthlyRenewal, renewMonthlySubscription,
   setSubscription, sendExpiryReminders, getAdminCenterDetails,
 };
