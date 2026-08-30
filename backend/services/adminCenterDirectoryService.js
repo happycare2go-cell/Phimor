@@ -1,4 +1,4 @@
-const { Centers, CenterStaff, Residents, databaseQuery } = require('../db');
+const { Centers, CenterStaff, Residents, GroupBindings, databaseQuery } = require('../db');
 const subscriptionService = require('./subscriptionService');
 const { displayIdentity } = require('../utils/safeIdentity');
 
@@ -42,8 +42,11 @@ function directoryStatus(center, at = new Date()) {
   return subscription.state;
 }
 
-function projectCenterDirectoryRow({ center, owner, activeResidentCount = 0, at = new Date() }) {
+function projectCenterDirectoryRow({ center, owner, activeResidentCount = 0,
+  centerStaffGroupReady = false, capabilityCounts = {}, at = new Date() }) {
   const subscription = subscriptionService.entitlement(center, at);
+  const enabledCapabilityCount = Number(capabilityCounts.enabled) || 0;
+  const capabilityCount = Number(capabilityCounts.total) || 0;
   return {
     centerId:center.center_id,
     name:center.name,
@@ -51,7 +54,12 @@ function projectCenterDirectoryRow({ center, owner, activeResidentCount = 0, at 
     status:center.status,
     operationalStatus:subscription.operationalStatus,
     directoryStatus:directoryStatus(center, at),
-    groupBound:Boolean(center.group_id),
+    centerStaffGroupReady:Boolean(centerStaffGroupReady),
+    capabilityReadiness:{
+      enabled:enabledCapabilityCount, total:capabilityCount,
+      state:capabilityCount > 0 && enabledCapabilityCount === capabilityCount ? 'ready'
+        : enabledCapabilityCount > 0 ? 'partial' : 'not_configured',
+    },
     createdAt:center.created_at || null,
     address:center.address || '',
     contactPhone:center.contact_phone || '',
@@ -75,8 +83,8 @@ function incrementCount(counts, status) {
 }
 
 async function queryMemory({ search, subscriptionStatus, page, limit, offset }, at) {
-  const [centers, residents, staffRows] = await Promise.all([
-    Centers.findAll(), Residents.findAll(), CenterStaff.findAll(),
+  const [centers, residents, staffRows, groupBindings] = await Promise.all([
+    Centers.findAll(), Residents.findAll(), CenterStaff.findAll(), GroupBindings.findAll(),
   ]);
   const needle = search.toLocaleLowerCase('en-US');
   const searched = centers
@@ -91,7 +99,9 @@ async function queryMemory({ search, subscriptionStatus, page, limit, offset }, 
     const owner = staffRows.find((row) => row.center_id === center.center_id
       && row.line_user_id === center.owner_line_id && row.role === 'owner');
     const activeResidentCount = residents.filter((row) => row.center_id === center.center_id && row.status === 'active').length;
-    return projectCenterDirectoryRow({ center, owner, activeResidentCount, at });
+    const centerStaffGroupReady = groupBindings.some((row) => row.kind === 'center_staff'
+      && row.center_id === center.center_id && row.status === 'active');
+    return projectCenterDirectoryRow({ center, owner, activeResidentCount, centerStaffGroupReady, at });
   });
   return {
     items, counts,
@@ -113,6 +123,16 @@ const DIRECTORY_SQL = `
       END AS directory_status
     FROM centers c
     WHERE $1::text = '' OR POSITION(LOWER($1::text) IN LOWER(COALESCE(c.data->>'name', ''))) > 0
+  ), resident_counts AS (
+    SELECT data->>'center_id' AS center_id, COUNT(*) FILTER (WHERE data->>'status'='active')::int AS active_count
+    FROM residents GROUP BY data->>'center_id'
+  ), staff_groups AS (
+    SELECT data->>'center_id' AS center_id, true AS ready FROM "groupBindings"
+    WHERE data->>'kind'='center_staff' AND data->>'status'='active' GROUP BY data->>'center_id'
+  ), capability_counts AS (
+    SELECT center_id, COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE enabled)::int AS enabled
+    FROM center_capabilities GROUP BY center_id
   ), filtered AS (
     SELECT * FROM classified WHERE $2 = 'all' OR directory_status = $2
   ), paged AS (
@@ -124,10 +144,9 @@ const DIRECTORY_SQL = `
     COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
         'center', p.data,
-        'activeResidentCount', (
-          SELECT COUNT(*)::int FROM residents r
-          WHERE r.data->>'center_id' = p.data->>'center_id' AND r.data->>'status' = 'active'
-        ),
+        'activeResidentCount', COALESCE(rc.active_count, 0),
+        'centerStaffGroupReady', COALESCE(sg.ready, false),
+        'capabilityCounts', jsonb_build_object('total', COALESCE(cc.total, 0), 'enabled', COALESCE(cc.enabled, 0)),
         'owner', (
           SELECT s.data FROM "centerStaff" s
           WHERE s.data->>'center_id' = p.data->>'center_id'
@@ -137,6 +156,9 @@ const DIRECTORY_SQL = `
         )
       ) ORDER BY LOWER(COALESCE(p.data->>'name', '')), COALESCE(p.data->>'center_id', ''))
       FROM paged p
+      LEFT JOIN resident_counts rc ON rc.center_id = p.data->>'center_id'
+      LEFT JOIN staff_groups sg ON sg.center_id = p.data->>'center_id'
+      LEFT JOIN capability_counts cc ON cc.center_id = p.data->>'center_id'
     ), '[]'::jsonb) AS items,
     (SELECT COUNT(*)::int FROM filtered) AS total,
     (SELECT jsonb_build_object(
@@ -157,7 +179,9 @@ async function queryPostgres(query, at) {
   const row = result.rows[0] || { items:[], total:0, counts:emptyCounts() };
   const items = (row.items || []).map((item) => projectCenterDirectoryRow({
     center:item.center, owner:item.owner,
-    activeResidentCount:item.activeResidentCount, at,
+    activeResidentCount:item.activeResidentCount,
+    centerStaffGroupReady:item.centerStaffGroupReady,
+    capabilityCounts:item.capabilityCounts, at,
   }));
   const total = Number(row.total) || 0;
   return {

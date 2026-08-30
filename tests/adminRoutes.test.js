@@ -127,7 +127,8 @@ test('GET /api/admin/centers คืนรายชื่อศูนย์ทั
   const res = await callAdmin('/api/admin/centers', { headers: { 'X-Admin-Key': REAL_ADMIN_KEY } });
   const body = await res.json();
   assert.strictEqual(body.centers.length, 2);
-  assert.strictEqual(body.centers[0].groupBound, false, 'ยังไม่ผูกกลุ่ม ต้องแสดง false');
+  assert.strictEqual(body.centers[0].centerStaffGroupReady, false, 'ยังไม่ผูกกลุ่มทีมงาน ต้องแสดง false');
+  assert.equal(body.centers[0].capabilityReadiness.state, 'not_configured');
   assert.deepStrictEqual(body.centers, body.items, 'centers ต้องยังเป็น compatibility alias ของ items');
   assert.strictEqual(body.pagination.page, 1);
   assert.strictEqual(body.pagination.limit, 20);

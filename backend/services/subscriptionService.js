@@ -254,12 +254,9 @@ function residentHistoryLabel(status) {
 }
 
 function projectAdminResident(resident, profile, { historical }) {
-  const contact = emergencyContact(resident, profile);
   const base = {
     displayName:String(resident.full_name || profile?.patient_name || 'ไม่ระบุชื่อ').trim(),
     room:String(resident.room || '').trim() || null,
-    emergencyContactName:contact.name,
-    emergencyContactPhone:contact.phone,
   };
   if (!historical) return base;
   return {
@@ -291,15 +288,40 @@ function classifyAdminResidents(residents, profiles) {
   };
 }
 
-async function getAdminCenterDetails(centerId) {
+function normalizeAdminDetailPaging(options = {}) {
+  const limit = Math.min(50, Math.max(1, Number(options.limit) || 20));
+  const currentPage = Math.max(1, Number(options.currentPage) || 1);
+  const historyPage = Math.max(1, Number(options.historyPage) || 1);
+  return { limit, currentPage, historyPage };
+}
+
+function pageRows(rows, page, limit) {
+  const total = rows.length;
+  return { items:rows.slice((page - 1) * limit, page * limit),
+    pagination:{ page, limit, total, totalPages:Math.ceil(total / limit) } };
+}
+
+async function getAdminCenterDetails(centerId, options = {}) {
+  const { GroupBindings } = require('../db');
   const center = await Centers.findOne((c) => c.center_id === centerId);
   if (!center) return null;
-  const staff = await CenterStaff.findWhere((s) => s.center_id === centerId);
-  const residents = await Residents.findWhere((r) => r.center_id === centerId);
+  const [staff, residents, groupBindings] = await Promise.all([
+    CenterStaff.findWhere((s) => s.center_id === centerId),
+    Residents.findWhere((r) => r.center_id === centerId),
+    GroupBindings.findWhere((row) => row.center_id === centerId && row.kind === 'center_staff'),
+  ]);
   const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
   const profiles = await CareProfiles.findWhere((p) => profileIds.has(p.care_profile_id));
   const owner = staff.find((row) => row.role === 'owner' && row.line_user_id === center.owner_line_id) || staff.find((row) => row.role === 'owner');
   const residentClassification = classifyAdminResidents(residents, profiles);
+  const paging = normalizeAdminDetailPaging(options);
+  const current = pageRows(residentClassification.currentResidents, paging.currentPage, paging.limit);
+  const history = pageRows(residentClassification.residentHistory, paging.historyPage, paging.limit);
+  const activeStaff = staff.filter((row) => (row.status || 'active') === 'active');
+  const staffSummary = ['owner', 'manager', 'staff'].reduce((result, role) => ({
+    ...result, [role]:activeStaff.filter((row) => row.role === role).length,
+  }), { total:activeStaff.length });
+  const centerStaffGroupReady = groupBindings.some((row) => row.status === 'active');
   return {
     center:{
       centerId:center.center_id, name:center.name, status:center.status,
@@ -309,9 +331,12 @@ async function getAdminCenterDetails(centerId) {
     },
     entitlement:entitlement(center),
     staff:staff.map((row) => ({ staffId:row.staff_id, role:row.role, status:row.status || 'active', displayIdentity:displayIdentity({ displayName:row.display_name, lineUserId:row.line_user_id }) })),
-    residents:residents.map((row) => ({ residentId:row.resident_id, displayName:row.full_name, room:row.room || null, status:row.status, careProfileLinked:Boolean(row.care_profile_id) })),
-    profiles:profiles.map((row) => ({ careProfileId:row.care_profile_id, displayName:row.patient_name, status:row.status })),
-    ...residentClassification,
+    staffSummary,
+    groupReadiness:{ centerStaffGroupReady, state:centerStaffGroupReady ? 'ready' : 'not_ready' },
+    currentResidents:current.items,
+    residentHistory:history.items,
+    residentPagination:{ current:current.pagination, history:history.pagination },
+    counts:residentClassification.counts,
   };
 }
 
@@ -322,5 +347,6 @@ module.exports = {
   previewMonthlyRenewal, renewMonthlySubscription,
   RESIDENT_HISTORY_STATUS_LABELS, residentStartAt, residentEndAt,
   emergencyContact, residentHistoryLabel, projectAdminResident, classifyAdminResidents,
+  normalizeAdminDetailPaging, pageRows,
   setSubscription, sendExpiryReminders, getAdminCenterDetails,
 };

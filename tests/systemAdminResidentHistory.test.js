@@ -74,7 +74,8 @@ test('active is the only current Resident state and current count excludes every
   assert.deepEqual(result.currentResidents.map((row) => row.displayName), ['ป้าศรี']);
   assert.equal(result.counts.currentResidents, 1);
   assert.equal(result.counts.historicalResidents, 5);
-  assert.equal(result.residents.length, 6, 'compatibility resident list remains additive');
+  assert.equal(result.residents, undefined, 'unbounded compatibility Resident rows are not projected');
+  assert.equal(result.profiles, undefined, 'Care Profile inventory is not exposed in ordinary Admin detail');
 });
 
 test('history contains discharged/transferred/cancelled residents once with safe Thai labels', async () => {
@@ -90,7 +91,7 @@ test('history contains discharged/transferred/cancelled residents once with safe
   assert.equal(new Set(result.residentHistory.map((row) => row.displayName)).size, 3);
 });
 
-test('current cards use explicit emergency contact first and existing family phone only as fallback', async () => {
+test('ordinary Admin Resident projection omits emergency and family contact details', async () => {
   await seedCenter();
   await addProfile({ careProfileId:'CP-EXPLICIT', patientName:'คุณหนึ่ง', emergencyName:'คุณลูก', emergencyPhone:'0811111111', familyPhone:'0822222222' });
   await addProfile({ careProfileId:'CP-FAMILY', patientName:'คุณสอง', familyPhone:'0833333333' });
@@ -101,14 +102,11 @@ test('current cards use explicit emergency contact first and existing family pho
 
   const result = await subscriptionService.getAdminCenterDetails('CTR-HISTORY');
   const byName = new Map(result.currentResidents.map((row) => [row.displayName, row]));
-  assert.deepEqual(byName.get('คุณหนึ่ง'), {
-    displayName:'คุณหนึ่ง', room:'ห้อง 1', emergencyContactName:'คุณลูก', emergencyContactPhone:'0811111111',
-  });
-  assert.equal(byName.get('คุณสอง').emergencyContactName, null);
-  assert.equal(byName.get('คุณสอง').emergencyContactPhone, '0833333333');
-  assert.equal(byName.get('คุณสาม').emergencyContactPhone, '0866666666');
-  assert.equal(byName.get('คุณสี่').emergencyContactName, null);
-  assert.equal(byName.get('คุณสี่').emergencyContactPhone, null);
+  assert.deepEqual(byName.get('คุณหนึ่ง'), { displayName:'คุณหนึ่ง', room:'ห้อง 1' });
+  assert.deepEqual(byName.get('คุณสอง'), { displayName:'คุณสอง', room:null });
+  assert.deepEqual(byName.get('คุณสาม'), { displayName:'คุณสาม', room:null });
+  assert.deepEqual(byName.get('คุณสี่'), { displayName:'คุณสี่', room:null });
+  assert.doesNotMatch(JSON.stringify(result.currentResidents), /0811111111|0833333333|0866666666|emergency|familyPhone/i);
 });
 
 test('history retains former room and uses only authoritative lifecycle timestamps', async () => {
@@ -150,7 +148,7 @@ test('resident without Care Profile is projected safely without fabricated conta
   await addResident({ residentId:'R-PLAIN', name:'ผู้พักไม่มีโปรไฟล์', room:null, createdAt:null });
   const result = await subscriptionService.getAdminCenterDetails('CTR-HISTORY');
   assert.deepEqual(result.currentResidents[0], {
-    displayName:'ผู้พักไม่มีโปรไฟล์', room:null, emergencyContactName:null, emergencyContactPhone:null,
+    displayName:'ผู้พักไม่มีโปรไฟล์', room:null,
   });
 });
 
@@ -166,7 +164,7 @@ test('new operational projection excludes clinical fields and raw LINE identifie
   assert.doesNotMatch(projection, /U-OWNER|U-FAMILY|line_user|group_id|care_profile_id|resident_id/i);
 });
 
-test('Admin detail route is Admin-only and adds classification without removing compatibility fields', async () => {
+test('Admin detail route is Admin-only, bounded and excludes compatibility inventories', async () => {
   await seedCenter();
   await addResident({ residentId:'R-ACTIVE', name:'ผู้พักปัจจุบัน', status:'active' });
   await addResident({ residentId:'R-OLD', name:'ผู้พักเดิม', status:'discharged', discharged_at:'2026-01-20T00:00:00.000Z' });
@@ -180,8 +178,10 @@ test('Admin detail route is Admin-only and adds classification without removing 
   assert.equal(body.currentResidents.length, 1);
   assert.equal(body.residentHistory.length, 1);
   assert.deepEqual(body.counts, { currentResidents:1, historicalResidents:1 });
-  assert.equal(body.residents.length, 2);
-  assert.ok(Array.isArray(body.profiles));
+  assert.equal(body.residents, undefined);
+  assert.equal(body.profiles, undefined);
+  assert.deepEqual(body.residentPagination.current, { page:1, limit:20, total:1, totalPages:1 });
+  assert.deepEqual(body.residentPagination.history, { page:1, limit:20, total:1, totalPages:1 });
 });
 
 test('directory search and subscription filters keep the authoritative active-only resident count', async () => {
@@ -200,23 +200,36 @@ test('directory search and subscription filters keep the authoritative active-on
 });
 
 test('System Admin UI consumes backend classification and never guesses Resident status', () => {
-  const detailSource = adminHtml.slice(adminHtml.indexOf('function residentContact'), adminHtml.indexOf('async function start'));
+  const detailSource = adminHtml.slice(adminHtml.indexOf('function currentResidentCard'), adminHtml.indexOf('async function start'));
+  const cardSource = detailSource.slice(0, detailSource.indexOf('function setCenterDetailTab'));
   assert.match(detailSource, /d\.currentResidents\|\|\[\]/);
   assert.match(detailSource, /d\.residentHistory\|\|\[\]/);
   assert.match(detailSource, /d\.counts\|\|/);
-  assert.doesNotMatch(detailSource, /resident\.status===|status==='active'|careProfileLinked|careProfile\.status/);
+  assert.doesNotMatch(cardSource, /resident\.status|status==='active'|careProfileLinked|careProfile\.status/);
+  assert.doesNotMatch(detailSource, /current\s*=.*\.filter|history\s*=.*\.filter/);
   assert.doesNotMatch(detailSource, /\/care-profiles/);
   assert.match(adminHtml, /ผู้พักปัจจุบัน \$\{esc\(c\.activeResidentCount\)\} คน/);
 });
 
-test('current and history cards show coordination fields without technical relationship state', () => {
-  const detailSource = adminHtml.slice(adminHtml.indexOf('function residentContact'), adminHtml.indexOf('async function start'));
-  for (const label of ['ผู้พักปัจจุบัน', 'ประวัติผู้พัก', 'ห้อง:', 'ผู้ติดต่อฉุกเฉิน:', 'โทร:', 'ห้องเดิม:', 'ช่วงเวลาพัก:', 'สิ้นสุดการพัก:', 'สถานะ:']) {
+test('current and history cards show minimized coordination fields without contact or technical state', () => {
+  const detailSource = adminHtml.slice(adminHtml.indexOf('function currentResidentCard'), adminHtml.indexOf('async function start'));
+  for (const label of ['ผู้พักปัจจุบัน', 'ประวัติผู้พัก', 'ห้อง:', 'ห้องเดิม:', 'ช่วงเวลาพัก:', 'สถานะ:']) {
     assert.match(detailSource, new RegExp(label));
   }
-  assert.match(detailSource, /ยังไม่มีข้อมูลผู้ติดต่อฉุกเฉิน/);
   assert.match(detailSource, /ไม่ระบุ/);
-  assert.doesNotMatch(detailSource, /Care Profile|careProfileId|residentId|LINE|Group ID|link_status/);
+  assert.doesNotMatch(detailSource, /emergencyContact|familyPhone|โทร:|Care Profile|careProfileId|residentId|Group ID|link_status/);
+});
+
+test('active Center Staff Group is authoritative and Center detail exposes safe team summary', async () => {
+  await seedCenter();
+  await db.GroupBindings.insert({ binding_id:'GB-STAFF', kind:'center_staff', center_id:'CTR-HISTORY',
+    line_group_id:'G-RAW-SECRET', status:'active' });
+  await db.CenterStaff.insert({ staff_id:'STF-MANAGER', center_id:'CTR-HISTORY', line_user_id:'U-MANAGER-RAW',
+    display_name:'ผู้จัดการหนึ่ง', role:'manager', status:'active' });
+  const result = await subscriptionService.getAdminCenterDetails('CTR-HISTORY');
+  assert.equal(result.groupReadiness.centerStaffGroupReady, true);
+  assert.deepEqual(result.staffSummary, { total:2, owner:1, manager:1, staff:0 });
+  assert.doesNotMatch(JSON.stringify(result), /G-RAW-SECRET|U-MANAGER-RAW|U-OWNER-RAW/);
 });
 
 test('mobile structure keeps history secondary, touch-safe and long names contained', () => {

@@ -169,8 +169,23 @@ router.get('/centers', asyncHandler(async (req, res) => {
 }));
 
 router.get('/centers/:centerId', asyncHandler(async (req, res) => {
-  const details = await subscriptionService.getAdminCenterDetails(req.params.centerId);
+  const details = await subscriptionService.getAdminCenterDetails(req.params.centerId, {
+    currentPage:req.query.currentPage, historyPage:req.query.historyPage, limit:req.query.limit,
+  });
   if (!details) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์นี้' });
+  const platform = req.app.locals.platformService
+    || (process.env.NODE_ENV === 'test' ? null : require('../services/platformService').platformService);
+  if (platform) {
+    const [organization, capabilities] = await Promise.allSettled([
+      platform.getOrganizationForCenter(req.params.centerId),
+      platform.listCenterCapabilities(req.params.centerId),
+    ]);
+    details.organization = organization.status === 'fulfilled' ? organization.value : null;
+    details.capabilities = capabilities.status === 'fulfilled' ? capabilities.value : [];
+  } else {
+    details.organization = null;
+    details.capabilities = [];
+  }
   await audit('admin.center_details_viewed', req.admin.actor, { centerId: req.params.centerId });
   res.json(details);
 }));
