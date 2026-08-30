@@ -58,11 +58,24 @@ test('client creation is bounded, normalized, unique, organization-scoped and re
 test('active and suspended transitions preserve configuration while revoked is terminal',async()=>{
   const {service,repository,orgA}=await setup();
   const client=await service.createIntegrationClient({organizationId:orgA.organizationId,clientCode:'status-client',displayName:'Status',sourceSystem:'Generic',initialStatus:'suspended',actorReference:'ADM-1'});
+  await service.addClientCenterScope({integrationClientId:client.integrationClientId,centerId:'CTR-A',actorReference:'ADM-1'});
+  await service.addClientEventScope({integrationClientId:client.integrationClientId,eventType:'care.daily_report.finalized',actorReference:'ADM-1'});
+  await service.issueCredential({integrationClientId:client.integrationClientId,actorReference:'ADM-1'});
+  await service.mapExternalCenter({integrationClientId:client.integrationClientId,externalCenterId:'EXT-A',centerId:'CTR-A',actorReference:'ADM-1'});
   assert.equal((await service.setIntegrationClientStatus({integrationClientId:client.integrationClientId,status:'active',actorReference:'ADM-1'})).status,'active');
   assert.equal((await service.setIntegrationClientStatus({integrationClientId:client.integrationClientId,status:'suspended',actorReference:'ADM-1'})).status,'suspended');
   await service.revokeIntegrationClient({integrationClientId:client.integrationClientId,actorReference:'ADM-1'});
   await assert.rejects(service.setIntegrationClientStatus({integrationClientId:client.integrationClientId,status:'active',actorReference:'ADM-1'}),{code:'REVOKED_CLIENT_TERMINAL'});
   assert.ok(repository.state.auditEvents.some((row)=>row.event_type==='integration.client_status_changed'));
+});
+
+test('direct activation of an incomplete commissioned client is denied authoritatively',async()=>{
+  const {service,orgA}=await setup();
+  const client=await service.createIntegrationClient({organizationId:orgA.organizationId,clientCode:'not-ready',displayName:'Not Ready',sourceSystem:'Generic',initialStatus:'suspended',actorReference:'ADM-1'});
+  await assert.rejects(service.setIntegrationClientStatus({integrationClientId:client.integrationClientId,status:'active',actorReference:'ADM-1'}),{
+    code:'INTEGRATION_CLIENT_NOT_READY',status:409,
+  });
+  assert.equal((await service.inspectIntegrationClient(client.integrationClientId)).status,'suspended');
 });
 
 test('suspended clients can be commissioned but cannot authenticate until activated',async()=>{
@@ -178,5 +191,5 @@ test('generic commissioning UI builders are exact, safe, and one-time secret sta
   const secret=ui.createOneTimeSecretState();assert.equal(secret.show('pim_int_test.secret'),true);assert.equal(secret.hasValue(),true);secret.clear();assert.equal(secret.read(),null);
   const source=fs.readFileSync(path.resolve(__dirname,'..','liff-app','system-admin','care-operations-ui.js'),'utf8');
   assert.doesNotMatch(source,/localStorage|sessionStorage|console\./);assert.match(source,/pagehide/);assert.match(source,/ฉันบันทึกแล้ว/);
+  assert.match(ui.buildIntegrationDirectoryRequest({search:'HHS',status:'suspended',page:2,limit:20}).path,/integration-clients\?search=HHS&status=suspended&page=2&limit=20/);
 });
-

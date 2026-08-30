@@ -146,6 +146,76 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
       );
     },
 
+    listIntegrationClientDirectory({ search = '', status = null, limit = 20, offset = 0 }) {
+      return many(
+        `WITH center_counts AS (
+          SELECT integration_client_id, COUNT(*)::int AS allowed_center_count
+          FROM integration_client_centers GROUP BY integration_client_id
+        ), event_counts AS (
+          SELECT integration_client_id, COUNT(*)::int AS allowed_event_count
+          FROM integration_client_event_scopes GROUP BY integration_client_id
+        ), credential_counts AS (
+          SELECT integration_client_id,
+            COUNT(*) FILTER (WHERE status='active' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP))::int AS active_credential_count,
+            MAX(last_used_at) AS last_used_at
+          FROM integration_credentials GROUP BY integration_client_id
+        ), center_mapping_counts AS (
+          SELECT integration_client_id, COUNT(*) FILTER (WHERE status='active')::int AS active_center_mapping_count
+          FROM external_center_mappings GROUP BY integration_client_id
+        ), subject_mapping_counts AS (
+          SELECT integration_client_id, COUNT(*) FILTER (WHERE mapping_status='mapped')::int AS mapped_subject_count
+          FROM external_subject_mappings GROUP BY integration_client_id
+        ), warning_counts AS (
+          SELECT integration_client_id,
+            COUNT(*) FILTER (WHERE status IN ('retrying','dead','rejected','pending'))::int AS warning_count
+          FROM integration_event_inbox GROUP BY integration_client_id
+        ), directory AS (
+          SELECT c.integration_client_id, c.organization_id, c.client_code, c.display_name,
+            c.source_system, c.status, c.created_at, c.updated_at, o.display_name AS organization_name,
+            o.status AS organization_status,
+            COALESCE(cc.allowed_center_count,0) AS allowed_center_count,
+            COALESCE(ec.allowed_event_count,0) AS allowed_event_count,
+            COALESCE(cr.active_credential_count,0) AS active_credential_count,
+            cr.last_used_at,
+            COALESCE(cm.active_center_mapping_count,0) AS active_center_mapping_count,
+            COALESCE(sm.mapped_subject_count,0) AS mapped_subject_count,
+            COALESCE(w.warning_count,0) AS warning_count,
+            COALESCE((SELECT al.data->'policy'->>'identityResolutionMode'
+              FROM "auditLog" al
+              WHERE al.data->>'log_id' = 'integration-policy:' || c.integration_client_id
+              ORDER BY al.created_at DESC LIMIT 1), 'manual_mapping_only') AS identity_resolution_mode
+          FROM integration_clients c
+          INNER JOIN organizations o ON o.organization_id = c.organization_id
+          LEFT JOIN center_counts cc ON cc.integration_client_id = c.integration_client_id
+          LEFT JOIN event_counts ec ON ec.integration_client_id = c.integration_client_id
+          LEFT JOIN credential_counts cr ON cr.integration_client_id = c.integration_client_id
+          LEFT JOIN center_mapping_counts cm ON cm.integration_client_id = c.integration_client_id
+          LEFT JOIN subject_mapping_counts sm ON sm.integration_client_id = c.integration_client_id
+          LEFT JOIN warning_counts w ON w.integration_client_id = c.integration_client_id
+          WHERE ($1::text = '' OR POSITION(LOWER($1) IN LOWER(c.display_name)) > 0
+            OR POSITION(LOWER($1) IN LOWER(c.client_code)) > 0
+            OR POSITION(LOWER($1) IN LOWER(c.source_system)) > 0)
+            AND ($2::text IS NULL OR c.status = $2)
+        )
+        SELECT *, COUNT(*) OVER()::int AS total_count
+        FROM directory ORDER BY LOWER(display_name), integration_client_id
+        LIMIT $3 OFFSET $4`,
+        [search, status, limit, offset]
+      );
+    },
+
+    countIntegrationClientDirectory({ search = '', status = null }) {
+      return one(
+        `SELECT COUNT(*)::int AS total
+         FROM integration_clients c
+         WHERE ($1::text = '' OR POSITION(LOWER($1) IN LOWER(c.display_name)) > 0
+           OR POSITION(LOWER($1) IN LOWER(c.client_code)) > 0
+           OR POSITION(LOWER($1) IN LOWER(c.source_system)) > 0)
+           AND ($2::text IS NULL OR c.status = $2)`,
+        [search, status]
+      ).then((row) => Number(row?.total) || 0);
+    },
+
     updateIntegrationClientStatus(integrationClientId, status) {
       return one(
         `UPDATE integration_clients SET status = $2,

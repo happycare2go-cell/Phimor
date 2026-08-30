@@ -424,6 +424,63 @@ function createPlatformService(overrides = {}) {
     return (await repository.listIntegrationClients(organizationId)).map(clientProjection);
   }
 
+  function normalizeIntegrationDirectoryQuery(input = {}) {
+    const search = String(input.search || '').trim().normalize('NFC');
+    if (search.length > 120) throw new PlatformError('INVALID_INTEGRATION_SEARCH', 'คำค้นหาต้องไม่เกิน 120 ตัวอักษร', 400);
+    const status = String(input.status || '').trim();
+    if (status && !INTEGRATION_CLIENT_STATUSES.includes(status)) {
+      throw new PlatformError('INVALID_CLIENT_STATUS_FILTER', 'ตัวกรองสถานะ Integration Client ไม่ถูกต้อง', 400);
+    }
+    const page = Math.max(1, Number(input.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(input.limit) || 20));
+    return { search, status:status || null, page, limit, offset:(page - 1) * limit };
+  }
+
+  function integrationDirectoryProjection(row) {
+    const counts = {
+      centers:Number(row.allowed_center_count) || 0,
+      events:Number(row.allowed_event_count) || 0,
+      activeCredentials:Number(row.active_credential_count) || 0,
+      activeCenterMappings:Number(row.active_center_mapping_count) || 0,
+      mappedSubjects:Number(row.mapped_subject_count) || 0,
+      warnings:Number(row.warning_count) || 0,
+    };
+    const mappingReady = row.identity_resolution_mode === 'exact_name_learning' || counts.activeCenterMappings > 0;
+    const configurationComplete = row.organization_status === 'active' && counts.centers > 0
+      && counts.events > 0 && counts.activeCredentials > 0 && mappingReady;
+    const readinessState = row.status === 'revoked' ? 'revoked' : row.status === 'suspended' ? 'suspended'
+      : configurationComplete ? 'ready' : 'incomplete';
+    return {
+      integrationClientId:row.integration_client_id,
+      organizationId:row.organization_id,
+      organizationName:row.organization_name,
+      displayName:row.display_name,
+      clientCode:row.client_code,
+      sourceSystem:row.source_system,
+      status:row.status,
+      allowedCenterCount:counts.centers,
+      allowedEventCount:counts.events,
+      activeCredentialCount:counts.activeCredentials,
+      mappingReadiness:{ activeCenters:counts.activeCenterMappings, mappedResidents:counts.mappedSubjects,
+        state:mappingReady ? 'ready' : 'not_ready' },
+      lastUsedAt:row.last_used_at || null,
+      warningCount:counts.warnings,
+      readiness:{ state:readinessState, configurationComplete,
+        label:readinessState === 'ready' ? 'พร้อมรับข้อมูล' : readinessState === 'suspended' ? 'ระงับการใช้งาน'
+          : readinessState === 'revoked' ? 'เพิกถอนแล้ว' : 'ตั้งค่ายังไม่ครบ' },
+    };
+  }
+
+  async function listIntegrationClientDirectory(input = {}) {
+    const query = normalizeIntegrationDirectoryQuery(input);
+    const [rows, total] = await Promise.all([
+      repository.listIntegrationClientDirectory(query),
+      repository.countIntegrationClientDirectory(query),
+    ]);
+    return { items:rows.map(integrationDirectoryProjection),
+      pagination:{ page:query.page, limit:query.limit, total, totalPages:Math.ceil(total / query.limit) } };
+  }
+
   async function setIntegrationClientStatus({ integrationClientId, status, actorReference }) {
     assertEnum(status, ['active', 'suspended'], 'INVALID_CLIENT_STATUS_TRANSITION', 'สถานะ Integration Client');
     return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
@@ -431,7 +488,13 @@ function createPlatformService(overrides = {}) {
       if (client.status === 'revoked') {
         throw new PlatformError('REVOKED_CLIENT_TERMINAL', 'Integration Client ที่เพิกถอนแล้วไม่สามารถเปิดใช้งานใหม่ได้', 409);
       }
-      if (status === 'active') await requireOrganization(client.organization_id);
+      if (status === 'active') {
+        await requireOrganization(client.organization_id);
+        const readiness = await inspectIntegrationClient(integrationClientId);
+        if (!readiness.readiness.configurationComplete) {
+          throw new PlatformError('INTEGRATION_CLIENT_NOT_READY', 'ตั้งค่าระบบเชื่อมต่อยังไม่ครบ กรุณาตรวจ Organization, Center scope, Event scope, Credential และการเชื่อมรหัส', 409);
+        }
+      }
       if (client.status === status) return clientProjection(client);
       const updated = await repository.updateIntegrationClientStatus(integrationClientId, status);
       await audit('integration.client_status_changed', actorReference, {
@@ -911,7 +974,8 @@ function createPlatformService(overrides = {}) {
     createOrganization, listOrganizations, getOrganizationForCenter,
     ensureOrganizationForCenter, listOrganizationCenters, relinkCenter,
     listCenterCapabilities, listCenterResidentOptions, isCenterCapabilityEnabled, setCenterCapability,
-    createIntegrationClient, inspectIntegrationClient, listIntegrationClients, setIdentityResolutionPolicy,
+    createIntegrationClient, inspectIntegrationClient, listIntegrationClients, listIntegrationClientDirectory,
+    normalizeIntegrationDirectoryQuery, integrationDirectoryProjection, setIdentityResolutionPolicy,
     setIntegrationClientStatus, revokeIntegrationClient, addClientCenterScope, removeClientCenterScope,
     addClientEventScope, removeClientEventScope,
     issueCredential, rotateCredential, revokeCredential, authenticateCredential, assertIntegrationIdentityActive,

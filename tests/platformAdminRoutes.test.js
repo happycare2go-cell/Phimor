@@ -110,6 +110,12 @@ test('System Admin commissioning routes create suspended client, manage status, 
   const organization=await setupCenter('CTR-A');
   let response=await call(`/api/admin/platform/organizations/${organization.organizationId}/integration-clients`,{method:'POST',headers:admin,body:JSON.stringify({clientCode:'commission-ui',displayName:'Commission UI',sourceSystem:'Generic',initialStatus:'suspended'})});
   assert.equal(response.status,201);const client=(await response.json()).integrationClient;assert.equal(client.status,'suspended');
+  response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'active'})});
+  assert.equal(response.status,409);assert.equal((await response.json()).errorCode,'INTEGRATION_CLIENT_NOT_READY');
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/centers/CTR-A`,{method:'PUT',headers:admin,body:'{}'});
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/event-scopes/care.daily_report.finalized`,{method:'PUT',headers:admin,body:'{}'});
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/credentials`,{method:'POST',headers:admin,body:'{}'});
+  await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/external-centers/EXT-A`,{method:'PUT',headers:admin,body:JSON.stringify({centerId:'CTR-A'})});
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'active'})});assert.equal(response.status,200);assert.equal((await response.json()).integrationClient.status,'active');
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'suspended',organizationId:'forged'})});assert.equal(response.status,400);assert.equal((await response.json()).errorCode,'UNKNOWN_REQUEST_FIELD');
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:{'X-Line-User-Id':'U-CENTER'},body:JSON.stringify({status:'active'})});assert.equal(response.status,401);

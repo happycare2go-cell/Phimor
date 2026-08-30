@@ -148,6 +148,12 @@ function createPlatformAdminRouter() {
     res.json({ integrationClients: await service.listIntegrationClients(req.params.organizationId) });
   }));
 
+  router.get('/integration-clients', platformAction(async (req, res, service) => {
+    res.json(await service.listIntegrationClientDirectory({
+      search:req.query.search, status:req.query.status, page:req.query.page, limit:req.query.limit,
+    }));
+  }));
+
   router.post('/organizations/:organizationId/integration-clients', platformAction(async (req, res, service, actorReference) => {
     const body = req.body || {};
     assertBodyKeys(body, ['clientCode', 'displayName', 'sourceSystem', 'initialStatus']);
