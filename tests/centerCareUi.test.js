@@ -48,14 +48,14 @@ test('controller follows authoritative capabilities and canonical Center routes'
   await assert.rejects(() => controller.submitDaily({ residentId:'RES/1', occurredAt:'2026-08-27T09:30:00+07:00', nutrition:'ปกติ' }), /ยังไม่ได้เปิดใช้/);
 });
 
-test('daily submit carries shift, bowel count and optional linked vitals into submitted workflow', async () => {
+test('Health Report submit carries one factual note and optional linked vitals into submitted workflow', async () => {
   let call;
   const controller=ui.createController({api:async(route,options)=>{call={route,body:JSON.parse(options.body)};return{item:{}};}});
   controller.configure({centerId:'CTR-A',role:'staff',residents:[{resident_id:'RES-A',full_name:'A'}],capabilities:{daily_care_v1:true,vital_signs_v1:true}});
-  await controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:30:00+07:00',shift:'day',bowelCount:'2',nutrition:'ทานได้',dailySpo2:'98'});
+  await controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:30:00+07:00',symptomNote:'  พูดคุยตามปกติ  ',dailySpo2:'98'});
   assert.equal(call.route,'/api/center/CTR-A/residents/RES-A/daily-care');
-  assert.deepEqual(call.body.items.map((item)=>item.itemType),['shift','bowel_movement','nutrition']);
-  assert.deepEqual(call.body.shift,{code:'day',sourceLabel:'กลางวัน'});assert.equal(call.body.careDate,'2026-08-27');
+  assert.deepEqual(call.body.items,[{itemType:'symptom_note',valueType:'text',textValue:'พูดคุยตามปกติ',sourceValueText:'พูดคุยตามปกติ'}]);
+  assert.equal(call.body.shift,null);assert.equal(call.body.careDate,'2026-08-27');
   assert.equal(call.body.vitalSigns.observations[0].measurementType,'spo2');
 });
 
@@ -95,7 +95,7 @@ test('Center correction response is discarded after Center switch and new Vital 
   controller.configure({centerId:'CTR-B',role:'manager',residents:[{resident_id:'RES-B',care_profile_id:'CP-B'}],capabilities:{vital_signs_v1:true,daily_care_v1:true}});
   release({item:{vitalSetId:'VSET-1',privateValue:'CENTER-A'}});
   assert.deepEqual(await pending,{stale:true});assert.equal(controller.snapshot().centerId,'CTR-B');
-  assert.match(uiSource,/บันทึกค่าใหม่/);assert.match(uiSource,/vitalForm\.reset\(\)/);
+  assert.match(uiSource,/สร้างรายงานสุขภาพใหม่/);assert.match(uiSource,/dailyForm\.reset\(\)/);
   assert.doesNotMatch(uiSource,/prefillVital|copyVital|populateVital/);
 });
 
@@ -121,8 +121,8 @@ test('stale failure and double submit cannot overwrite the current Center state'
   let rejectRequest;
   const controller = ui.createController({ api:() => new Promise((_, reject) => { rejectRequest = reject; }) });
   controller.configure({ centerId:'CTR-A', residents:[{resident_id:'RES-A',full_name:'A'}], capabilities:{daily_care_v1:true} });
-  const first = controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:30:00+07:00',nutrition:'รับประทานอาหาร'});
-  await assert.rejects(() => controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:31:00+07:00',nutrition:'ซ้ำ'}), /กำลังบันทึก/);
+  const first = controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:30:00+07:00',symptomNote:'รับประทานอาหารได้'});
+  await assert.rejects(() => controller.submitDaily({residentId:'RES-A',occurredAt:'2026-08-27T09:31:00+07:00',symptomNote:'ซ้ำ'}), /กำลังบันทึก/);
   controller.configure({ centerId:'CTR-B', residents:[{resident_id:'RES-B',full_name:'B'}], capabilities:{daily_care_v1:true} });
   rejectRequest(new Error('old request failed'));
   assert.deepEqual(await first, { stale:true });
@@ -136,7 +136,8 @@ test('Center LIFF mounts capability-gated mobile forms without browser persisten
   assert.match(htmlSource, /centerCareUi\.clear\(\)/);
   assert.match(htmlSource, /centerCareUi\.setMode\('record'\)/);
   assert.match(uiSource, /aria-live="polite"/);
-  assert.match(uiSource, /รายงานรอตรวจ/);assert.match(uiSource,/ยืนยันและส่งครอบครัว/);
+  assert.match(uiSource, /รายงานสุขภาพรอตรวจ/);assert.match(uiSource,/ยืนยันและส่งให้ครอบครัว/);
+  assert.match(htmlSource,/id="recordHealthAction"/);assert.doesNotMatch(htmlSource,/id="recordVitalAction"|id="recordDailyAction"/);
   assert.match(uiSource, /inputmode="decimal"/);
   assert.doesNotMatch(uiSource, /localStorage|sessionStorage|location\.(?:search|hash)/);
   assert.doesNotMatch(uiSource, /lineUserId|LINE_USER_ID|phone|emergency/i);

@@ -46,6 +46,7 @@ function projectSet(row, observations = row.observations || []) {
     recordedAt: row.recorded_at,
     sourceType: row.source_type,
     centerName: row.center_name || null,
+    linkedDailyReportId: row.linked_daily_report_id || null,
     observations: observations.map(projectObservation),
   };
   if(row.resident_id!==undefined)projected.residentId=row.resident_id||null;

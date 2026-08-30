@@ -85,7 +85,8 @@ function createVitalSignMemoryRepository({ dailyCareState = null } = {}) {
         .sort((a, b) => b.occurred_at.localeCompare(a.occurred_at)
           || b.vital_set_id.localeCompare(a.vital_set_id))
         .slice(0, limit + 1)
-        .map((row) => ({ ...clone(row), observations:state.observations
+        .map((row) => ({ ...clone(row), linked_daily_report_id:dailyCareState?.links
+          .find((link)=>link.vital_set_id===row.vital_set_id)?.daily_report_id||null, observations:state.observations
           .filter((item) => item.vital_set_id === row.vital_set_id)
           .sort((a, b) => a.source_ordinal - b.source_ordinal).map(clone) }));
     },

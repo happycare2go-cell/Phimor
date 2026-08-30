@@ -102,8 +102,8 @@ function normalizeItem(input, index) {
   };
 }
 
-function normalizeItems(items) {
-  if (!Array.isArray(items) || items.length < 1 || items.length > 30) {
+function normalizeItems(items, { allowEmpty = false } = {}) {
+  if (!Array.isArray(items) || items.length > 30 || (!allowEmpty && items.length < 1)) {
     throw new DailyCareError('DAILY_ITEMS_REQUIRED', 'ต้องมีข้อมูลการดูแล 1–30 รายการ', 400);
   }
   return items.map(normalizeItem);

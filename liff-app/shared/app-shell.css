@@ -20,6 +20,7 @@
   --phimor-control-height: 44px;
   --phimor-content-width: 1120px;
   --phimor-mobile-nav-height: 72px;
+  --phimor-mobile-nav-clearance: calc(var(--phimor-mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 24px);
 }
 
 html { background: var(--phimor-bg); }
@@ -37,13 +38,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .phimor-shell {
   width: 100%;
   min-width: 0;
+  min-height: 100dvh;
 }
 
 .phimor-shell__content {
   width: min(100%, var(--phimor-content-width));
   min-width: 0;
   margin-inline: auto;
-  padding-bottom: calc(var(--phimor-mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 16px);
+  padding-bottom: var(--phimor-mobile-nav-clearance);
+  scroll-padding-bottom: var(--phimor-mobile-nav-clearance);
 }
 
 .phimor-shell__panel[hidden] { display: none !important; }
@@ -173,7 +176,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   }
 
   .phimor-primary-nav__item::before { font-size: 17px; }
-  .phimor-shell__content { padding: 24px 28px 48px; }
+  .phimor-shell__content { padding: 24px 28px 48px; scroll-padding-bottom: 48px; }
   .phimor-launch-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 

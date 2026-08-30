@@ -85,7 +85,7 @@
   .toast.show{opacity:1}
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:flex-end}
   .modal-bg.show{display:flex}
-  .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
+  .modal{background:#fff;border-radius:16px 16px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom,0px));width:100%;max-height:85dvh;overflow-y:auto;overscroll-behavior:contain;scroll-padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
   .modal h3{margin-top:0;color:var(--navy)}
   .transport-item{border:1px solid #EEF1F8;border-radius:12px;padding:12px;margin-bottom:10px}
   .chip{display:inline-block;background:var(--ice);color:var(--navy);padding:3px 10px;border-radius:999px;font-size:11px;margin-right:6px}
@@ -103,7 +103,7 @@
   .lab-observation{border:1px solid #D8DEEC;border-radius:12px;padding:12px;margin-top:10px;background:#FAFBFD}
   .lab-observation__header{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .lab-review-note{font-size:12px;line-height:1.65;color:var(--gray);margin:8px 0 0}
-  .center-shell-content{padding:16px;min-height:55vh}.center-destination-state{margin-bottom:12px;color:var(--gray);font-size:13px}.center-destination-state:empty{display:none}.center-destination-state[data-tone="error"]{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;border:1px solid #F0B4AE;border-radius:10px;background:#FFF4F2;color:#8F241A}.center-destination-state .btn{flex:0 0 auto;min-height:44px}
+  .center-shell-content{padding:16px 16px var(--phimor-mobile-nav-clearance);min-height:calc(100dvh - 96px);scroll-padding-bottom:var(--phimor-mobile-nav-clearance);overflow-x:clip}.center-destination-state{margin-bottom:12px;color:var(--gray);font-size:13px}.center-destination-state:empty{display:none}.center-destination-state[data-tone="error"]{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;border:1px solid #F0B4AE;border-radius:10px;background:#FFF4F2;color:#8F241A}.center-destination-state .btn{flex:0 0 auto;min-height:44px}
   .center-home-heading{margin:0 0 5px;color:var(--navy);font-size:20px}.center-home-copy{margin:0;color:var(--gray);line-height:1.6}
   .center-role-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}.center-role-summary>div{border:1px solid #E3E7F0;border-radius:12px;padding:12px;background:#FAFBFD}.center-role-summary strong{display:block;color:var(--navy);font-size:18px}.center-role-summary span{display:block;margin-top:4px;color:var(--gray);font-size:12px}
   .center-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.center-action-card{width:100%;min-height:86px;text-align:left;border:1px solid #D9DFEC;border-radius:12px;background:#fff;padding:12px 14px;color:var(--navy);cursor:pointer}.center-action-card strong,.center-action-card span{display:block}.center-action-card span{margin-top:5px;color:var(--gray);font-size:12px;line-height:1.45}.center-action-card:disabled{opacity:.55;cursor:not-allowed}
@@ -112,7 +112,7 @@
   #centerCareRoot[data-surface-mode="work"] .center-care__history,#centerCareRoot[data-surface-mode="work"] #centerVitalForm,#centerCareRoot[data-surface-mode="work"] #centerDailyForm{display:none!important}
   #centerCareRoot[data-surface-mode="history"] .center-care__review,#centerCareRoot[data-surface-mode="history"] #centerVitalForm,#centerCareRoot[data-surface-mode="history"] #centerDailyForm{display:none!important}
   @media(max-width:390px){.center-action-grid,.center-role-summary{grid-template-columns:1fr}}
-  @media(min-width:900px){.center-shell-content{padding:24px 28px 48px}.modal{width:min(720px,calc(100vw - 280px));margin-inline:auto;border-radius:16px}.modal-bg{align-items:center}}
+  @media(min-width:900px){.center-shell-content{padding:24px 28px 48px;scroll-padding-bottom:48px}.modal{width:min(720px,calc(100vw - 280px));margin-inline:auto;border-radius:16px}.modal-bg{align-items:center}}
 </style>
 </head>
 <body>
@@ -203,11 +203,10 @@
 </section>
 
 <section class="phimor-shell__panel" data-shell-panel="record" id="view-record" aria-labelledby="recordTitle" hidden>
-  <div class="card"><h2 id="recordTitle" style="margin:0;color:var(--navy)">บันทึกข้อมูล</h2><p class="center-home-copy">เลือกประเภทการบันทึก แล้วใช้แบบฟอร์มเดิมที่ตรวจสอบสิทธิ์และความสามารถของศูนย์</p></div>
+  <div class="card"><h2 id="recordTitle" style="margin:0;color:var(--navy)">บันทึกข้อมูล</h2><p class="center-home-copy">บันทึกรายงานสุขภาพให้ผู้จัดการหรือเจ้าของศูนย์ตรวจ ก่อนส่งให้ครอบครัว</p></div>
   <div id="recordDestinationState" class="center-destination-state" role="status" aria-live="polite"></div>
   <div class="card"><div class="center-action-grid">
-    <button type="button" class="center-action-card" id="recordVitalAction" onclick="openRecordingForm('vital')"><strong>บันทึกสัญญาณชีพ</strong><span>กรอกเฉพาะค่าที่วัดได้จริง</span></button>
-    <button type="button" class="center-action-card" id="recordDailyAction" onclick="openRecordingForm('daily')"><strong>บันทึกการดูแล</strong><span>ส่งให้ผู้จัดการตรวจตาม workflow เดิม</span></button>
+    <button type="button" class="center-action-card" id="recordHealthAction" onclick="openRecordingForm('health')"><strong>รายงานสุขภาพ</strong><span>สัญญาณชีพและอาการ/รายงานทั่วไป ส่งให้ผู้จัดการตรวจ</span></button>
     <button type="button" class="center-action-card" onclick="showDocumentIntakeGuidance()"><strong>ส่งรูปเอกสาร</strong><span>ส่งในแชทส่วนตัวกับพี่หมอ โดยใช้ศูนย์ที่เลือกอยู่</span></button>
   </div></div>
   <div id="recordCareHost"><div id="centerCareRoot"></div></div>
@@ -216,7 +215,7 @@
 <section class="phimor-shell__panel" data-shell-panel="work" id="view-work" aria-labelledby="workTitle" hidden>
   <div class="card"><h2 id="workTitle" style="margin:0;color:var(--navy)">งาน</h2><p class="center-home-copy">รายการรอตรวจ รายการส่งกลับ นัดหมาย และการเดินทางตามสิทธิ์ของบทบาท</p></div>
   <div id="workDestinationState" class="center-destination-state" role="status" aria-live="polite"></div>
-  <div class="card"><div class="center-action-grid"><button type="button" class="center-action-card" onclick="showCareWork()"><strong>รายการรอตรวจ / ส่งกลับ</strong><span>ใช้สถานะจริงจาก Daily Care</span></button><button type="button" class="center-action-card" onclick="showCareHistory()"><strong>ประวัติและการแก้ไข</strong><span>ดูรายการที่ยืนยันแล้วตามสิทธิ์</span></button></div></div>
+  <div class="card"><div class="center-action-grid"><button type="button" class="center-action-card" onclick="showCareWork()"><strong>รายงานสุขภาพรอตรวจ / ส่งกลับ</strong><span>ตรวจ ยืนยัน หรือแก้ไขตามสิทธิ์ของบทบาท</span></button><button type="button" class="center-action-card" onclick="showCareHistory()"><strong>ประวัติรายงานสุขภาพ</strong><span>ดูรายการที่ยืนยันแล้วและประวัติฉบับ</span></button></div></div>
   <div id="workCareHost"></div>
   <div id="workTransportHost"></div>
 </section>
@@ -955,8 +954,7 @@ function renderCenterHome(){
   const workflow=centerCareUi.workflowSummary();
   centerHomeSummary.innerHTML=`<div><strong>${esc(residentsCache.length)}</strong><span>ผู้พักปัจจุบัน</span></div><div><strong>${esc(workflow.returned)}</strong><span>รายการส่งกลับที่มีอยู่</span></div>${CURRENT_ROLE!=='staff'?`<div><strong>${esc(workflow.awaitingReview)}</strong><span>รายงานรอตรวจ</span></div>`:''}<div><strong>${esc(packageText)}</strong><span>${CURRENT_ROLE==='owner'?'สถานะแพ็กเกจ':'สิทธิ์ศูนย์'}</span></div>${CURRENT_ROLE!=='staff'?`<div><strong>${esc(groupState)}</strong><span>กลุ่ม LINE สำหรับงานศูนย์</span></div>`:''}`;
   const actions=[
-    ['บันทึกสัญญาณชีพ',CENTER_RECORD_CAPABILITIES.vital_signs_v1?'ค่าที่วัดได้จริง':'ศูนย์นี้ยังไม่ได้เปิดใช้',"navigateCenter('record').then(()=>openRecordingForm('vital'))",CENTER_RECORD_CAPABILITIES.vital_signs_v1!==true],
-    ['บันทึกการดูแล',CENTER_RECORD_CAPABILITIES.daily_care_v1?'ส่งตาม workflow เดิม':'ศูนย์นี้ยังไม่ได้เปิดใช้',"navigateCenter('record').then(()=>openRecordingForm('daily'))",CENTER_RECORD_CAPABILITIES.daily_care_v1!==true],
+    ['รายงานสุขภาพ',CENTER_RECORD_CAPABILITIES.daily_care_v1?'สัญญาณชีพและรายงานทั่วไป ส่งให้ผู้จัดการตรวจ':'ศูนย์นี้ยังไม่ได้เปิดใช้',"navigateCenter('record').then(()=>openRecordingForm('health'))",CENTER_RECORD_CAPABILITIES.daily_care_v1!==true],
     ['ผู้พัก','ค้นหาและดูข้อมูลตามสิทธิ์',"navigateCenter('residents')",false],['งาน','รายการส่งกลับ/รอตรวจตามบทบาท',"navigateCenter('work')",false],
   ];
   if(CURRENT_ROLE==='staff')actions.splice(2,0,['ส่งรูปเอกสาร','ผ่านแชทส่วนตัวกับพี่หมอ','showDocumentIntakeGuidance()']);
@@ -999,7 +997,7 @@ async function openMoreSurface(kind){
 }
 
 function placeCareSurface(mode){const host=document.getElementById(mode==='record'?'recordCareHost':'workCareHost'),root=document.getElementById('centerCareRoot');host.append(root);centerCareUi.setMode(mode);return root}
-function openRecordingForm(kind){placeCareSurface('record');const form=document.getElementById(kind==='vital'?'centerVitalForm':'centerDailyForm');if(form?.hidden)return toast('ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกประเภทนี้');form?.scrollIntoView({behavior:'smooth',block:'start'})}
+function openRecordingForm(){placeCareSurface('record');const form=document.getElementById('centerDailyForm');if(form?.hidden)return toast('ศูนย์นี้ยังไม่ได้เปิดใช้รายงานสุขภาพ');form?.scrollIntoView({behavior:'smooth',block:'start'})}
 function showCareWork(){placeCareSurface('work');document.getElementById('centerDailyReview')?.scrollIntoView({behavior:'smooth',block:'start'})}
 function showCareHistory(){placeCareSurface('history');document.getElementById('centerLabHistory')?.scrollIntoView({behavior:'smooth',block:'start'})}
 function showDocumentIntakeGuidance(){toast('ปิด LIFF แล้วส่งรูปในแชทส่วนตัวกับพี่หมอ ระบบจะใช้ศูนย์ที่เลือกอยู่นี้')}
@@ -1017,9 +1015,9 @@ const centerCareUi = centerCareRuntime.mount({
   onOpenLabDraft: openLabCorrectionDraft,
   onEditReturned:()=>navigateCenter('record').then(()=>placeCareSurface('record')),
   onVisibility(visible) {
-    const hasVital=CENTER_RECORD_CAPABILITIES.vital_signs_v1===true,hasDaily=CENTER_RECORD_CAPABILITIES.daily_care_v1===true;
-    recordVitalAction.disabled=!hasVital;recordVitalAction.title=hasVital?'':'ศูนย์นี้ยังไม่ได้เปิดใช้สัญญาณชีพ';
-    recordDailyAction.disabled=!hasDaily;recordDailyAction.title=hasDaily?'':'ศูนย์นี้ยังไม่ได้เปิดใช้บันทึกการดูแลประจำวัน';
+    const hasDaily=CENTER_RECORD_CAPABILITIES.daily_care_v1===true;
+    const healthAction=document.getElementById('recordHealthAction');
+    healthAction.disabled=!hasDaily;healthAction.title=hasDaily?'':'ศูนย์นี้ยังไม่ได้เปิดใช้รายงานสุขภาพ';
     document.querySelectorAll('[data-shell-destination="record"]').forEach((button)=>{button.disabled=!CENTER_ENTITLED||!visible;button.setAttribute('aria-disabled',String(!CENTER_ENTITLED||!visible))});
   },
 });
@@ -1448,10 +1446,11 @@ async function main() {
     await loadEditCard(cardId);
     return;
   }
-  const destination=({residents:'residents',transport:'work',care:'record',ratecard:'more',staff:'more'}[view]||params.get('section')||'home');
+  const destination=({residents:'residents',transport:'work',care:'record',vital:'record',vitals:'record',daily:'record','daily-care':'record','health-report':'record',ratecard:'more',staff:'more'}[view]||params.get('section')||'home');
   await CENTER_SHELL.start(!CENTER_ENTITLED&&!['home','more'].includes(destination)?'home':destination);
   if(view==='ratecard')await openMoreSurface('ratecard');
   if(view==='staff'&&CURRENT_ROLE==='owner')await openMoreSurface('staff');
+  if(['care','vital','vitals','daily','daily-care','health-report'].includes(view))openRecordingForm('health');
 }
 main().catch(err => {
   console.error('CENTER_LIFF_START_FAILED',{code:err?.code||'UNAVAILABLE'});

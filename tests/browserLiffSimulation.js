@@ -286,24 +286,30 @@ async function familyLabResultsJourney(browser) {
 
 async function centerFamilyLinkingJourney(browser) {
   const centerPage=await browser.newPage({viewport:{width:390,height:844}});
-  let centerLinkCreates=0;
+  let centerLinkCreates=0;let activeCenterId='CTR1';let healthReportBody=null;
   await mockBackend(centerPage,async(url,request)=>{
     if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
-    if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId:'CTR1'},centers:[
+    if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId},centers:[
       {center_id:'CTR1',name:'ศูนย์ตัวอย่าง',myRole:'owner',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}},
       {center_id:'CTR2',name:'ศูนย์สาขาพนักงาน',myRole:'staff',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}},
     ]};
     if(url.pathname==='/api/center/active-center'&&request.method()==='POST'){
       const centerId=request.postDataJSON().centerId;
+      activeCenterId=centerId;
       const center=centerId==='CTR2'
         ?{center_id:'CTR2',name:'ศูนย์สาขาพนักงาน',myRole:'staff',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}}
         :{center_id:'CTR1',name:'ศูนย์ตัวอย่าง',myRole:'owner',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}};
       return{actorContext:{activeCenterId:centerId},center};
     }
-    if(url.pathname==='/api/residents')return{residents:[]};
+    if(url.pathname==='/api/residents')return{residents:[activeCenterId==='CTR2'
+      ?{resident_id:'RES2',center_id:'CTR2',care_profile_id:'CP2',full_name:'คุณตาสาขาสอง',room:'B-2',status:'active'}
+      :{resident_id:'RES1',center_id:'CTR1',care_profile_id:'CP1',full_name:'คุณยายสาขาหนึ่ง',room:'A-1',status:'active'}]};
     if(url.pathname==='/api/center/appointments')return{appointments:[]};
     if(/^\/api\/center\/CTR\d\/capabilities$/.test(url.pathname))return{capabilities:{vital_signs_v1:true,daily_care_v1:true}};
     if(/^\/api\/center\/CTR\d\/daily-care\/review$/.test(url.pathname))return{items:[]};
+    if(url.pathname==='/api/center/CTR2/residents/RES2/daily-care'&&request.method()==='POST'){
+      healthReportBody=request.postDataJSON();return{status:201,body:{item:{dailyReportId:'DCR-CTR2',status:'submitted'}}};
+    }
     if(url.pathname==='/api/transport/pending')return{pending:[]};
     if(url.pathname==='/api/center/care-profile-link-requests'&&request.method()==='POST'){
       centerLinkCreates+=1;return{status:201,body:{linkUrl:'https://liff.line.me/SIM_FAMILY?centerLink=fictional-review-token',expiresAt:'2026-09-05T12:00:00.000Z'}};
@@ -335,8 +341,20 @@ async function centerFamilyLinkingJourney(browser) {
   assert.equal(centerMobile.overflow,true);assert.ok(centerMobile.choiceHeight>=44);
   assert.equal(centerMobile.toastPointer,'none');assert.ok(centerMobile.modalZ>centerMobile.toastZ);
   assert.ok((await centerPage.locator('#centerSelector').boundingBox()).height>=44);
+  await centerPage.locator('[data-shell-destination="record"]').first().click();
+  await centerPage.waitForFunction(()=>document.querySelector('#centerDailyForm select[name="residentId"]')?.options.length===2);
+  await centerPage.locator('#centerDailyForm select[name="residentId"]').selectOption('RES1');
+  await centerPage.locator('#centerDailyForm textarea[name="symptomNote"]').fill('ข้อมูลของศูนย์หนึ่งที่ต้องถูกล้าง');
   await centerPage.locator('#centerSelector').selectOption('CTR2');
   await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('พนักงาน · ศูนย์สาขาพนักงาน'));
+  assert.equal(await centerPage.locator('#centerDailyForm select[name="residentId"]').inputValue(),'');
+  assert.equal(await centerPage.locator('#centerDailyForm textarea[name="symptomNote"]').inputValue(),'');
+  assert.deepEqual(await centerPage.locator('#centerDailyForm select[name="residentId"] option').allTextContents(),['เลือกผู้รับการดูแล','คุณตาสาขาสอง · ห้อง B-2']);
+  await centerPage.locator('#centerDailyForm select[name="residentId"]').selectOption('RES2');
+  await centerPage.locator('#centerDailyForm textarea[name="symptomNote"]').fill('รายงานหลังสลับศูนย์');
+  await centerPage.locator('#centerDailyForm .center-care__submit').click();
+  await centerPage.waitForFunction(()=>document.querySelector('#centerDailyForm .center-care__form-status').textContent.includes('ส่งรายงาน'));
+  assert.equal(healthReportBody.careProfileId,undefined);assert.match(healthReportBody.items[0].textValue,/หลังสลับศูนย์/);
   assert.equal(await centerPage.locator('#addResidentCard').isHidden(),true);
   await centerPage.locator('[data-shell-destination="work"]').first().click();
   assert.equal(await centerPage.locator('#view-transport').isHidden(),true);
@@ -542,7 +560,10 @@ async function familyCareHistoryJourney(browser) {
     if (url.pathname === '/api/care-profile/CP-CARE/caregivers') return {members:[]};
     if (url.pathname === '/api/plus/entitlement') return {status:'basic',plus:false};
     if (url.pathname === '/api/care-profile/CP-CARE/vital-signs') return {items:[{vitalSetId:'VS-1',status:'recorded',occurredAt:'2026-08-27T07:30:00+07:00',recordedAt:'2026-08-27T07:31:00+07:00',centerName:'ศูนย์ตัวอย่าง',sourceType:'external_integration',observations:[{measurementType:'blood_glucose',numericValue:108,sourceValueText:'108',sourceUnit:'mg/dL',context:'before_meal'},{measurementType:'weight',numericValue:55.2,sourceValueText:'55.2',sourceUnit:'kg'}]}],nextCursor:null};
-    if (url.pathname === '/api/care-profile/CP-CARE/daily-care') return {items:[{dailyReportId:'DC-1',status:'finalized',occurredAt:'2026-08-27T19:00:00+07:00',careDate:'2026-08-27',shift:{code:'day',sourceLabel:'Day'},finalizedAt:'2026-08-27T20:00:00+07:00',centerName:'ศูนย์ตัวอย่าง',sourceType:'external_integration',recorderDisplayName:'ผู้ดูแลตัวอย่าง',items:[{itemType:'nutrition',valueType:'text',textValue:'รับประทานอาหารได้ครึ่งจาน'}],vitalSigns:[]}],nextCursor:null};
+    if (url.pathname === '/api/care-profile/CP-CARE/daily-care') return {items:[
+      {dailyReportId:'DC-NATIVE',status:'finalized',occurredAt:'2026-08-28T09:00:00+07:00',careDate:'2026-08-28',finalizedAt:'2026-08-28T09:15:00+07:00',centerName:'ศูนย์ตัวอย่าง',careRecipientName:'คุณแม่ตัวอย่าง',room:'A-12',sourceType:'native_phimor',recorderDisplayName:'ผู้ดูแลพี่หมอ',items:[{itemType:'symptom_note',valueType:'text',textValue:'รับประทานอาหารและพักผ่อนได้'}],vitalSigns:[{vitalSetId:'VS-NATIVE-LINKED',status:'recorded',occurredAt:'2026-08-28T09:00:00+07:00',sourceType:'native_phimor',observations:[{measurementType:'spo2',numericValue:98,sourceValueText:'98',sourceUnit:'%'}]}]},
+      {dailyReportId:'DC-HHS',status:'finalized',occurredAt:'2026-08-27T19:00:00+07:00',careDate:'2026-08-27',shift:{code:'day',sourceLabel:'Day'},finalizedAt:'2026-08-27T20:00:00+07:00',centerName:'ศูนย์ตัวอย่าง',careRecipientName:'คุณแม่ตัวอย่าง',room:'A-12',sourceType:'external_integration',recorderDisplayName:'ผู้ดูแลตัวอย่าง',items:[{itemType:'symptom_note',valueType:'text',textValue:'พักผ่อนได้และพูดคุยตามปกติ'}],vitalSigns:[{vitalSetId:'VS-HHS-LINKED',status:'recorded',occurredAt:'2026-08-27T19:00:00+07:00',sourceType:'external_integration',observations:[{measurementType:'temperature',numericValue:36.8,sourceValueText:'36.8',sourceUnit:'Cel'},{measurementType:'pulse',numericValue:72,sourceValueText:'72',sourceUnit:'/min'}]}]},
+    ],nextCursor:null};
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await page.setContent(localHtml('family'), {waitUntil:'domcontentloaded'});
@@ -552,9 +573,17 @@ async function familyCareHistoryJourney(browser) {
   assert.match(await page.locator('#familyLatestVital').textContent(), /น้ำตาลในเลือด/);
   assert.match(await page.locator('#familyLatestVital').textContent(), /ก่อนอาหาร/);
   assert.match(await page.locator('#familyLatestVital').textContent(), /55.2 kg/);
+  assert.match(await page.locator('#familyLatestDaily').textContent(), /รายงานสุขภาพ/);
+  assert.match(await page.locator('#familyLatestDaily').textContent(), /98%/);
+  assert.match(await page.locator('#familyLatestDaily').textContent(), /รับประทานอาหารและพักผ่อนได้/);
   await page.locator('#familyDailyHistoryButton').click();
-  assert.match(await page.locator('#familyCareHistoryList').textContent(), /รับประทานอาหารได้ครึ่งจาน/);
-  await page.getByRole('button',{name:'ดูรายละเอียด'}).first().click();
+  assert.match(await page.locator('#familyCareHistoryList').textContent(), /บันทึกโดยศูนย์ที่ดูแล/);
+  assert.match(await page.locator('#familyCareHistoryList').textContent(), /ข้อมูลจากศูนย์ที่ดูแล/);
+  assert.match(await page.locator('#familyCareHistoryList').textContent(), /พักผ่อนได้และพูดคุยตามปกติ/);
+  await page.locator('#familyCareHistoryList').getByRole('button',{name:'ดูรายละเอียด'}).first().click();
+  assert.match(await page.locator('#familyCareHistoryList').textContent(), /ผู้บันทึก: ผู้ดูแลพี่หมอ/);
+  await page.getByRole('button',{name:'กลับไปรายการบันทึก'}).click();
+  await page.locator('#familyCareHistoryList').getByRole('button',{name:'ดูรายละเอียด'}).nth(1).click();
   assert.match(await page.locator('#familyCareHistoryList').textContent(), /ผู้บันทึก: ผู้ดูแลตัวอย่าง/);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
   await page.close();
@@ -639,6 +668,102 @@ async function adminCareOperationsJourney(browser) {
   assert.doesNotMatch(await page.locator('#careOperationsPanel').textContent(), /send anyway|ส่งต่อไปเลย/i); await page.close();
 }
 
+async function unifiedHealthReportJourney(browser) {
+  async function openCenter(role, viewport={width:390,height:844}) {
+    const page=await browser.newPage({viewport});
+    const centerId=`CTR-HEALTH-${role.toUpperCase()}`;let submitted=role==='staff'?[]:[{
+      dailyReportId:`DCR-${role.toUpperCase()}`,status:'submitted',careRecipientName:'คุณยายตัวอย่าง',room:'A-12',
+      careDate:'2026-08-30',occurredAt:'2026-08-30T03:00:00Z',recorderDisplayName:'ผู้ดูแลตัวอย่าง',
+      items:[{itemType:'symptom_note',valueType:'text',textValue:'พักผ่อนได้และพูดคุยตามปกติ'}],
+      vitalSigns:[{observations:[{measurementType:'pulse',numericValue:72,sourceValueText:'72',sourceUnit:'/min'}]}],
+    }];let createdBody=null;let finalized=0;
+    await page.on('dialog',(dialog)=>dialog.accept());
+    await mockBackend(page,async(url,request)=>{
+      if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
+      if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId:centerId},centers:[{center_id:centerId,centerId,name:'ศูนย์สุขภาพตัวอย่าง',myRole:role,role,status:'active',subscription:{allowed:true,state:'active',remainingDays:20},entitlement:{allowed:true,state:'active',remainingDays:20},centerStaffGroup:{status:'verified'}}]};
+      if(url.pathname==='/api/residents')return{residents:[{resident_id:'RES-HEALTH',center_id:centerId,care_profile_id:'CP-HEALTH',full_name:'คุณยายตัวอย่าง',room:'A-12',status:'active'}]};
+      if(url.pathname===`/api/center/${centerId}/capabilities`)return{capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+      if(url.pathname===`/api/center/${centerId}/residents/RES-HEALTH/daily-care`&&request.method()==='POST'){
+        createdBody=request.postDataJSON();submitted=[{dailyReportId:'DCR-CREATED',status:'submitted',careRecipientName:'คุณยายตัวอย่าง',room:'A-12',careDate:'2026-08-30',occurredAt:createdBody.occurredAt,recorderDisplayName:'ผู้ดูแลตัวอย่าง',items:createdBody.items,vitalSigns:createdBody.vitalSigns?[{observations:createdBody.vitalSigns.observations}]:[]}];
+        return{item:submitted[0]};
+      }
+      if(url.pathname===`/api/center/${centerId}/daily-care/review`){const status=url.searchParams.get('status');return{items:status==='submitted'?submitted:[]};}
+      if(/\/api\/center\/[^/]+\/daily-care\/[^/]+\/finalize$/.test(url.pathname)&&request.method()==='POST'){
+        finalized+=1;submitted=[];return{item:{dailyReportId:`DCR-${role.toUpperCase()}`,status:'finalized'},notification:{notificationStatus:'queued'}};
+      }
+      if(url.pathname==='/api/transport/pending')return{pending:[]};
+      return{status:404,body:{message:`unmocked ${url.pathname}`}};
+    });
+    await page.setContent(localHtml('center-admin'),{waitUntil:'domcontentloaded'});
+    await page.waitForFunction(()=>document.querySelector('[data-shell-destination="home"]').getAttribute('aria-current')==='page');
+    return{page,get createdBody(){return createdBody;},get finalized(){return finalized;}};
+  }
+
+  const staff=await openCenter('staff');const staffPage=staff.page;
+  assert.equal(await staffPage.getByRole('button',{name:/รายงานสุขภาพ/}).first().isVisible(),true);
+  await staffPage.locator('[data-shell-destination="record"]').first().click();
+  await staffPage.waitForFunction(()=>document.querySelector('#centerDailyForm select[name="residentId"]')?.options.length===2);
+  assert.equal(await staffPage.locator('#centerVitalForm').isHidden(),true);
+  assert.equal(await staffPage.locator('#recordHealthAction').isVisible(),true);
+  await staffPage.locator('#recordHealthAction').click();
+  await staffPage.locator('#centerDailyForm select[name="residentId"]').selectOption('RES-HEALTH');
+  assert.match(await staffPage.locator('[data-health-subject]').textContent(),/คุณยายตัวอย่าง · ห้อง: A-12/);
+  await staffPage.locator('#centerDailyForm input[name="dailyPulse"]').fill('72');
+  await staffPage.locator('#centerDailyForm textarea[name="symptomNote"]').fill('  พักผ่อนได้และพูดคุยตามปกติ  ');
+  await staffPage.setViewportSize({width:390,height:560});
+  await staffPage.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+  const mobile=await staffPage.evaluate(()=>{const submit=document.querySelector('#centerDailyForm .center-care__submit').getBoundingClientRect();const nav=document.querySelector('.phimor-primary-nav').getBoundingClientRect();return{overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,submitBottom:submit.bottom,navTop:nav.top,selectHeight:document.querySelector('#centerDailyForm select[name="residentId"]').getBoundingClientRect().height};});
+  assert.equal(mobile.overflow,true);assert.ok(mobile.submitBottom<=mobile.navTop);assert.ok(mobile.selectHeight>=44);
+  await staffPage.locator('#centerDailyForm .center-care__submit').click();
+  await staffPage.waitForFunction(()=>document.querySelector('#centerDailyForm .center-care__form-status').textContent.includes('ส่งรายงาน'));
+  assert.equal(staff.createdBody.careProfileId,undefined);assert.equal(staff.createdBody.shift,null);
+  assert.deepEqual(staff.createdBody.items,[{itemType:'symptom_note',valueType:'text',textValue:'พักผ่อนได้และพูดคุยตามปกติ',sourceValueText:'พักผ่อนได้และพูดคุยตามปกติ'}]);
+  assert.deepEqual(staff.createdBody.vitalSigns.observations.map((item)=>item.measurementType),['pulse']);
+  await staffPage.locator('[data-shell-destination="work"]').first().click();
+  assert.equal(await staffPage.locator('[data-care-action="finalize"]').count(),0);
+  await staffPage.close();
+
+  for(const role of ['manager','owner']){
+    const context=await openCenter(role);const page=context.page;
+    await page.locator('[data-shell-destination="work"]').first().click();
+    await page.waitForFunction(()=>document.querySelector('#centerDailyReview')?.textContent.includes('คุณยายตัวอย่าง'));
+    assert.match(await page.locator('#centerDailyReview').textContent(),/72 \/min/);
+    assert.match(await page.locator('#centerDailyReview').textContent(),/พักผ่อนได้และพูดคุยตามปกติ/);
+    const confirm=page.locator('[data-care-action="finalize"]').first();assert.ok(await confirm.evaluate((button)=>button.getBoundingClientRect().height)>=44);
+    await page.setViewportSize({width:390,height:560});
+    await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+    const workClearance=await page.evaluate(()=>{const action=document.querySelector('[data-care-action="finalize"]').getBoundingClientRect();const nav=document.querySelector('.phimor-primary-nav').getBoundingClientRect();return{actionBottom:action.bottom,navTop:nav.top,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth};});
+    assert.equal(workClearance.overflow,true);assert.ok(workClearance.actionBottom<=workClearance.navTop);
+    await confirm.click();await page.waitForFunction(()=>!document.querySelector('[data-care-action="finalize"]'));
+    assert.equal(context.finalized,1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+    await page.close();
+  }
+}
+
+async function healthReportDeepLinkJourney(browser) {
+  for(const view of ['care','vital','vitals','daily','daily-care','health-report']){
+    const page=await browser.newPage({viewport:{width:390,height:844}});
+    await mockBackend(page,async(url)=>{
+      if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
+      if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId:'CTR-DEEP'},centers:[{center_id:'CTR-DEEP',name:'ศูนย์ Deep Link',myRole:'staff',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}}]};
+      if(url.pathname==='/api/residents')return{residents:[{resident_id:'RES-DEEP',center_id:'CTR-DEEP',care_profile_id:'CP-DEEP',full_name:'ผู้พักตัวอย่าง',room:'D-1',status:'active'}]};
+      if(url.pathname==='/api/center/CTR-DEEP/capabilities')return{capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+      if(url.pathname==='/api/transport/pending')return{pending:[]};
+      return{status:404,body:{message:`unmocked ${url.pathname}`}};
+    });
+    await page.route('https://phimor.local/**',async(route)=>{
+      if(route.request().resourceType()==='document')return route.fulfill({status:200,contentType:'text/html',body:localHtml('center-admin')});
+      return route.abort();
+    });
+    await page.goto(`https://phimor.local/?view=${encodeURIComponent(view)}`,{waitUntil:'domcontentloaded'});
+    await page.waitForFunction(()=>document.querySelector('#view-record')?.hidden===false&&document.querySelector('#centerDailyForm')?.hidden===false);
+    assert.equal(await page.locator('#centerVitalForm').isHidden(),true);
+    assert.equal(await page.locator('#recordHealthAction').isVisible(),true);
+    assert.match(await page.locator('#centerDailyForm').textContent(),/รายงานสุขภาพ/);
+    await page.close();
+  }
+}
+
 async function roleBasedShellJourney(browser) {
   async function openCenter(role, viewport={width:390,height:844}) {
     const page=await browser.newPage({viewport});
@@ -661,6 +786,9 @@ async function roleBasedShellJourney(browser) {
     const page=await openCenter(role);
     const mobile=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,navCount:document.querySelectorAll('.phimor-primary-nav>[data-shell-destination]').length,navPosition:getComputedStyle(document.querySelector('.phimor-primary-nav')).position,selectorHeight:document.querySelector('#centerSelector').getBoundingClientRect().height||44}));
     assert.equal(mobile.overflow,true);assert.equal(mobile.navCount,5);assert.equal(mobile.navPosition,'fixed');assert.ok(mobile.selectorHeight>=44);
+    await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+    const homeClearance=await page.evaluate(()=>{const visible=[...document.querySelectorAll('#view-home .card,#view-home .center-action-card')].filter((node)=>node.offsetParent!==null).at(-1)?.getBoundingClientRect();const nav=document.querySelector('.phimor-primary-nav').getBoundingClientRect();return visible?{lastBottom:visible.bottom,navTop:nav.top}:null;});
+    if(homeClearance)assert.ok(homeClearance.lastBottom<=homeClearance.navTop);
     await page.locator('[data-shell-destination="more"]').first().click();
     const more=await page.locator('#centerMoreActions').textContent();
     if(role==='owner'){assert.match(more,/ทีมงานและบทบาท/);assert.match(more,/แพ็กเกจ/);assert.match(more,/กลุ่ม LINE/);}
@@ -742,7 +870,7 @@ async function pharmacistConsoleJourney(browser) {
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
   const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
-  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, roleBasedShellJourney, pharmacistConsoleJourney };
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, unifiedHealthReportJourney, healthReportDeepLinkJourney, roleBasedShellJourney, pharmacistConsoleJourney };
   for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }

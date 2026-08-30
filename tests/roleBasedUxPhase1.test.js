@@ -96,7 +96,7 @@ test('Center has five semantic destinations, truthful role homes and legacy deep
   }
   assert.match(centerHtml, /ไม่มีการอ้างว่าเป็นงานที่มอบหมาย/);
   assert.match(centerHtml, /Staff.*ยังไม่มีข้อมูลมอบหมายงานรายบุคคล|ยังไม่มีข้อมูลมอบหมายงานรายบุคคล/);
-  assert.match(centerHtml, /\{residents:'residents',transport:'work',care:'record',ratecard:'more',staff:'more'\}/);
+  assert.match(centerHtml, /\{residents:'residents',transport:'work',care:'record',vital:'record',vitals:'record',daily:'record','daily-care':'record','health-report':'record',ratecard:'more',staff:'more'\}/);
   assert.match(centerHtml, /view === 'edit-card'/);
   assert.match(centerHtml, /CURRENT_ROLE==='staff'.*ส่งรูปเอกสาร/s);
   assert.match(centerHtml, /CURRENT_ROLE==='owner'.*แพ็กเกจ/s);

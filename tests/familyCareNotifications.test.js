@@ -76,9 +76,9 @@ test('active Family GroupBinding is canonical recipient and an external destinat
   assert.equal(calls[0].to, 'G-FAMILY');
   assert.doesNotMatch(calls[0].messages[0].text, /G-ATTACKER/);
   bindings.rows[0].status = 'inactive';
-  await service.enqueueRecorded({ kind:'daily_care', careProfileId:'CP-A', resourceId:'DCR-2', projection:{} });
-  assert.equal(calls[1].to, 'U-OWNER');
-  assert.equal(calls[1].meta.recipientType, 'profile_owner');
+  const missing=await service.enqueueRecorded({ kind:'daily_care', careProfileId:'CP-A', resourceId:'DCR-2', projection:{} });
+  assert.equal(missing.reason, 'group_binding_missing');
+  assert.equal(calls.length, 1);
 });
 
 test('missing active GroupBinding and owner creates no unsafe external recipient', async () => {
@@ -88,8 +88,8 @@ test('missing active GroupBinding and owner creates no unsafe external recipient
     GroupBindings:table([]), enqueue:async () => { calls += 1; },
   });
   assert.deepEqual(await service.enqueueFinalized({ kind:'daily_care', careProfileId:'CP-A', resourceId:'DCR-1',
-    projection:{ to:'G-UNTRUSTED' } }), { ok:false, reason:'no_family_recipient',
-    groupReconciliationStatus:'no_expected_group',expectedLineGroupId:null,verifiedLineGroupId:null });
+    projection:{ to:'G-UNTRUSTED' } }), { ok:false, reason:'group_binding_missing',
+    groupReconciliationStatus:'group_binding_missing',expectedLineGroupId:null,verifiedLineGroupId:null });
   assert.equal(calls, 0);
 });
 

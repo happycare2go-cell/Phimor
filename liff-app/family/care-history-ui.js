@@ -52,7 +52,8 @@
     if (!row || row.status !== 'recorded' || typeof row.vitalSetId !== 'string') return null;
     return { vitalSetId:row.vitalSetId, status:'recorded', occurredAt:safeText(row.occurredAt) || null,
       recordedAt:safeText(row.recordedAt) || null, centerName:safeText(row.centerName) || null,
-      sourceType:safeText(row.sourceType) || null, observations:safeArray(row.observations).map(projectObservation).filter(Boolean) };
+      sourceType:safeText(row.sourceType) || null, linkedDailyReportId:safeText(row.linkedDailyReportId) || null,
+      observations:safeArray(row.observations).map(projectObservation).filter(Boolean) };
   }
   function projectDailyItem(row) {
     if (!row || !DAILY_ITEM_LABELS[row.itemType] || !['text','numeric','boolean'].includes(row.valueType)) return null;
@@ -69,6 +70,7 @@
         ? { code:safeText(row.shift.code) || null, sourceLabel:safeText(row.shift.sourceLabel) || null } : null,
       recordedAt:safeText(row.recordedAt) || null, finalizedAt:safeText(row.finalizedAt) || null,
       sourceType:safeText(row.sourceType) || null, centerName:safeText(row.centerName) || null,
+      careRecipientName:safeText(row.careRecipientName) || null, room:safeText(row.room) || null,
       recorderDisplayName:safeText(row.recorderDisplayName) || null, finalizerDisplayName:safeText(row.finalizerDisplayName) || null,
       items:safeArray(row.items, 30).map(projectDailyItem).filter(Boolean),
       vitalSigns:safeArray(row.vitalSigns, 10).map(projectVitalSet).filter(Boolean) };
@@ -162,15 +164,26 @@
     function renderVitalCard(parent, vital, detailed = false) {
       const card = element('article', 'family-care__card'); card.append(element('h4', '', formatDate(vital.occurredAt)));
       card.append(element('div', 'family-care__meta', [vital.centerName, sourceLabel(vital.sourceType)].filter(Boolean).join(' · '))); renderVitalFacts(card, vital); parent.append(card);
+      if (vital.linkedDailyReportId) card.append(element('p', 'family-care__meta', 'สัญญาณชีพชุดนี้อยู่ในรายงานสุขภาพ'));
       if (detailed) card.setAttribute('aria-label', `สัญญาณชีพ ${formatDate(vital.occurredAt)}`);
     }
     function renderDailySummary(parent, report, detail = false) {
       const card = element('article', detail ? 'family-care__detail' : 'family-care__card');
-      card.append(element(detail ? 'h3' : 'h4', '', `${report.careDate ? formatDate(`${report.careDate}T12:00:00+07:00`, false) : formatDate(report.occurredAt, false)} · เวร ${shiftLabel(report.shift)}`));
-      card.append(element('div', 'family-care__meta', [report.centerName, report.finalizedAt ? `ยืนยัน ${formatDate(report.finalizedAt)}` : null].filter(Boolean).join(' · ')));
+      card.append(element(detail ? 'h3' : 'h4', '', 'รายงานสุขภาพ'));
+      if (report.careRecipientName) card.append(element('p', 'family-care__subject', `${report.careRecipientName}${report.room ? ` · ห้อง ${report.room}` : ''}`));
+      const dateLabel = report.careDate ? formatDate(`${report.careDate}T12:00:00+07:00`, false) : formatDate(report.occurredAt, false);
+      card.append(element('p', 'family-care__meta', [dateLabel, report.shift ? `เวร ${shiftLabel(report.shift)}` : null].filter(Boolean).join(' · ')));
+      card.append(element('div', 'family-care__meta', [report.centerName, sourceLabel(report.sourceType), report.finalizedAt ? `ยืนยัน ${formatDate(report.finalizedAt)}` : null].filter(Boolean).join(' · ')));
+      if (report.vitalSigns.length) { card.append(element('h4', 'family-care__detail-section', 'สัญญาณชีพ')); report.vitalSigns.forEach((vital) => renderVitalFacts(card, vital)); }
+      const symptomItems = report.items.filter((item) => item.itemType === 'symptom_note');
+      if (symptomItems.length) {
+        card.append(element('h4', 'family-care__detail-section', 'อาการ / รายงานทั่วไป'));
+        const note = element('p', 'family-care__note', symptomItems.map((item) => item.value).join('\n'));
+        card.append(note);
+      }
       if (detail) {
-        if (report.vitalSigns.length) { card.append(element('h4', 'family-care__detail-section', 'สัญญาณชีพ')); report.vitalSigns.forEach((vital) => renderVitalFacts(card, vital)); }
-        if (report.items.length) { card.append(element('h4', 'family-care__detail-section', 'การดูแล')); const items = element('div', 'family-care__items'); report.items.forEach((item) => { const row = element('div', 'family-care__item'); row.append(element('strong', '', DAILY_ITEM_LABELS[item.itemType]), element('span', '', item.value)); items.append(row); }); card.append(items); }
+        const legacyItems = report.items.filter((item) => item.itemType !== 'symptom_note');
+        if (legacyItems.length) { card.append(element('h4', 'family-care__detail-section', 'ข้อมูลการดูแลที่บันทึกไว้')); const items = element('div', 'family-care__items'); legacyItems.forEach((item) => { const row = element('div', 'family-care__item'); row.append(element('strong', '', DAILY_ITEM_LABELS[item.itemType]), element('span', '', item.value)); items.append(row); }); card.append(items); }
         if (report.recorderDisplayName) card.append(element('p', 'family-care__meta', `ผู้บันทึก: ${report.recorderDisplayName}`));
         if (report.finalizerDisplayName) card.append(element('p', 'family-care__meta', `ผู้ยืนยัน: ${report.finalizerDisplayName}`));
         const back = actionButton('กลับไปรายการบันทึก', () => { session.selectDaily(null); session.show('daily'); }); card.append(back);
@@ -182,11 +195,11 @@
       live.replaceChildren(); latest.replaceChildren(); latestDaily.replaceChildren(); list.replaceChildren(); actions.replaceChildren();
       if (!profileId) return;
       if ((state.vitalLoading && !state.vitals.length) || (state.dailyLoading && !state.daily.length)) live.append(element('div', 'family-care__loading', 'กำลังโหลดข้อมูลสุขภาพ…'));
-      const firstVital = state.vitals[0]; if (firstVital) { latest.append(element('p', 'family-care__meta', formatDate(firstVital.occurredAt))); renderVitalFacts(latest, firstVital); }
+      const firstVital = state.vitals.find((item) => !item.linkedDailyReportId); if (firstVital) { latest.append(element('p', 'family-care__meta', formatDate(firstVital.occurredAt))); renderVitalFacts(latest, firstVital); }
       else if (!state.vitalLoading && !state.vitalError) latest.append(element('div', 'family-care__empty', 'ยังไม่มีข้อมูลสัญญาณชีพ'));
       renderError(latest, state.vitalError, () => session.loadVitals());
       const firstDaily = state.daily[0]; if (firstDaily) renderDailySummary(latestDaily, firstDaily);
-      else if (!state.dailyLoading && !state.dailyError) latestDaily.append(element('div', 'family-care__empty', 'ยังไม่มีบันทึกการดูแล'));
+      else if (!state.dailyLoading && !state.dailyError) latestDaily.append(element('div', 'family-care__empty', 'ยังไม่มีรายงานสุขภาพ'));
       renderError(latestDaily, state.dailyError, () => session.loadDaily());
       workspace.hidden = state.workspace === 'overview'; filters.hidden = state.workspace !== 'vitals';
       if (state.workspace === 'vitals') {
@@ -195,9 +208,9 @@
         renderError(list, state.vitalError, () => session.loadVitals());
         if (state.vitalCursor) actions.append(actionButton(state.vitalLoading ? 'กำลังโหลด…' : 'โหลดเพิ่ม', () => session.loadMoreVitals()));
       } else if (state.workspace === 'daily') {
-        title.textContent = 'บันทึกการดูแล';
+        title.textContent = 'รายงานสุขภาพ';
         if (state.selectedDaily) renderDailySummary(list, state.selectedDaily, true); else state.daily.forEach((report) => renderDailySummary(list, report));
-        if (!state.dailyLoading && !state.daily.length && !state.dailyError) list.append(element('div', 'family-care__empty', 'ยังไม่มีบันทึกการดูแล'));
+        if (!state.dailyLoading && !state.daily.length && !state.dailyError) list.append(element('div', 'family-care__empty', 'ยังไม่มีรายงานสุขภาพ'));
         renderError(list, state.dailyError, () => session.loadDaily());
         if (!state.selectedDaily && state.dailyCursor) actions.append(actionButton(state.dailyLoading ? 'กำลังโหลด…' : 'โหลดเพิ่ม', () => session.loadMoreDaily()));
       }

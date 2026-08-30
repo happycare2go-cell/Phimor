@@ -31,18 +31,21 @@ async function seed() {
   await db.CenterStaff.insert({staff_id:'STF-M',center_id:'CTR-A',line_user_id:'U-MANAGER',display_name:'ผู้จัดการเอ',role:'manager',status:'active'});
   await db.CenterStaff.insert({staff_id:'STF-O',center_id:'CTR-A',line_user_id:'U-OWNER-CENTER',display_name:'เจ้าของเอ',role:'owner',status:'active'});
   await db.CenterStaff.insert({staff_id:'STF-B',center_id:'CTR-B',line_user_id:'U-MANAGER-B',role:'manager',status:'active'});
+  await db.CareProfiles.insert({care_profile_id:'CP-A',center_id:'CTR-A',patient_name:'คุณยายเอ',owner_line_id:'U-OWNER',status:'active'});
+  await db.CareProfiles.insert({care_profile_id:'CP-B',center_id:'CTR-B',patient_name:'คุณตาบี',status:'active'});
   await db.Residents.insert({resident_id:'RES-A',center_id:'CTR-A',care_profile_id:'CP-A',full_name:'คุณยายเอ',room:'A-1',status:'active'});
   await db.Residents.insert({resident_id:'RES-B',center_id:'CTR-B',care_profile_id:'CP-B',full_name:'คุณตาบี',status:'active'});
 }
 
-const items=[
+const legacyItems=[
   {itemType:'nutrition',valueType:'text',value:'รับประทานอาหารได้ครึ่งจาน'},
   {itemType:'fluid_intake',valueType:'numeric',value:500,sourceUnit:'mL'},
   {itemType:'bowel_movement',valueType:'numeric',value:1,sourceUnit:'times'},
 ];
+const items=[{itemType:'symptom_note',valueType:'text',value:'พักผ่อนได้และพูดคุยตามปกติ'}];
 
 test('daily items preserve factual typed values and never derive clinical interpretation',()=>{
-  const out=normalizeItems(items);assert.deepEqual(out.map((item)=>item.itemType),['nutrition','fluid_intake','bowel_movement']);
+  const out=normalizeItems(legacyItems);assert.deepEqual(out.map((item)=>item.itemType),['nutrition','fluid_intake','bowel_movement']);
   assert.equal(out[0].textValue,'รับประทานอาหารได้ครึ่งจาน');assert.equal(out[1].numericValue,500);
   assert.equal('severity' in out[0],false);assert.equal(normalizeItems([{itemType:'mood',valueType:'text',value:'พูดคุยดี'}])[0].itemType,'mood_behavior');
   assert.throws(()=>normalizeItems([{itemType:'diagnosis',valueType:'text',value:'x'}]),{code:'UNSUPPORTED_DAILY_ITEM'});
@@ -52,7 +55,7 @@ test('Center staff submit creates an auditable submitted record and no Family no
   const calls=[];const{service,repository}=fixture({familyNotifications:{async enqueueFinalized(input){calls.push(input);return{ok:true};}}});await seed();
   const result=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T08:00:00+07:00',
     careDate:'2026-08-27',shift:{code:'day',sourceLabel:'กลางวัน'},items});
-  assert.equal(result.item.status,'submitted');assert.equal(result.item.items.length,3);
+  assert.equal(result.item.status,'submitted');assert.equal(result.item.items.length,1);
   assert.equal(repository.state.reports[0].recorded_by_actor_reference,'center_staff:STF-A');
   assert.equal(repository.state.events[0].event_type,'submitted');assert.equal(calls.length,0);
   assert.doesNotMatch(JSON.stringify(result),/U-STAFF|organization_id|care_profile_id/i);
@@ -104,13 +107,57 @@ test('external finalized snapshot is idempotent and mismatched client tenant is 
   await assert.rejects(service.recordCanonical({...input,provenance:{...input.provenance,integrationClientId:'INT-B',externalRecordId:'EXT-D-2'}}),{code:'INTEGRATION_TENANT_MISMATCH'});
 });
 
+test('native Health Report accepts note-only or Vital-only and rejects empty or legacy structured new content',async()=>{
+  const{service}=fixture();await seed();
+  const noteOnly=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',items});
+  assert.equal(noteOnly.item.status,'submitted');assert.equal(noteOnly.item.vitalSigns.length,0);
+  const vitalOnly=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T02:00:00Z',items:[],vitalSigns:{observations:[{measurementType:'spo2',numericValue:98,sourceUnit:'%'}]}});
+  assert.equal(vitalOnly.item.status,'submitted');assert.equal(vitalOnly.item.items.length,0);assert.equal(vitalOnly.item.vitalSigns.length,1);
+  await assert.rejects(service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T03:00:00Z',items:[]}),{code:'HEALTH_REPORT_CONTENT_REQUIRED'});
+  await assert.rejects(service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T03:00:00Z',items:legacyItems}),{code:'UNSUPPORTED_NATIVE_HEALTH_REPORT_ITEM'});
+  await assert.rejects(service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T03:00:00Z',items,vitalSigns:{observations:[{measurementType:'weight',numericValue:50,sourceUnit:'kg'}]}}),{code:'UNSUPPORTED_NATIVE_HEALTH_REPORT_VITAL'});
+});
+
+test('Manager and Owner native recording still enters submitted state and requires a later explicit finalize',async()=>{
+  const{service,repository}=fixture();await seed();
+  const manager=await service.recordNative({lineUserId:'U-MANAGER',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T04:00:00Z',items});
+  const owner=await service.recordNative({lineUserId:'U-OWNER-CENTER',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T05:00:00Z',items});
+  assert.deepEqual([manager.item.status,owner.item.status],['submitted','submitted']);
+  assert.equal(repository.state.events.filter((event)=>event.event_type==='finalized').length,0);
+  assert.equal((await service.finalizeReport({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:manager.item.dailyReportId})).item.status,'finalized');
+  assert.equal((await service.finalizeReport({lineUserId:'U-OWNER-CENTER',centerId:'CTR-A',dailyReportId:owner.item.dailyReportId})).item.status,'finalized');
+});
+
+test('returned legacy structured draft can complete its original lifecycle without discarding historical fields',async()=>{
+  const{service,repository}=fixture();await seed();
+  const first=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',items});
+  await service.returnForCorrection({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'ตรวจข้อมูลเดิม'});
+  repository.state.items.splice(0,repository.state.items.length,
+    {daily_item_id:'LEG-1',daily_report_id:first.item.dailyReportId,source_ordinal:1,item_type:'nutrition',value_type:'text',source_value_text:'ทานได้ครึ่งจาน',text_value:'ทานได้ครึ่งจาน',numeric_value:null,boolean_value:null,source_unit:null},
+    {daily_item_id:'LEG-2',daily_report_id:first.item.dailyReportId,source_ordinal:2,item_type:'sleep_rest',value_type:'text',source_value_text:'พักกลางวัน',text_value:'พักกลางวัน',numeric_value:null,boolean_value:null,source_unit:null});
+  const revised=await service.resubmitReport({lineUserId:'U-STAFF',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,occurredAt:'2026-08-27T01:10:00Z',items:[
+    {itemType:'nutrition',valueType:'text',value:'ทานได้หมดจาน'},
+    {itemType:'sleep_rest',valueType:'text',value:'พักกลางวัน'},
+  ]});
+  assert.equal(revised.item.status,'submitted');assert.deepEqual(revised.item.items.map((item)=>item.itemType),['nutrition','sleep_rest']);
+});
+
+test('returned legacy draft with an old Vital type remains compatible even when its note uses the unified item type',async()=>{
+  const{service,repository}=fixture();await seed();
+  const first=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',items});
+  await repository.linkVital(first.item.dailyReportId,'VSET-LEGACY',{vitalSetId:'VSET-LEGACY',status:'recorded',occurredAt:'2026-08-27T01:00:00Z',sourceType:'native_phimor',observations:[{measurementType:'respiratory_rate',numericValue:18,sourceValueText:'18',sourceUnit:'/min'}]});
+  await service.returnForCorrection({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'ตรวจข้อมูลเดิม'});
+  const revised=await service.resubmitReport({lineUserId:'U-STAFF',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,occurredAt:'2026-08-27T01:10:00Z',items,
+    vitalSigns:{observations:[{measurementType:'respiratory_rate',numericValue:18,sourceUnit:'/min'}]}});
+  assert.equal(revised.item.status,'submitted');assert.equal(revised.item.vitalSigns[0].observations[0].measurementType,'respiratory_rate');
+});
+
 test('external expected group is reconciled against the exact Care Profile binding and can be retried after binding correction',async()=>{
   const queued=[];
   const notifications=createFamilyCareNotificationService({CareProfiles:db.CareProfiles,GroupBindings:db.GroupBindings,
     enqueue:async(input)=>{queued.push(input);return{ok:true};}});
   const {service,repository}=fixture({familyNotifications:notifications});
   await seed();
-  await db.CareProfiles.insert({care_profile_id:'CP-A',patient_name:'คุณยายเอ',owner_line_id:'U-OWNER',status:'active'});
   await db.GroupBindings.insert({binding_id:'GB-OTHER',kind:'family',care_profile_id:'CP-B',line_group_id:'G-EXPECTED',status:'active'});
   const first=await service.recordCanonical(externalInput({expectedLineGroupId:'G-EXPECTED'}));
   assert.equal(first.item.status,'finalized');assert.equal(repository.state.reports.length,1);
@@ -128,12 +175,12 @@ test('Manager return then staff correction creates a new submitted version witho
   const{service,repository}=fixture();await seed();
   const first=await service.recordNative({lineUserId:'U-STAFF',centerId:'CTR-A',residentId:'RES-A',occurredAt:'2026-08-27T01:00:00Z',items});
   await service.returnForCorrection({lineUserId:'U-MANAGER',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,reason:'ตรวจจำนวนอาหารอีกครั้ง'});
-  const revisedItems=[{itemType:'nutrition',valueType:'text',value:'รับประทานหมดจาน'}];
+  const revisedItems=[{itemType:'symptom_note',valueType:'text',value:'พักผ่อนได้ดีขึ้น'}];
   const revised=await service.resubmitReport({lineUserId:'U-STAFF',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,
     occurredAt:'2026-08-27T01:10:00Z',items:revisedItems});
   assert.equal(revised.item.status,'submitted');assert.equal(revised.item.versionNo,2);
   assert.equal(repository.state.reports[0].status,'changes_requested');assert.equal(repository.state.reports[1].supersedes_report_id,first.item.dailyReportId);
-  assert.equal((await repository.listItems(first.item.dailyReportId))[0].text_value,'รับประทานอาหารได้ครึ่งจาน');
+  assert.equal((await repository.listItems(first.item.dailyReportId))[0].text_value,'พักผ่อนได้และพูดคุยตามปกติ');
   await assert.rejects(service.resubmitReport({lineUserId:'U-STAFF',centerId:'CTR-A',dailyReportId:first.item.dailyReportId,
     occurredAt:'2026-08-27T01:20:00Z',items:revisedItems}),{code:'DAILY_REPORT_ALREADY_RESUBMITTED'});
 });

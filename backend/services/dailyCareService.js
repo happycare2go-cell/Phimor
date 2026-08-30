@@ -1,4 +1,4 @@
-const { Centers, CenterStaff, Residents, id, withTransaction, now } = require('../db');
+const { Centers, CenterStaff, Residents, CareProfiles, id, withTransaction, now } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const { platformService } = require('./platformService');
 const { vitalSignService, projectSet:projectVitalSet } = require('./vitalSignService');
@@ -8,6 +8,28 @@ const {
   normalizeShift, normalizeItems,
 } = require('../domain/dailyCare');
 const { familyCareNotificationService } = require('./familyCareNotificationService');
+
+const NATIVE_HEALTH_REPORT_ITEM_TYPES=new Set(['symptom_note']);
+const NATIVE_HEALTH_REPORT_VITAL_TYPES=new Set([
+  'temperature','blood_pressure_systolic','blood_pressure_diastolic','pulse','spo2',
+]);
+
+function validateNativeHealthReportContent(items,vitalSigns) {
+  const inputItems=items===undefined?[]:items;
+  if(!Array.isArray(inputItems)||inputItems.length>1||inputItems.some((item)=>
+    !NATIVE_HEALTH_REPORT_ITEM_TYPES.has(String(item?.itemType||item?.item_type||'').trim()))) {
+    throw new DailyCareError('UNSUPPORTED_NATIVE_HEALTH_REPORT_ITEM','รายงานสุขภาพใหม่รองรับเฉพาะอาการหรือรายงานทั่วไปเพิ่มเติม',400);
+  }
+  const observations=vitalSigns?.observations;
+  if(vitalSigns!==undefined&&vitalSigns!==null&&(!Array.isArray(observations)||observations.some((item)=>
+    !NATIVE_HEALTH_REPORT_VITAL_TYPES.has(String(item?.measurementType||item?.measurement_type||'').trim())))) {
+    throw new DailyCareError('UNSUPPORTED_NATIVE_HEALTH_REPORT_VITAL','รายงานสุขภาพมีประเภทสัญญาณชีพที่ไม่รองรับ',400);
+  }
+  if(inputItems.length===0&&(!Array.isArray(observations)||observations.length===0)) {
+    throw new DailyCareError('HEALTH_REPORT_CONTENT_REQUIRED','กรุณากรอกสัญญาณชีพอย่างน้อย 1 ค่า หรืออาการ/รายงานทั่วไป',400);
+  }
+  return {items:inputItems,vitalSigns:vitalSigns||null};
+}
 
 function actorReference(value) {
   const clean=String(value||'').trim();
@@ -95,7 +117,7 @@ function notificationState(result) {
 function createDailyCareService(overrides={}) {
   const repository=overrides.repository||createDailyCareRepository();
   const centers=overrides.Centers||Centers; const staffTable=overrides.CenterStaff||CenterStaff;
-  const residents=overrides.Residents||Residents;
+  const residents=overrides.Residents||Residents; const profiles=overrides.CareProfiles||CareProfiles;
   const authorize=overrides.authorizeCareProfileAccess||authorizeCareProfileAccess;
   const platform=overrides.platformService||platformService;
   const vitals=overrides.vitalSignService||vitalSignService;
@@ -115,6 +137,9 @@ function createDailyCareService(overrides={}) {
     if(!resident.care_profile_id||resident.care_profile_id!==careProfileId) {
       throw new DailyCareError('CARE_PROFILE_RELATIONSHIP_MISMATCH','Care Profile ไม่สัมพันธ์กับผู้พัก',403);
     }
+    const profile=await profiles.findOne((row)=>row.care_profile_id===careProfileId
+      &&(!row.center_id||row.center_id===centerId)&&!['inactive','revoked','deleted'].includes(row.status));
+    if(!profile)throw new DailyCareError('CARE_PROFILE_RELATIONSHIP_MISMATCH','Care Profile ไม่สัมพันธ์กับผู้พัก',403);
     return {center,resident,organization};
   }
 
@@ -137,7 +162,7 @@ function createDailyCareService(overrides={}) {
 
   async function createCanonicalReport({
     tenant,subject,occurredAt,careDate=null,shift=null,items,vitalSigns=null,provenance,
-    lifecycleStatus,reportGroupId=null,versionNo=1,supersedesReportId=null,
+    lifecycleStatus,reportGroupId=null,versionNo=1,supersedesReportId=null,allowEmptyItems=false,
   }) {
     const organizationId=requiredId(tenant?.organizationId,'Organization ID');
     const centerId=requiredId(subject?.centerId,'Center ID');
@@ -150,7 +175,7 @@ function createDailyCareService(overrides={}) {
     if(!['submitted','finalized'].includes(lifecycleStatus)) {
       throw new DailyCareError('INVALID_INITIAL_STATUS','สถานะเริ่มต้นของรายงานไม่ถูกต้อง',400);
     }
-    const normalized=normalizeItems(items); const at=requiredTimestamp(occurredAt);
+    const normalized=normalizeItems(items,{allowEmpty:allowEmptyItems}); const at=requiredTimestamp(occurredAt);
     const normalizedCareDate=optionalCareDate(careDate)||bangkokCareDate(at);
     const normalizedShift=normalizeShift(shift);
     const sourceType=provenance?.sourceType;
@@ -276,9 +301,11 @@ function createDailyCareService(overrides={}) {
     if(!resident?.care_profile_id)throw new DailyCareError('RESIDENT_NOT_READY','ผู้พักยังไม่มี Care Profile ที่พร้อมใช้งาน',409);
     const organization=await platform.getOrganizationForCenter(centerKey);
     if(!organization)throw new DailyCareError('CENTER_TENANT_UNAVAILABLE','ไม่พบ tenant ของศูนย์',409);
+    const healthReport=validateNativeHealthReportContent(items,vitalSigns);
     return createCanonicalReport({tenant:{organizationId:organization.organizationId},
       subject:{centerId:centerKey,residentId:residentKey,careProfileId:resident.care_profile_id},
-      occurredAt,careDate,shift,items,vitalSigns,lifecycleStatus:'submitted',
+      occurredAt,careDate,shift,items:healthReport.items,vitalSigns:healthReport.vitalSigns,
+      lifecycleStatus:'submitted',allowEmptyItems:healthReport.items.length===0,
       provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',
         actorReference:`center_staff:${staff.staff_id}`,
         recorderDisplayName:staff.display_name||staff.full_name||staff.name||null}});
@@ -294,12 +321,19 @@ function createDailyCareService(overrides={}) {
     if(fromAt&&toAt&&new Date(toAt)-new Date(fromAt)>366*86400000)throw new DailyCareError('DATE_RANGE_TOO_LARGE','ช่วงวันที่ต้องไม่เกิน 366 วัน',400);
     const rows=await repository.listHistory({careProfileId:profileId,centerId:centerId||null,from:fromAt,to:toAt,cursor:decodeCursor(cursor),limit:bounded});
     const hasMore=rows.length>bounded;const page=rows.slice(0,bounded);
-    const centerNames=new Map();
+    const centerNames=new Map();const residentSubjects=new Map();
     for(const centerId of [...new Set(page.map((row)=>row.center_id).filter(Boolean))]) {
       const center=await centers.findOne((item)=>item.center_id===centerId);
       centerNames.set(centerId,center?.name||null);
     }
-    return {items:page.map((row)=>projectReport({...row,center_name:centerNames.get(row.center_id)||null})),nextCursor:hasMore?encodeCursor(page.at(-1)):null};
+    for(const row of page) {
+      if(!residentSubjects.has(row.resident_id)) {
+        const resident=await residents.findOne((item)=>item.resident_id===row.resident_id&&item.center_id===row.center_id);
+        residentSubjects.set(row.resident_id,{residentId:resident?.resident_id||null,
+          careRecipientName:resident?.full_name||null,room:resident?.room||null});
+      }
+    }
+    return {items:page.map((row)=>projectReport({...row,center_name:centerNames.get(row.center_id)||null},row.items||[],row.vital_signs||[],residentSubjects.get(row.resident_id)||{})),nextCursor:hasMore?encodeCursor(page.at(-1)):null};
   }
 
   async function listCenterWorkflow({lineUserId,centerId,status='submitted',limit=50}) {
@@ -372,11 +406,19 @@ function createDailyCareService(overrides={}) {
       if(await repository.findSupersedingReport(reportId)) {
         throw new DailyCareError('DAILY_REPORT_ALREADY_RESUBMITTED','รายงานนี้ถูกแก้ไขและส่งตรวจอีกครั้งแล้ว',409);
       }
+      const currentItems=await repository.listItems(reportId);
+      const currentDetail=await repository.getReportDetail(reportId);
+      const currentVitalTypes=(currentDetail?.vital_signs||[]).flatMap((set)=>set.observations||[])
+        .map((item)=>item.measurement_type||item.measurementType);
+      const isUnified=currentItems.every((item)=>item.item_type==='symptom_note')
+        &&currentVitalTypes.every((type)=>NATIVE_HEALTH_REPORT_VITAL_TYPES.has(type));
+      const input=isUnified?validateNativeHealthReportContent(items,vitalSigns):{items,vitalSigns};
       const organization=await platform.getOrganizationForCenter(centerKey);
       const versionRow=await repository.nextVersion(current.report_group_id);
       return createCanonicalReport({tenant:{organizationId:organization.organizationId},
         subject:{centerId:centerKey,residentId:current.resident_id,careProfileId:current.care_profile_id},
-        occurredAt,careDate,shift,items,vitalSigns,lifecycleStatus:'submitted',
+        occurredAt,careDate,shift,items:input.items,vitalSigns:input.vitalSigns,lifecycleStatus:'submitted',
+        allowEmptyItems:input.items.length===0&&Boolean(input.vitalSigns?.observations?.length),
         reportGroupId:current.report_group_id,versionNo:Number(versionRow.next_version),supersedesReportId:reportId,
         provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',
           actorReference:`center_staff:${staff.staff_id}`,
@@ -437,6 +479,7 @@ function createDailyCareService(overrides={}) {
         occurredAt:detail.occurred_at,careDate:detail.care_date,
         shift:detail.shift_code||detail.shift_source_label?{code:detail.shift_code||null,sourceLabel:detail.shift_source_label||null}:null,
         items:(detail.items||[]).map(dailyItemToInput),vitalSigns:linkedVitalsToInput(detail.vital_signs,detail.occurred_at),
+        allowEmptyItems:(detail.items||[]).length===0&&(detail.vital_signs||[]).length>0,
         lifecycleStatus:'submitted',reportGroupId:detail.report_group_id,
         versionNo:Number(detail.version_no)+1,supersedesReportId:reportId,
         provenance:{sourceType:'native_phimor',sourceSystem:'phimor_center',
@@ -477,4 +520,5 @@ function createDailyCareService(overrides={}) {
 }
 
 const dailyCareService=createDailyCareService();
-module.exports={createDailyCareService,dailyCareService,projectItem,projectReport,dailyItemToInput,linkedVitalsToInput,decodeCursor,notificationState};
+module.exports={createDailyCareService,dailyCareService,projectItem,projectReport,dailyItemToInput,linkedVitalsToInput,
+  decodeCursor,notificationState,validateNativeHealthReportContent,NATIVE_HEALTH_REPORT_VITAL_TYPES};

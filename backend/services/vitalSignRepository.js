@@ -122,6 +122,10 @@ function createVitalSignRepository({ queryFn = databaseQuery } = {}) {
       params.push(limit + 1);
       return many(
         `SELECT v.*,
+          (SELECT link.daily_report_id FROM daily_care_vital_links link
+            JOIN daily_care_reports report ON report.daily_report_id=link.daily_report_id
+            WHERE link.vital_set_id=v.vital_set_id AND report.status='finalized'
+            ORDER BY report.version_no DESC,report.daily_report_id DESC LIMIT 1) AS linked_daily_report_id,
           COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
               'vital_observation_id', o.vital_observation_id,

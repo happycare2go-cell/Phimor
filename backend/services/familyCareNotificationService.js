@@ -5,7 +5,7 @@ const { findActiveFamilyBinding } = require('./groupBindingRepository');
 const PROJECTION_VERSION = 'family-care-v3-finalized';
 const KINDS = Object.freeze({
   vital_signs: Object.freeze({ kind:'family_vital_signs_recorded', title:'รายงานสัญญาณชีพ' }),
-  daily_care: Object.freeze({ kind:'family_daily_care_finalized', title:'รายงานการดูแลประจำวัน' }),
+  daily_care: Object.freeze({ kind:'family_daily_care_finalized', title:'รายงานสุขภาพ' }),
 });
 const DAILY_LABELS = Object.freeze({
   nutrition:'อาหาร/โภชนาการ', fluid_intake:'ปริมาณน้ำ', sleep_rest:'การนอน/พักผ่อน',
@@ -51,7 +51,7 @@ function thaiCareDate(value) {
 
 function displayUnit(value) {
   const unit = cleanText(value, 32, true);
-  return unit === 'mm[Hg]' ? 'mmHg' : unit;
+  return unit === 'mm[Hg]' ? 'mmHg' : unit === 'Cel' ? '°C' : unit;
 }
 
 function observationValue(observation) {
@@ -59,7 +59,8 @@ function observationValue(observation) {
   const source = cleanText(observation.sourceValueText ?? observation.source_value_text, 80, true);
   const numeric = observation.numericValue ?? observation.numeric_value;
   const value = source || (Number.isFinite(Number(numeric)) ? String(Number(numeric)) : null);
-  const unit = displayUnit(observation.sourceUnit ?? observation.source_unit);
+  let unit = displayUnit(observation.sourceUnit ?? observation.source_unit);
+  if((observation.measurementType??observation.measurement_type)==='pulse'&&unit==='/min')unit='ครั้ง/นาที';
   return value ? `${value}${unit ? `${unit === '%' ? '' : ' '}${unit}` : ''}` : null;
 }
 
@@ -139,7 +140,8 @@ function renderFamilyCareMessage({ kind, profile, projection = {} }) {
     const label = DAILY_LABELS[type]; const value = itemValue(item);
     return label && value ? [`• ${label}: ${value}`] : [];
   });
-  if (dailyLines.length) lines.push('', 'การดูแลประจำวัน', ...dailyLines);
+  if (dailyLines.length) lines.push('', dailyItems.every((item)=>(item.itemType??item.item_type)==='symptom_note')
+    ? 'อาการ / รายงานทั่วไป' : 'ข้อมูลการดูแลที่บันทึกไว้', ...dailyLines);
 
   const recorder = cleanText(projection.recorderDisplayName, 160, true);
   if (recorder) lines.push('', `ผู้บันทึก: ${recorder}`);
@@ -156,7 +158,7 @@ function createFamilyCareNotificationService(overrides = {}) {
   const enqueue = overrides.enqueue || notificationService.enqueue;
   const suppressByResource = overrides.suppressByResource || notificationService.suppressByResource;
 
-  async function resolveRecipient(careProfileId, { expectedLineGroupId = null } = {}) {
+  async function resolveRecipient(careProfileId, { expectedLineGroupId = null, requireFamilyGroup = false } = {}) {
     const profileId = validId(careProfileId);
     if (!profileId) return null;
     const expected = cleanText(expectedLineGroupId, 255, true);
@@ -170,6 +172,7 @@ function createFamilyCareNotificationService(overrides = {}) {
     }
     if (binding) return { recipient:{ to:verified, type:'family_group', reference:binding.binding_id },
       status:'no_expected_group', expectedLineGroupId:null, verifiedLineGroupId:verified };
+    if(requireFamilyGroup)return {recipient:null,status:'group_binding_missing',expectedLineGroupId:null,verifiedLineGroupId:null};
     const profile = await profiles.findOne((row) => row.care_profile_id === profileId
       && !['inactive', 'revoked', 'deleted'].includes(row.status));
     if (typeof profile?.owner_line_id === 'string' && profile.owner_line_id.trim()) {
@@ -185,7 +188,8 @@ function createFamilyCareNotificationService(overrides = {}) {
     if (!definition || !profileId || !recordId) {
       throw Object.assign(new Error('invalid family notification intent'), { code:'INVALID_FAMILY_NOTIFICATION_INTENT', status:400 });
     }
-    const reconciliation = await resolveRecipient(profileId, { expectedLineGroupId });
+    const reconciliation = await resolveRecipient(profileId, { expectedLineGroupId,
+      requireFamilyGroup:kind==='daily_care' });
     const recipient = reconciliation?.recipient || null;
     if (!recipient) {
       const reasons = { group_binding_missing:'group_binding_missing', group_binding_mismatch:'group_binding_mismatch' };

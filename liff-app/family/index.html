@@ -437,7 +437,7 @@
   <div class="view" id="view-health">
     <div class="family-module-header family-module-header--actions">
       <button type="button" class="family-module-back" onclick="activateView('home')" aria-label="กลับหน้าหลัก">‹ กลับ</button>
-      <div class="family-module-header__copy"><h1>สุขภาพ</h1><p>สัญญาณชีพ บันทึกการดูแล และข้อมูลปัจจุบันของ Care Profile</p></div>
+      <div class="family-module-header__copy"><h1>สุขภาพ</h1><p>รายงานสุขภาพและข้อมูลปัจจุบันของ Care Profile</p></div>
       <button type="button" class="family-module-link" onclick="openFamilyDestination('history')">ประวัติและ PDF</button>
     </div>
     <div class="mascot-callout mascot-callout--success mascot-callout--compact">
@@ -451,10 +451,10 @@
     </div>
     <div id="healthProfileContent" hidden>
     <section class="card family-care" id="familyCareHistoryPanel" hidden aria-labelledby="familyCareHistoryTitle">
-      <div class="family-care__header"><div><h2 id="familyCareHistoryTitle">ข้อมูลจากการดูแล</h2><p>แสดงข้อมูลที่บันทึกจริง โดยไม่มีการตีความว่าปกติหรือผิดปกติ</p></div><span id="familyCareLive" class="family-care__status" role="status" aria-live="polite"></span></div>
+      <div class="family-care__header"><div><h2 id="familyCareHistoryTitle">รายงานสุขภาพ</h2><p>แสดงข้อมูลที่บันทึกและยืนยันแล้ว โดยไม่มีการตีความว่าปกติหรือผิดปกติ</p></div><span id="familyCareLive" class="family-care__status" role="status" aria-live="polite"></span></div>
       <div class="family-care__grid">
-        <article class="family-care__module" aria-labelledby="familyLatestVitalTitle"><h3 id="familyLatestVitalTitle">สัญญาณชีพล่าสุด</h3><div id="familyLatestVital" class="family-care__latest"></div><button type="button" class="btn btn-outline" id="familyVitalHistoryButton">ดูประวัติสัญญาณชีพ</button></article>
-        <article class="family-care__module" aria-labelledby="familyLatestDailyTitle"><h3 id="familyLatestDailyTitle">บันทึกการดูแล</h3><div id="familyLatestDaily" class="family-care__latest"></div><button type="button" class="btn btn-outline" id="familyDailyHistoryButton">ดูบันทึกการดูแลทั้งหมด</button></article>
+        <article class="family-care__module" aria-labelledby="familyLatestDailyTitle"><h3 id="familyLatestDailyTitle">รายงานสุขภาพล่าสุด</h3><div id="familyLatestDaily" class="family-care__latest"></div><button type="button" class="btn btn-outline" id="familyDailyHistoryButton">ดูรายงานสุขภาพทั้งหมด</button></article>
+        <article class="family-care__module" aria-labelledby="familyLatestVitalTitle"><h3 id="familyLatestVitalTitle">ประวัติสัญญาณชีพเดิม</h3><div id="familyLatestVital" class="family-care__latest"></div><button type="button" class="btn btn-outline" id="familyVitalHistoryButton">ดูประวัติสัญญาณชีพ</button></article>
       </div>
       <section class="family-care__workspace" id="familyCareWorkspace" hidden aria-labelledby="familyCareWorkspaceTitle">
         <div class="family-care__header"><h3 id="familyCareWorkspaceTitle">ประวัติ</h3><button type="button" class="btn btn-outline" id="familyCareOverviewButton">กลับภาพรวม</button></div>

@@ -58,13 +58,15 @@ test('history forwards only authenticated profile scope and bounded query inputs
   assert.deepEqual(seen, { lineUserId:'U-OWNER', careProfileId:'CP-A', centerId:'CTR-A', from:'2026-01-01T00:00:00Z', to:null, cursor:null, limit:'10' });
 });
 
-test('native record derives actor from authentication and ignores forged tenant/provenance', async () => {
-  let seen;
-  await withApi(service({ async recordNative(input) { seen = input; return { duplicate:false,item:{vitalSetId:'VSET-1'} }; } }), async (request) => {
+test('legacy native Vital route cannot bypass the Health Report review lifecycle', async () => {
+  let calls=0;
+  await withApi(service({ async recordNative() { calls += 1; return { duplicate:false,item:{vitalSetId:'VSET-1'} }; } }), async (request) => {
     const response = await request('/api/center/CTR-A/residents/RES-A/vital-signs', { method:'POST', body:JSON.stringify({ occurredAt:'2026-08-27T01:00:00Z', observations:[], organizationId:'ORG-EVIL', actorReference:'evil' }) });
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 409);
+    const body=await response.json();assert.equal(body.errorCode,'NATIVE_HEALTH_REPORT_REQUIRED');
+    assert.match(body.message,/รายงานสุขภาพ/);assert.doesNotMatch(JSON.stringify(body),/ORG-EVIL|actorReference|stack/i);
   });
-  assert.deepEqual(seen, { lineUserId:'U-STAFF', centerId:'CTR-A', residentId:'RES-A', occurredAt:'2026-08-27T01:00:00Z', observations:[] });
+  assert.equal(calls,0);
 });
 
 test('staff cannot void while manager can void through explicit operation', async () => {

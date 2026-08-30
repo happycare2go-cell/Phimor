@@ -75,20 +75,29 @@
     return items;
   }
 
+  function buildHealthReportItems(values = {}) {
+    const note = cleanText(values.symptomNote);
+    return note ? [{ itemType:'symptom_note', valueType:'text', textValue:note, sourceValueText:note }] : [];
+  }
+
   function buildShift(values = {}) {
     const code = cleanText(values.shift);
     if (!code) return null;
     return { code, sourceLabel:SHIFT_LABELS[code] || cleanText(values.shiftSourceLabel) || code };
   }
 
-  function buildOptionalDailyVitals(values = {}) {
+  function buildOptionalDailyVitals(values = {}, { legacy = false } = {}) {
     const mapped = {
       temperature:values.dailyTemperature, systolic:values.dailySystolic,
       diastolic:values.dailyDiastolic, pulse:values.dailyPulse,
-      spo2:values.dailySpo2, respiratoryRate:values.dailyRespiratoryRate,
-      bloodGlucose:values.dailyBloodGlucose, glucoseContext:values.dailyGlucoseContext,
-      weight:values.dailyWeight,
+      spo2:values.dailySpo2,
     };
+    if (legacy) {
+      mapped.respiratoryRate = values.dailyRespiratoryRate;
+      mapped.bloodGlucose = values.dailyBloodGlucose;
+      mapped.glucoseContext = values.dailyGlucoseContext;
+      mapped.weight = values.dailyWeight;
+    }
     if (!Object.values(mapped).some((value) => cleanText(value))) return null;
     return { occurredAt:occurredAtIso(values.occurredAt), observations:buildVitalObservations(mapped) };
   }
@@ -145,11 +154,15 @@
       const body = kind === 'vital'
         ? { occurredAt:occurredAtIso(values.occurredAt), observations:buildVitalObservations(values) }
         : { occurredAt:occurredAtIso(values.occurredAt), careDate:cleanText(values.occurredAt).slice(0, 10),
-          shift:buildShift(values), items:buildDailyItems(values) };
+          shift:buildShift(values), items:cleanText(values.legacyStructuredReport)==='true'
+            ? buildDailyItems(values) : buildHealthReportItems(values) };
       if (kind === 'daily') {
-        const vitalSigns = buildOptionalDailyVitals(values);
+        const vitalSigns = buildOptionalDailyVitals(values, {
+          legacy:cleanText(values.legacyStructuredReport) === 'true',
+        });
         if (vitalSigns && !context.capabilities[CAPABILITIES.vital]) throw new CenterCareUiError('CAPABILITY_UNAVAILABLE', 'ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกสัญญาณชีพ');
         if (vitalSigns) body.vitalSigns = vitalSigns;
+        if (!body.items.length && !vitalSigns) throw new CenterCareUiError('HEALTH_REPORT_CONTENT_REQUIRED', 'กรุณากรอกสัญญาณชีพอย่างน้อย 1 ค่า หรืออาการ/รายงานทั่วไป');
       }
       sending = true;
       try {
@@ -263,7 +276,7 @@
       <section class="center-care" aria-labelledby="centerCareHeading">
         <div class="center-care__intro">
           <p class="center-care__eyebrow">บันทึก ณ จุดดูแล</p>
-          <h2 id="centerCareHeading">บันทึกข้อมูลการดูแล</h2>
+          <h2 id="centerCareHeading">รายงานสุขภาพ</h2>
           <p>เลือกผู้รับการดูแลและบันทึกข้อมูลตามที่วัดหรือสังเกตได้ ระบบไม่แปลผลทางการแพทย์จากหน้านี้</p>
         </div>
         <p id="centerCareUnavailable" class="center-care__state" role="status" hidden>ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกข้อมูลการดูแล</p>
@@ -277,21 +290,21 @@
           <p class="center-care__hint">รายการที่ยกเลิกยังอยู่ในประวัติ แต่ไม่แสดงเป็นข้อมูลปัจจุบันของครอบครัว</p><div class="center-care__history-list" role="list"></div><p class="center-care__history-status" role="status" aria-live="polite"></p>
         </section>
         <section id="centerDailyHistory" class="center-care__panel center-care__history" aria-labelledby="centerDailyHistoryHeading" hidden>
-          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">ประวัติฉบับยืนยัน</p><h3 id="centerDailyHistoryHeading">รายงานที่ยืนยันแล้ว</h3></div><button type="button" class="btn btn-outline center-care__refresh" data-refresh-history="daily">รีเฟรช</button></div>
+          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">ประวัติฉบับยืนยัน</p><h3 id="centerDailyHistoryHeading">รายงานสุขภาพที่ยืนยันแล้ว</h3></div><button type="button" class="btn btn-outline center-care__refresh" data-refresh-history="daily">รีเฟรช</button></div>
           <p class="center-care__hint">สร้างฉบับแก้ไขโดยไม่เขียนทับรายงานเดิม</p><div class="center-care__history-list" role="list"></div><p class="center-care__history-status" role="status" aria-live="polite"></p>
         </section>
         <section id="centerDailyReview" class="center-care__panel center-care__review" aria-labelledby="centerDailyReviewHeading" hidden>
-          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">Manager review</p><h3 id="centerDailyReviewHeading">รายงานรอตรวจ</h3></div><button type="button" class="btn btn-outline center-care__refresh">รีเฟรช</button></div>
+          <div class="center-care__review-heading"><div><p class="center-care__eyebrow">ตรวจสอบก่อนแจ้งครอบครัว</p><h3 id="centerDailyReviewHeading">รายงานสุขภาพรอตรวจ</h3></div><button type="button" class="btn btn-outline center-care__refresh">รีเฟรช</button></div>
           <p class="center-care__hint">ตรวจข้อมูลก่อนยืนยัน รายงานที่ยังไม่ยืนยันจะไม่ถูกแจ้งให้ครอบครัว</p>
           <div class="center-care__review-list" role="list"></div>
           <p class="center-care__review-status" role="status" aria-live="polite"></p>
         </section>
         <section id="centerDailyReturned" class="center-care__panel center-care__review" aria-labelledby="centerDailyReturnedHeading" hidden>
-          <h3 id="centerDailyReturnedHeading">รายงานที่ส่งกลับแก้ไข</h3>
+          <h3 id="centerDailyReturnedHeading">รายงานสุขภาพที่ส่งกลับแก้ไข</h3>
           <p class="center-care__hint">แก้ไขจากข้อมูลต้นฉบับแล้วส่งให้ผู้จัดการตรวจอีกครั้ง</p>
           <div class="center-care__review-list" role="list"></div>
         </section>
-        <form id="centerVitalForm" class="center-care__panel" novalidate>
+        <form id="centerVitalForm" class="center-care__panel" novalidate hidden aria-hidden="true">
           <h3>สัญญาณชีพ</h3>
           <p class="center-care__hint">กรอกเฉพาะค่าที่วัดได้จริง อย่างน้อย 1 รายการ</p>
           <label>ผู้รับการดูแล<select name="residentId" class="center-care__resident" required></select></label>
@@ -312,35 +325,40 @@
         </form>
         <form id="centerDailyForm" class="center-care__panel" novalidate>
           <input name="resubmitReportId" type="hidden">
-          <h3>รายงานการดูแลประจำวัน</h3>
-          <p class="center-care__hint">บันทึกตามสิ่งที่ดูแลหรือสังเกตได้ โดยไม่สรุปวินิจฉัย</p>
-          <label>ผู้รับการดูแล<select name="residentId" class="center-care__resident" required></select></label>
+          <input name="legacyStructuredReport" type="hidden" value="false">
+          <h3>รายงานสุขภาพ</h3>
+          <p class="center-care__hint">กรอกเฉพาะค่าที่วัดหรือสังเกตได้จริง ระบบไม่วินิจฉัยหรือแปลผลทางการแพทย์</p>
+          <label>เลือกผู้พัก / Care Profile<select name="residentId" class="center-care__resident" required></select></label>
+          <div class="center-care__subject" data-health-subject aria-live="polite">กรุณาเลือกผู้พัก / Care Profile</div>
           <label>วันและเวลาที่บันทึก<input name="occurredAt" type="datetime-local" required></label>
-          <label>ช่วงเวร<select name="shift"><option value="">ไม่ระบุ</option><option value="day">กลางวัน</option><option value="night">กลางคืน</option><option value="morning">เช้า</option><option value="evening">เย็น</option><option value="other">อื่น ๆ</option></select></label>
           <fieldset class="center-care__vitals" data-daily-vitals>
-            <legend>สัญญาณชีพที่วัดพร้อมรายงาน (ถ้ามี)</legend>
+            <legend>สัญญาณชีพ (กรอกเฉพาะค่าที่วัดได้)</legend>
             <div class="center-care__grid">
               <label>อุณหภูมิ (°C)<input name="dailyTemperature" type="number" inputmode="decimal" step="0.1"></label>
               <label>ความดันตัวบน (mmHg)<input name="dailySystolic" type="number" inputmode="numeric" step="1"></label>
               <label>ความดันตัวล่าง (mmHg)<input name="dailyDiastolic" type="number" inputmode="numeric" step="1"></label>
               <label>ชีพจร (ครั้ง/นาที)<input name="dailyPulse" type="number" inputmode="numeric" step="1"></label>
               <label>ออกซิเจนปลายนิ้ว (%)<input name="dailySpo2" type="number" inputmode="decimal" step="0.1"></label>
-              <label>อัตราการหายใจ (ครั้ง/นาที)<input name="dailyRespiratoryRate" type="number" inputmode="numeric" step="1"></label>
-              <label>น้ำตาลในเลือด (mg/dL)<input name="dailyBloodGlucose" type="number" inputmode="decimal" step="0.1"></label>
-              <label>บริบทน้ำตาล<select name="dailyGlucoseContext"><option value="unspecified">ไม่ระบุ</option><option value="fasting">อดอาหาร</option><option value="before_meal">ก่อนอาหาร</option><option value="after_meal">หลังอาหาร</option><option value="random">สุ่มเวลา</option></select></label>
-              <label>น้ำหนัก (kg)<input name="dailyWeight" type="number" inputmode="decimal" step="0.1"></label>
             </div>
           </fieldset>
-          <label>อาหาร<textarea name="nutrition" maxlength="1000" placeholder="เช่น รับประทานอาหารได้ครึ่งจาน"></textarea></label>
-          <label>น้ำดื่ม (มล.)<input name="fluid" type="number" inputmode="decimal" step="1"></label>
-          <label>การนอน<textarea name="sleep" maxlength="1000"></textarea></label>
-          <label>การขับถ่าย (ครั้ง)<input name="bowelCount" type="number" inputmode="numeric" min="0" step="1"></label>
-          <label>การปัสสาวะ<textarea name="urination" maxlength="1000"></textarea></label>
-          <label>กิจกรรม<textarea name="activity" maxlength="1000"></textarea></label>
-          <label>อารมณ์<textarea name="mood" maxlength="1000"></textarea></label>
-          <label>สภาพทั่วไป<textarea name="generalCondition" maxlength="1000"></textarea></label>
-          <label>อาการที่สังเกต<textarea name="symptomNote" maxlength="1000"></textarea></label>
-          <button class="btn btn-primary center-care__submit" type="submit">บันทึกรายงานประจำวัน</button>
+          <section class="center-care__legacy" data-legacy-daily-fields hidden>
+            <p class="center-care__hint">รายการนี้สร้างด้วยแบบฟอร์มเดิม ข้อมูลเดิมจะคงอยู่จนจบกระบวนการตรวจ</p>
+            <label>ช่วงเวร<select name="shift"><option value="">ไม่ระบุ</option><option value="day">กลางวัน</option><option value="night">กลางคืน</option><option value="morning">เช้า</option><option value="evening">เย็น</option><option value="other">อื่น ๆ</option></select></label>
+            <label>อาหาร<textarea name="nutrition" maxlength="1000"></textarea></label>
+            <label>น้ำดื่ม (มล.)<input name="fluid" type="number" inputmode="decimal" step="1"></label>
+            <label>การนอน<textarea name="sleep" maxlength="1000"></textarea></label>
+            <label>การขับถ่าย (ครั้ง)<input name="bowelCount" type="number" inputmode="numeric" min="0" step="1"></label>
+            <label>การปัสสาวะ<textarea name="urination" maxlength="1000"></textarea></label>
+            <label>กิจกรรม<textarea name="activity" maxlength="1000"></textarea></label>
+            <label>อารมณ์<textarea name="mood" maxlength="1000"></textarea></label>
+            <label>สภาพทั่วไป<textarea name="generalCondition" maxlength="1000"></textarea></label>
+            <label>อัตราการหายใจ (ครั้ง/นาที)<input name="dailyRespiratoryRate" type="number" inputmode="numeric" step="1"></label>
+            <label>น้ำตาลในเลือด (mg/dL)<input name="dailyBloodGlucose" type="number" inputmode="decimal" step="0.1"></label>
+            <label>บริบทน้ำตาล<select name="dailyGlucoseContext"><option value="unspecified">ไม่ระบุ</option><option value="fasting">อดอาหาร</option><option value="before_meal">ก่อนอาหาร</option><option value="after_meal">หลังอาหาร</option><option value="random">สุ่มเวลา</option></select></label>
+            <label>น้ำหนัก (kg)<input name="dailyWeight" type="number" inputmode="decimal" step="0.1"></label>
+          </section>
+          <label>อาการ / รายงานทั่วไปเพิ่มเติม<textarea name="symptomNote" maxlength="1000" rows="5"></textarea></label>
+          <button class="btn btn-primary center-care__submit" type="submit">ส่งให้ผู้จัดการตรวจ</button>
           <p class="center-care__form-status" role="status" aria-live="polite"></p>
         </form>
       </section>`;
@@ -368,7 +386,7 @@
     const itemLabels = Object.freeze({
       shift:'ช่วงเวร', nutrition:'อาหาร', fluid_intake:'น้ำดื่ม', sleep_rest:'การนอน',
       bowel_movement:'การขับถ่าย', urination:'การปัสสาวะ', activity:'กิจกรรม',
-      mood_behavior:'อารมณ์', general_condition:'สภาพทั่วไป', symptom_note:'อาการที่สังเกต',
+      mood_behavior:'อารมณ์', general_condition:'สภาพทั่วไป', symptom_note:'อาการ / รายงานทั่วไป',
     });
     const vitalLabels = Object.freeze({
       temperature:'อุณหภูมิ', blood_pressure_systolic:'ความดันตัวบน',
@@ -406,7 +424,7 @@
         .map((observation) => `<li><strong>${escapeHtml(vitalLabels[observation.measurementType] || observation.measurementType)}:</strong> ${escapeHtml(`${observation.sourceValueText ?? observation.numericValue}${observation.sourceUnit ? ` ${observation.sourceUnit}` : ''}`)}</li>`).join('');
       const managerActions = mode === 'review' ? `<div class="center-care__review-actions">
         <button type="button" class="btn btn-outline" data-care-action="return" data-report-id="${escapeHtml(report.dailyReportId)}">ส่งกลับแก้ไข</button>
-        <button type="button" class="btn btn-primary" data-care-action="finalize" data-report-id="${escapeHtml(report.dailyReportId)}">ยืนยันและส่งครอบครัว</button>
+        <button type="button" class="btn btn-primary" data-care-action="finalize" data-report-id="${escapeHtml(report.dailyReportId)}">ยืนยันและส่งให้ครอบครัว</button>
       </div>` : `<button type="button" class="btn btn-outline" data-care-action="edit-returned" data-report-id="${escapeHtml(report.dailyReportId)}">แก้ไขและส่งตรวจใหม่</button>`;
       return `<article class="center-care__review-card" role="listitem">
         <div class="center-care__review-title"><strong>${escapeHtml(report.careRecipientName || 'ผู้รับการดูแล')}</strong>${report.room ? `<span>ห้อง ${escapeHtml(report.room)}</span>` : ''}</div>
@@ -414,7 +432,7 @@
         ${report.recorderDisplayName ? `<p>ผู้บันทึก: ${escapeHtml(report.recorderDisplayName)}</p>` : ''}
         ${mode === 'returned' && report.returnReason ? `<p class="center-care__return-reason">สิ่งที่ต้องแก้ไข: ${escapeHtml(report.returnReason)}</p>` : ''}
         ${vitalRows ? `<h4>สัญญาณชีพ</h4><ul>${vitalRows}</ul>` : ''}
-        ${items ? `<h4>การดูแลประจำวัน</h4><ul>${items}</ul>` : ''}
+        ${items ? `<h4>${(report.items || []).every((item) => item.itemType === 'symptom_note') ? 'อาการ / รายงานทั่วไป' : 'ข้อมูลการดูแลที่บันทึกไว้'}</h4><ul>${items}</ul>` : ''}
         ${managerActions}
       </article>`;
     }
@@ -450,6 +468,11 @@
 
     function populateReturned(report) {
       dailyForm.reset();
+      const legacy = (report.items || []).some((item) => item.itemType !== 'symptom_note')
+        || (report.vitalSigns || []).flatMap((set) => set.observations || [])
+          .some((item) => !['temperature','blood_pressure_systolic','blood_pressure_diastolic','pulse','spo2'].includes(item.measurementType));
+      dailyForm.elements.legacyStructuredReport.value = String(legacy);
+      dailyForm.querySelector('[data-legacy-daily-fields]').hidden = !legacy;
       dailyForm.elements.resubmitReportId.value = report.dailyReportId;
       dailyForm.elements.residentId.value = report.residentId || '';
       dailyForm.elements.occurredAt.value = report.occurredAt ? localDateTimeValue(new Date(report.occurredAt)) : localDateTimeValue();
@@ -462,9 +485,10 @@
       const vitalField = {temperature:'dailyTemperature',blood_pressure_systolic:'dailySystolic',blood_pressure_diastolic:'dailyDiastolic',
         pulse:'dailyPulse',spo2:'dailySpo2',respiratory_rate:'dailyRespiratoryRate',blood_glucose:'dailyBloodGlucose',weight:'dailyWeight'};
       for (const observation of (report.vitalSigns || []).flatMap((set) => set.observations || [])) {
-        const field = vitalField[observation.measurementType]; if (field) dailyForm.elements[field].value = observation.sourceValueText ?? observation.numericValue ?? '';
+        const field = vitalField[observation.measurementType]; if (field && dailyForm.elements[field]) dailyForm.elements[field].value = observation.sourceValueText ?? observation.numericValue ?? '';
         if (observation.measurementType === 'blood_glucose') dailyForm.elements.dailyGlucoseContext.value = observation.context || 'unspecified';
       }
+      updateHealthSubject();
       dailyForm.querySelector('.center-care__submit').textContent = 'แก้ไขและส่งตรวจอีกครั้ง';
       dailyForm.scrollIntoView({ behavior:'smooth', block:'start' });
     }
@@ -476,7 +500,10 @@
         form.querySelector('.center-care__form-status').textContent = '';
         form.querySelector('.center-care__submit').disabled = false;
       }
-      dailyForm.querySelector('.center-care__submit').textContent = 'ส่งรายงานให้ผู้จัดการตรวจ';
+      dailyForm.querySelector('.center-care__submit').textContent = 'ส่งให้ผู้จัดการตรวจ';
+      dailyForm.elements.legacyStructuredReport.value = 'false';
+      dailyForm.querySelector('[data-legacy-daily-fields]').hidden = true;
+      updateHealthSubject();
     }
 
     async function runClinicalAction(button){
@@ -494,7 +521,7 @@
           else response=correction?await controller.createDailyCorrection(recordId,reason):await controller.voidDaily(recordId,reason);
           if(response.stale)return response;
           if(kind==='lab'){await refreshLabHistory();if(correction)onOpenLabDraft({residentId,report:response.result});}
-          if(kind==='vital'){await refreshVitalHistory();const status=vitalHistorySection.querySelector('.center-care__history-status');status.textContent='ยกเลิกรายการแล้ว ';const recordNew=globalScope.document.createElement('button');recordNew.type='button';recordNew.className='btn btn-outline center-care__record-new';recordNew.textContent='บันทึกค่าใหม่';recordNew.addEventListener('click',()=>{vitalForm.reset();vitalForm.elements.occurredAt.value=localDateTimeValue();vitalForm.scrollIntoView({behavior:'smooth',block:'start'});});status.appendChild(recordNew);}
+          if(kind==='vital'){await refreshVitalHistory();const status=vitalHistorySection.querySelector('.center-care__history-status');status.textContent='ยกเลิกรายการแล้ว ';const recordNew=globalScope.document.createElement('button');recordNew.type='button';recordNew.className='btn btn-outline center-care__record-new';recordNew.textContent='สร้างรายงานสุขภาพใหม่';recordNew.addEventListener('click',()=>{dailyForm.reset();dailyForm.elements.occurredAt.value=localDateTimeValue();dailyForm.elements.legacyStructuredReport.value='false';dailyForm.querySelector('[data-legacy-daily-fields]').hidden=true;updateHealthSubject();dailyForm.scrollIntoView({behavior:'smooth',block:'start'});});status.appendChild(recordNew);}
           if(kind==='daily'){await Promise.all([refreshWorkflow(),refreshDailyHistory()]);if(correction)notify('สร้างฉบับรอตรวจแล้ว ผู้จัดการสามารถตรวจ ส่งกลับแก้ไข หรือยืนยันฉบับใหม่ได้');}
           if(!correction)notify('ยกเลิกรายการแล้ว ประวัติเดิมยังถูกเก็บไว้');return response;
         }});
@@ -534,9 +561,20 @@
     function setMode(nextMode = 'all') {
       surfaceMode = ['record','work','history','all'].includes(nextMode) ? nextMode : 'all';
       root.dataset.surfaceMode = surfaceMode;
+      updateHealthSubject();
       return refreshForMode().catch(() => {
         if (surfaceMode === 'work' || surfaceMode === 'all') reviewSection.querySelector('.center-care__review-status').textContent = 'โหลดรายงานรอตรวจไม่สำเร็จ กรุณาลองใหม่';
       });
+    }
+
+    function updateHealthSubject() {
+      const target = dailyForm?.querySelector('[data-health-subject]');
+      if (!target) return;
+      const residentId = cleanText(dailyForm.elements.residentId?.value);
+      const resident = controller.snapshot()?.residents?.find((item) => item.residentId === residentId);
+      target.textContent = resident
+        ? `ชื่อ: ${resident.name} · ห้อง: ${resident.room || '-'}`
+        : 'กรุณาเลือกผู้พัก / Care Profile';
     }
 
     function setContext(next) {
@@ -545,13 +583,14 @@
       renderResidents(state?.residents || []);
       const vitalEnabled = state?.capabilities?.[CAPABILITIES.vital] === true;
       const dailyEnabled = state?.capabilities?.[CAPABILITIES.daily] === true;
-      vitalForm.hidden = !vitalEnabled;
+      vitalForm.hidden = true;
+      vitalForm.setAttribute('aria-hidden', 'true');
       dailyForm.hidden = !dailyEnabled;
       labHistorySection.hidden=!(state?.residents||[]).some((resident)=>resident.careProfileId);
       vitalHistorySection.hidden=!vitalEnabled;dailyHistorySection.hidden=!dailyEnabled;
       dailyForm.querySelector('[data-daily-vitals]').hidden = !vitalEnabled;
-      unavailable.hidden = vitalEnabled || dailyEnabled;
-      onVisibility(vitalEnabled || dailyEnabled || !labHistorySection.hidden);
+      unavailable.hidden = dailyEnabled || !labHistorySection.hidden;
+      onVisibility(dailyEnabled || !labHistorySection.hidden);
       return refreshForMode().then(() => state).catch(() => {
         reviewSection.querySelector('.center-care__review-status').textContent = 'โหลดรายงานรอตรวจไม่สำเร็จ กรุณาลองใหม่';
         return state;
@@ -576,7 +615,13 @@
         if (response.stale) return;
         form.querySelectorAll('input:not([name="occurredAt"]), textarea').forEach((field) => { field.value = ''; });
         status.textContent = successMessage; notify(successMessage);
-        if(form===dailyForm)await Promise.all([refreshWorkflow(),refreshDailyHistory()]);
+        if(form===dailyForm){
+          dailyForm.elements.legacyStructuredReport.value='false';
+          dailyForm.querySelector('[data-legacy-daily-fields]').hidden=true;
+          dailyForm.querySelector('.center-care__submit').textContent='ส่งให้ผู้จัดการตรวจ';
+          updateHealthSubject();
+          await Promise.all([refreshWorkflow(),refreshDailyHistory()]);
+        }
         if(form===vitalForm)await refreshVitalHistory();
       } catch (error) {
         status.textContent = error?.message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่';
@@ -623,13 +668,14 @@
       const kind=button.dataset.refreshHistory;if(kind==='lab')refreshLabHistory();else if(kind==='vital')refreshVitalHistory();else refreshDailyHistory();
     }));
     root.querySelector('#centerLabResident').addEventListener('change',refreshLabHistory);
+    dailyForm.elements.residentId.addEventListener('change', updateHealthSubject);
     clear();
     return { setContext, setMode, clear, snapshot:controller.snapshot,
       workflowSummary:() => ({ awaitingReview:reviewItems.length, returned:returnedItems.length }) };
   }
 
   const api = { CAPABILITIES, CenterCareUiError, buildVitalObservations, buildShift,
-    buildDailyItems, buildOptionalDailyVitals, finalizationNotice, occurredAtIso, createController, mount };
+    buildDailyItems, buildHealthReportItems, buildOptionalDailyVitals, finalizationNotice, occurredAtIso, createController, mount };
   globalScope.PhimorCenterCareUI = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

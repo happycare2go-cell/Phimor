@@ -12,9 +12,10 @@ function deferred() { let resolve; const promise = new Promise((done) => { resol
 function vital(overrides = {}) { return { vitalSetId:'VS-1', status:'recorded', occurredAt:'2026-08-27T07:00:00+07:00', recordedAt:'2026-08-27T07:01:00+07:00', centerName:'ศูนย์ตัวอย่าง', sourceType:'native_phimor', observations:[{ measurementType:'blood_glucose', numericValue:108, sourceValueText:'108', sourceUnit:'mg/dL', context:'before_meal' }, { measurementType:'weight', numericValue:55.2, sourceValueText:'55.2', sourceUnit:'kg' }], ...overrides }; }
 function daily(overrides = {}) { return { dailyReportId:'DC-1', status:'finalized', occurredAt:'2026-08-27T19:00:00+07:00', careDate:'2026-08-27', shift:{code:'day',sourceLabel:'D'}, finalizedAt:'2026-08-27T20:00:00+07:00', centerName:'ศูนย์ตัวอย่าง', sourceType:'external_integration', recorderDisplayName:'ผู้ดูแลตัวอย่าง', items:[{itemType:'nutrition',valueType:'text',textValue:'รับประทานอาหารได้ครึ่งจาน'}], vitalSigns:[vital()], ...overrides }; }
 
-test('Family Health contains one read-only Vital and Daily Care experience', () => {
+test('Family Health presents one unified Health Report experience and secondary standalone Vital history', () => {
   assert.equal((html.match(/id="familyCareHistoryPanel"/g) || []).length, 1);
-  assert.match(html, /สัญญาณชีพล่าสุด/); assert.match(html, /บันทึกการดูแลทั้งหมด/);
+  assert.match(html, /รายงานสุขภาพล่าสุด/); assert.match(html, /ดูรายงานสุขภาพทั้งหมด/);
+  assert.match(html, /ประวัติสัญญาณชีพเดิม/);
   assert.match(html, /care-history-ui\.js/); assert.match(html, /care-history-ui\.css/);
   assert.match(html, /ensureCareHistoryUI/); assert.match(html, /care\?\.controller\.open/);
 });
@@ -37,6 +38,14 @@ test('Vital projection displays only controlled recorded measurements and omits 
   ], lineUserId:'U-SECRET', phone:'081-secret' }));
   assert.deepEqual(projected.observations.map((item) => item.measurementType), ['temperature']);
   assert.doesNotMatch(JSON.stringify(projected), /U-SECRET|081-secret|vendor_secret/);
+});
+
+test('linked Vital projection carries only its safe report association for duplicate-presentation filtering',()=>{
+  const projected=ui.projectVitalSet(vital({linkedDailyReportId:'DCR-SAFE',dailyReport:{privatePayload:'secret'},residentId:'RES-SECRET'}));
+  assert.equal(projected.linkedDailyReportId,'DCR-SAFE');
+  assert.doesNotMatch(JSON.stringify(projected),/privatePayload|RES-SECRET/);
+  assert.match(source,/state\.vitals\.find\(\(item\) => !item\.linkedDailyReportId\)/);
+  assert.match(source,/สัญญาณชีพชุดนี้อยู่ในรายงานสุขภาพ/);
 });
 
 test('Family display formats clinical units without mutating canonical source facts', () => {
@@ -66,6 +75,13 @@ test('Daily Care projection accepts finalized records only and preserves linked 
   assert.equal(projected.vitalSigns[0].observations[0].measurementType, 'blood_glucose');
   assert.equal(ui.projectDailyReport(daily({status:'submitted'})), null);
   assert.equal(ui.projectDailyReport(daily({status:'changes_requested'})), null);
+});
+
+test('unified Health Report projection exposes safe Care Profile display context without raw subject identifiers',()=>{
+  const projected=ui.projectDailyReport(daily({careRecipientName:'คุณยายตัวอย่าง',room:'A-12',residentId:'RES-RAW',careProfileId:'CP-RAW'}));
+  assert.equal(projected.careRecipientName,'คุณยายตัวอย่าง');assert.equal(projected.room,'A-12');
+  assert.doesNotMatch(JSON.stringify(projected),/RES-RAW|CP-RAW/);
+  assert.match(source,/รายงานสุขภาพ/);assert.match(source,/อาการ \/ รายงานทั่วไป/);
 });
 
 test('Family uses Thai day/night labels and preserves a factual future shift label', () => {

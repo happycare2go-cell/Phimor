@@ -35,12 +35,11 @@ function createVitalSignsRouter() {
   }));
 
   router.post('/center/:centerId/residents/:residentId/vital-signs', requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
-    const result = await service.recordNative({
-      lineUserId:req.user.lineUserId, centerId:req.params.centerId,
-      residentId:req.params.residentId, occurredAt:req.body.occurredAt,
-      observations:req.body.observations,
+    void service;
+    return res.status(409).json({
+      error:'conflict', errorCode:'NATIVE_HEALTH_REPORT_REQUIRED',
+      message:'กรุณาบันทึกสัญญาณชีพผ่านรายงานสุขภาพเพื่อส่งให้ผู้จัดการตรวจ',
     });
-    res.status(result.duplicate ? 200 : 201).json(result);
   }));
 
   router.get('/center/:centerId/vital-signs/history', requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
