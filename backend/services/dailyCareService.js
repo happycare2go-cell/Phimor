@@ -130,7 +130,7 @@ function createDailyCareService(overrides={}) {
     if(client.status!=='active'||client.organizationId!==organizationId) {
       throw new DailyCareError('INTEGRATION_TENANT_MISMATCH','Integration Client ไม่สัมพันธ์กับ tenant',403);
     }
-    if(!client.centers.some((scope)=>scope.center_id===centerId)) {
+    if(!client.centers.some((scope)=>(scope.centerId||scope.center_id)===centerId)) {
       throw new DailyCareError('INTEGRATION_CENTER_SCOPE_DENIED','Integration Client ไม่มีสิทธิ์ในศูนย์นี้',403);
     }
   }

@@ -1,8 +1,10 @@
 const crypto = require('node:crypto');
 const {
-  Centers, Residents, id, withTransaction,
+  Centers, Residents, CareProfiles, id, withTransaction, withTransactionLocks,
 } = require('../db');
 const { createPlatformRepository } = require('./platformRepository');
+const { integrationIdentityPolicyService } = require('./integrationIdentityPolicyService');
+const { assertPolicy, normalizeIdentityName } = require('../domain/integrationIdentity');
 const {
   ORGANIZATION_STATUSES,
   ORGANIZATION_TYPES,
@@ -15,6 +17,11 @@ const {
   assertCapabilityKey,
   assertEventType,
 } = require('../domain/platform');
+
+const INTEGRATION_CAPABILITY_FOR_EVENT = Object.freeze({
+  'care.vitals.recorded':'vital_signs_v1',
+  'care.daily_report.finalized':'daily_care_v1',
+});
 
 const TOKEN_PATTERN = /^pim_int_([a-f0-9]{16})\.([A-Za-z0-9_-]{32,})$/;
 const MAX_ROTATION_OVERLAP_SECONDS = 24 * 60 * 60;
@@ -79,6 +86,8 @@ function externalCenterMappingProjection(row, center = null) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deactivatedAt: row.deactivated_at || null,
+    mappingSource: row.mapping_source || 'configured_manually',
+    lastUsedAt: row.last_used_at || row.updated_at || null,
   };
 }
 
@@ -97,6 +106,8 @@ function externalSubjectMappingProjection(row, resident = null, center = null) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deactivatedAt: row.deactivated_at || null,
+    mappingSource: row.mapping_source || 'configured_manually',
+    lastUsedAt: row.last_seen_at || row.updated_at || null,
   };
 }
 
@@ -113,12 +124,15 @@ function createPlatformService(overrides = {}) {
   const idFactory = overrides.idFactory || id;
   const randomBytes = overrides.randomBytes || crypto.randomBytes;
   const runTransaction = overrides.withTransaction || withTransaction;
+  const runTransactionLocks = overrides.withTransactionLocks || withTransactionLocks;
   const now = overrides.now || (() => new Date());
+  const identityPolicies = overrides.integrationIdentityPolicyService || integrationIdentityPolicyService;
 
   async function audit(eventType, actorReference, scope = {}, metadata = {}) {
     const safeMetadata = {};
     for (const key of ['capabilityKey', 'enabled', 'clientCode', 'clientStatus', 'eventType', 'externalCenterId',
-      'externalResidentId', 'mappingStatus', 'previousOrganizationId', 'credentialId', 'overlapSeconds']) {
+      'externalResidentId', 'mappingStatus', 'mappingSource', 'previousOrganizationId', 'credentialId', 'overlapSeconds',
+      'identityResolutionMode', 'unresolvedEventPolicy', 'familyGroupRequirement']) {
       if (metadata[key] !== undefined && metadata[key] !== null) safeMetadata[key] = metadata[key];
     }
     return repository.insertAuditEvent({
@@ -287,18 +301,20 @@ function createPlatformService(overrides = {}) {
   }
 
   async function setCenterCapability({ centerId, capabilityKey, enabled, actorReference }) {
-    assertCapabilityKey(capabilityKey);
-    if (typeof enabled !== 'boolean') throw new PlatformError('INVALID_CAPABILITY_STATE', 'enabled ต้องเป็น boolean', 400);
-    await requireCenter(centerId);
-    const organization = await repository.findOrganizationForCenter(centerId);
-    if (!organization) throw new PlatformError('CENTER_ORGANIZATION_NOT_FOUND', 'ศูนย์ยังไม่มีองค์กร', 409);
-    const row = await repository.upsertCapability({
-      centerId, capabilityKey, enabled, actorReference: safeActorReference(actorReference),
+    return runTransaction(`platform-center:${centerId}`, async () => {
+      assertCapabilityKey(capabilityKey);
+      if (typeof enabled !== 'boolean') throw new PlatformError('INVALID_CAPABILITY_STATE', 'enabled ต้องเป็น boolean', 400);
+      await requireCenter(centerId);
+      const organization = await repository.findOrganizationForCenter(centerId);
+      if (!organization) throw new PlatformError('CENTER_ORGANIZATION_NOT_FOUND', 'ศูนย์ยังไม่มีองค์กร', 409);
+      const row = await repository.upsertCapability({
+        centerId, capabilityKey, enabled, actorReference: safeActorReference(actorReference),
+      });
+      await audit('center.capability_changed', actorReference, {
+        organizationId: organization.organization_id, centerId,
+      }, { capabilityKey, enabled });
+      return { centerId, capabilityKey, enabled: Boolean(row.enabled), enabledAt: row.enabled_at || null, updatedAt: row.updated_at };
     });
-    await audit('center.capability_changed', actorReference, {
-      organizationId: organization.organization_id, centerId,
-    }, { capabilityKey, enabled });
-    return { centerId, capabilityKey, enabled: Boolean(row.enabled), enabledAt: row.enabled_at || null, updatedAt: row.updated_at };
   }
 
   async function createIntegrationClient({ organizationId, clientCode, displayName, sourceSystem, initialStatus = 'active', actorReference }) {
@@ -342,11 +358,14 @@ function createPlatformService(overrides = {}) {
     const credentials = (await repository.listCredentials(integrationClientId)).map(credentialProjection);
     const activeCredentials = credentials.filter((item) => item.status === 'active'
       && (!item.expiresAt || new Date(item.expiresAt).getTime() > now().getTime()));
-    const [centerMappingCount, activeCenterMappingCount, subjectMappingCount, mappedSubjectCount] = await Promise.all([
+    const [centerMappingCount, activeCenterMappingCount, subjectMappingCount, mappedSubjectCount, identityResolutionPolicy,
+      operationalCounts] = await Promise.all([
       repository.countExternalCenterMappings({ integrationClientId }),
       repository.countExternalCenterMappings({ integrationClientId, status:'active' }),
       repository.countExternalSubjectMappings({ integrationClientId }),
       repository.countExternalSubjectMappings({ integrationClientId, status:'mapped' }),
+      identityPolicies.getPolicy(integrationClientId),
+      identityPolicies.getMetrics(integrationClientId),
     ]);
     const checks = {
       organization: organization.status === 'active', centerScope: centerScopes.length > 0,
@@ -355,8 +374,10 @@ function createPlatformService(overrides = {}) {
       externalResidentMapping: mappedSubjectCount > 0,
       clientActive: client.status === 'active',
     };
+    const mappingBootstrapReady = identityResolutionPolicy.identityResolutionMode === 'exact_name_learning'
+      || checks.externalCenterMapping;
     const configurationComplete = checks.organization && checks.centerScope && checks.eventScope
-      && checks.activeCredential && checks.externalCenterMapping;
+      && checks.activeCredential && mappingBootstrapReady;
     const readinessState = client.status === 'revoked' ? 'revoked'
       : client.status === 'suspended' ? 'suspended'
         : configurationComplete ? 'ready' : 'incomplete';
@@ -368,6 +389,8 @@ function createPlatformService(overrides = {}) {
         centers: centerMappingCount, activeCenters: activeCenterMappingCount,
         residents: subjectMappingCount, mappedResidents: mappedSubjectCount,
       },
+      identityResolutionPolicy,
+      operationalCounts,
       activeCredentialCount: activeCredentials.length,
       lastUsedAt: credentials.map((item) => item.lastUsedAt).filter(Boolean).sort().at(-1) || null,
       readiness: {
@@ -376,9 +399,24 @@ function createPlatformService(overrides = {}) {
           : readinessState === 'suspended' ? 'ระงับการใช้งาน'
             : readinessState === 'revoked' ? 'เพิกถอนแล้ว' : 'ตั้งค่ายังไม่ครบ',
         configurationComplete, checks,
-        residentMappingRecommended: !checks.externalResidentMapping,
+        residentMappingRecommended: identityResolutionPolicy.identityResolutionMode === 'manual_mapping_only'
+          && !checks.externalResidentMapping,
       },
     };
+  }
+
+  async function setIdentityResolutionPolicy({ integrationClientId, policy, actorReference }) {
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      const client = await requireConfigurableClient(integrationClientId);
+      const normalized = assertPolicy(policy);
+      const result = await identityPolicies.setPolicy({ integrationClientId, policy:normalized, actorReference });
+      await audit('integration.identity_policy_changed', actorReference, {
+        organizationId:client.organization_id, integrationClientId,
+      }, { identityResolutionMode:normalized.identityResolutionMode,
+        unresolvedEventPolicy:normalized.unresolvedEventPolicy,
+        familyGroupRequirement:normalized.familyGroupRequirement });
+      return result;
+    });
   }
 
   async function listIntegrationClients(organizationId) {
@@ -419,50 +457,58 @@ function createPlatformService(overrides = {}) {
   }
 
   async function addClientCenterScope({ integrationClientId, centerId, actorReference }) {
-    const client = await requireConfigurableClient(integrationClientId);
-    await requireCenter(centerId);
-    const organization = await repository.findOrganizationForCenter(centerId);
-    if (!organization || organization.organization_id !== client.organization_id) {
-      throw new PlatformError('CROSS_TENANT_CENTER', 'ไม่สามารถเพิ่มศูนย์ต่างองค์กรได้', 403);
-    }
-    await repository.addClientCenterScope({ integrationClientId, organizationId: client.organization_id, centerId, actorReference: safeActorReference(actorReference) });
-    await audit('integration.center_scope_added', actorReference, {
-      organizationId: client.organization_id, centerId, integrationClientId,
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      const client = await requireConfigurableClient(integrationClientId);
+      await requireCenter(centerId);
+      const organization = await repository.findOrganizationForCenter(centerId);
+      if (!organization || organization.organization_id !== client.organization_id) {
+        throw new PlatformError('CROSS_TENANT_CENTER', 'ไม่สามารถเพิ่มศูนย์ต่างองค์กรได้', 403);
+      }
+      await repository.addClientCenterScope({ integrationClientId, organizationId: client.organization_id, centerId, actorReference: safeActorReference(actorReference) });
+      await audit('integration.center_scope_added', actorReference, {
+        organizationId: client.organization_id, centerId, integrationClientId,
+      });
+      return { integrationClientId, centerId, allowed: true };
     });
-    return { integrationClientId, centerId, allowed: true };
   }
 
   async function removeClientCenterScope({ integrationClientId, centerId, actorReference }) {
-    const client = await requireClient(integrationClientId, { active: false });
-    const mappingDependencies = await repository.findActiveExternalCenterMappingByCenter(integrationClientId, centerId);
-    if (mappingDependencies?.status === 'active') {
-      throw new PlatformError('CENTER_SCOPE_HAS_MAPPING', 'ต้องปิด external Center mapping ก่อน', 409);
-    }
-    await repository.removeClientCenterScope(integrationClientId, centerId);
-    await audit('integration.center_scope_removed', actorReference, {
-      organizationId: client.organization_id, centerId, integrationClientId,
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      const client = await requireClient(integrationClientId, { active: false });
+      const mappingDependencies = await repository.findActiveExternalCenterMappingByCenter(integrationClientId, centerId);
+      if (mappingDependencies?.status === 'active') {
+        throw new PlatformError('CENTER_SCOPE_HAS_MAPPING', 'ต้องปิด external Center mapping ก่อน', 409);
+      }
+      await repository.removeClientCenterScope(integrationClientId, centerId);
+      await audit('integration.center_scope_removed', actorReference, {
+        organizationId: client.organization_id, centerId, integrationClientId,
+      });
+      return { integrationClientId, centerId, allowed: false };
     });
-    return { integrationClientId, centerId, allowed: false };
   }
 
   async function addClientEventScope({ integrationClientId, eventType, actorReference }) {
-    assertEventType(eventType);
-    const client = await requireConfigurableClient(integrationClientId);
-    await repository.addClientEventScope({ integrationClientId, eventType, actorReference: safeActorReference(actorReference) });
-    await audit('integration.event_scope_added', actorReference, {
-      organizationId: client.organization_id, integrationClientId,
-    }, { eventType });
-    return { integrationClientId, eventType, allowed: true };
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      assertEventType(eventType);
+      const client = await requireConfigurableClient(integrationClientId);
+      await repository.addClientEventScope({ integrationClientId, eventType, actorReference: safeActorReference(actorReference) });
+      await audit('integration.event_scope_added', actorReference, {
+        organizationId: client.organization_id, integrationClientId,
+      }, { eventType });
+      return { integrationClientId, eventType, allowed: true };
+    });
   }
 
   async function removeClientEventScope({ integrationClientId, eventType, actorReference }) {
-    assertEventType(eventType);
-    const client = await requireClient(integrationClientId, { active: false });
-    await repository.removeClientEventScope(integrationClientId, eventType);
-    await audit('integration.event_scope_removed', actorReference, {
-      organizationId: client.organization_id, integrationClientId,
-    }, { eventType });
-    return { integrationClientId, eventType, allowed: false };
+    return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
+      assertEventType(eventType);
+      const client = await requireClient(integrationClientId, { active: false });
+      await repository.removeClientEventScope(integrationClientId, eventType);
+      await audit('integration.event_scope_removed', actorReference, {
+        organizationId: client.organization_id, integrationClientId,
+      }, { eventType });
+      return { integrationClientId, eventType, allowed: false };
+    });
   }
 
   function buildCredentialSecret() {
@@ -604,6 +650,8 @@ function createPlatformService(overrides = {}) {
           organizationId: client.organization_id, centerId, integrationClientId,
         }, { externalCenterId: externalId });
       }
+      await identityPolicies.recordMappingOrigin({ integrationClientId, externalCenterId:externalId,
+        source:'configured_manually' });
       return mapping;
     });
   }
@@ -611,12 +659,14 @@ function createPlatformService(overrides = {}) {
   async function deactivateExternalCenterMapping({ integrationClientId, externalCenterId, actorReference }) {
     const client = await requireClient(integrationClientId, { active: false });
     const externalId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
-    const mapping = await repository.deactivateExternalCenterMapping(integrationClientId, externalId);
-    if (!mapping) throw new PlatformError('EXTERNAL_CENTER_MAPPING_NOT_FOUND', 'ไม่พบ external Center mapping', 404);
-    await audit('integration.external_center_mapping_deactivated', actorReference, {
-      organizationId: client.organization_id, centerId: mapping.center_id, integrationClientId,
-    }, { externalCenterId:externalId });
-    return mapping;
+    return runTransaction(`integration-center-mapping:${integrationClientId}:${externalId}`, async () => {
+      const mapping = await repository.deactivateExternalCenterMapping(integrationClientId, externalId);
+      if (!mapping) throw new PlatformError('EXTERNAL_CENTER_MAPPING_NOT_FOUND', 'ไม่พบ external Center mapping', 404);
+      await audit('integration.external_center_mapping_deactivated', actorReference, {
+        organizationId: client.organization_id, centerId: mapping.center_id, integrationClientId,
+      }, { externalCenterId:externalId });
+      return mapping;
+    });
   }
 
   async function listExternalCenterMappings(integrationClientId, { status = null, search = null, page = 1, limit = 50 } = {}) {
@@ -632,6 +682,8 @@ function createPlatformService(overrides = {}) {
     for (const row of rows) {
       if (row.organization_id !== client.organization_id) continue;
       const center = await centers.findOne((item) => item.center_id === row.center_id);
+      row.mapping_source = await identityPolicies.getMappingOrigin({ integrationClientId,
+        externalCenterId:row.external_center_id });
       items.push(externalCenterMappingProjection(row, center));
     }
     return { items, pagination:{ page:paging.page, limit:paging.limit, total,
@@ -683,7 +735,85 @@ function createPlatformService(overrides = {}) {
           organizationId: client.organization_id, centerId: centerMapping.center_id, integrationClientId,
         }, { externalCenterId:extCenterId, externalResidentId: extResidentId, mappingStatus });
       }
+      if (resident) {
+        await identityPolicies.recordMappingOrigin({ integrationClientId, externalCenterId:extCenterId,
+          externalResidentId:extResidentId, source:'configured_manually' });
+        await identityPolicies.resolveAlertsForIdentity({ integrationClientId, externalCenterId:extCenterId,
+          externalResidentId:extResidentId });
+      }
       return mapping;
+    });
+  }
+
+  async function learnExternalIdentity({ integrationClientId, externalCenterId, externalResidentId,
+    centerId, residentId, careProfileId, firstName, lastName, displayName, room, eventType,
+    expectedNameKey }) {
+    const client = await requireClient(integrationClientId);
+    const extCenterId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
+    const extResidentId = requiredText(externalResidentId, { code:'EXTERNAL_RESIDENT_REQUIRED', label:'external Resident ID', max:160 });
+    return runTransactionLocks([`platform-center:${centerId}`], async () => {
+      if (repository.lockIdentityLearningCandidate
+        && !(await repository.lockIdentityLearningCandidate({ centerId, residentId, careProfileId }))) {
+        throw new PlatformError('RESIDENT_CARE_PROFILE_NOT_READY', 'ผู้พักและ Care Profile ไม่พร้อมเชื่อม', 409);
+      }
+      const center = await requireCenter(centerId);
+      const capabilityKey = INTEGRATION_CAPABILITY_FOR_EVENT[eventType];
+      if (center.status !== 'active' || (capabilityKey && !(await isCenterCapabilityEnabled(centerId, capabilityKey)))) {
+        throw new PlatformError('CENTER_INACTIVE', 'ศูนย์ไม่พร้อมรับข้อมูล Integration', 409);
+      }
+      const organization = await repository.findOrganizationForCenter(centerId);
+      if (!organization || organization.organization_id !== client.organization_id
+        || !(await repository.hasClientCenterScope(integrationClientId, centerId))) {
+        throw new PlatformError('CENTER_SCOPE_DENIED', 'Integration Client ไม่มีสิทธิ์ใช้ศูนย์นี้', 403);
+      }
+      const resident = await residents.findOne((row) => row.resident_id === residentId
+        && row.center_id === centerId && row.status === 'active');
+      const profile = await CareProfiles.findOne((row) => row.care_profile_id === careProfileId);
+      if (!resident || !resident.care_profile_id || resident.care_profile_id !== careProfileId
+        || !profile || normalizeIdentityName(profile.patient_name) !== expectedNameKey) {
+        throw new PlatformError('RESIDENT_CARE_PROFILE_NOT_READY', 'ผู้พักและ Care Profile ไม่พร้อมเชื่อม', 409);
+      }
+      const existingCenter = await repository.findExternalCenterMapping(integrationClientId, extCenterId);
+      if (existingCenter && (existingCenter.status !== 'active' || existingCenter.center_id !== centerId)) {
+        throw new PlatformError('EXTERNAL_CENTER_MAPPING_CONFLICT', 'รหัสศูนย์ภายนอกขัดแย้งกับการเชื่อมเดิม', 409);
+      }
+      const centerMapping = existingCenter || await repository.upsertExternalCenterMapping({
+        mappingId:idFactory('ECM'), integrationClientId, organizationId:client.organization_id,
+        externalCenterId:extCenterId, centerId, displayName:null,
+      });
+      const existingSubject = await repository.findExternalSubjectMapping(integrationClientId, extCenterId, extResidentId);
+      if (existingSubject && (existingSubject.mapping_status === 'inactive'
+        || (existingSubject.mapping_status === 'mapped' && (existingSubject.resident_id !== residentId
+          || existingSubject.care_profile_id !== careProfileId)))) {
+        throw new PlatformError('EXTERNAL_SUBJECT_MAPPING_CONFLICT', 'รหัสผู้พักภายนอกขัดแย้งกับการเชื่อมเดิม', 409);
+      }
+      const subjectMapping = existingSubject?.mapping_status === 'mapped' ? existingSubject
+        : await repository.upsertExternalSubjectMapping({
+          mappingId:existingSubject?.external_subject_mapping_id || idFactory('ESM'),
+          integrationClientId, organizationId:client.organization_id,
+          externalCenterId:extCenterId, externalResidentId:extResidentId, centerId,
+          residentId, careProfileId, mappingStatus:'mapped',
+          firstName:optionalText(firstName,120), lastName:optionalText(lastName,120),
+          displayName:optionalText(displayName,240), room:optionalText(room,80), lastSeenAt:now().toISOString(),
+        });
+      if (!existingCenter) await identityPolicies.recordMappingOrigin({ integrationClientId,
+        externalCenterId:extCenterId, source:'learned_automatically' });
+      if (!existingSubject || existingSubject.mapping_status !== 'mapped') await identityPolicies.recordMappingOrigin({
+        integrationClientId, externalCenterId:extCenterId, externalResidentId:extResidentId,
+        source:'learned_automatically',
+      });
+      await identityPolicies.touchMappingOrigin({ integrationClientId, externalCenterId:extCenterId });
+      await identityPolicies.touchMappingOrigin({ integrationClientId, externalCenterId:extCenterId,
+        externalResidentId:extResidentId });
+      await identityPolicies.resolveAlertsForIdentity({ integrationClientId, externalCenterId:extCenterId,
+        externalResidentId:extResidentId });
+      if (!existingSubject || existingSubject.mapping_status !== 'mapped') await audit(
+        'integration.external_subject_mapping_learned', 'system:integration_identity_learning', {
+          organizationId:client.organization_id, centerId, integrationClientId,
+        }, { externalCenterId:extCenterId, externalResidentId:extResidentId,
+          mappingStatus:'mapped', mappingSource:'learned_automatically' }
+      );
+      return { centerMapping, subjectMapping };
     });
   }
 
@@ -727,12 +857,14 @@ function createPlatformService(overrides = {}) {
     const client = await requireClient(integrationClientId, { active: false });
     const extCenterId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
     const extResidentId = requiredText(externalResidentId, { code:'EXTERNAL_RESIDENT_REQUIRED', label:'external Resident ID', max:160 });
-    const mapping = await repository.deactivateExternalSubjectMapping(integrationClientId, extCenterId, extResidentId);
-    if (!mapping) throw new PlatformError('EXTERNAL_SUBJECT_MAPPING_NOT_FOUND', 'ไม่พบ external subject mapping', 404);
-    await audit('integration.external_subject_mapping_deactivated', actorReference, {
-      organizationId: client.organization_id, centerId: mapping.center_id, integrationClientId,
-    }, { externalCenterId:extCenterId, externalResidentId:extResidentId, mappingStatus: 'inactive' });
-    return mapping;
+    return runTransaction(`integration-subject-mapping:${integrationClientId}:${extCenterId}:${extResidentId}`, async () => {
+      const mapping = await repository.deactivateExternalSubjectMapping(integrationClientId, extCenterId, extResidentId);
+      if (!mapping) throw new PlatformError('EXTERNAL_SUBJECT_MAPPING_NOT_FOUND', 'ไม่พบ external subject mapping', 404);
+      await audit('integration.external_subject_mapping_deactivated', actorReference, {
+        organizationId: client.organization_id, centerId: mapping.center_id, integrationClientId,
+      }, { externalCenterId:extCenterId, externalResidentId:extResidentId, mappingStatus: 'inactive' });
+      return mapping;
+    });
   }
 
   async function listExternalSubjectMappings(integrationClientId, { status = null, search = null, page = 1, limit = 50 } = {}) {
@@ -753,22 +885,41 @@ function createPlatformService(overrides = {}) {
         row.resident_id ? residents.findOne((item) => item.resident_id === row.resident_id && item.center_id === row.center_id) : null,
         centers.findOne((item) => item.center_id === row.center_id),
       ]);
+      row.mapping_source = await identityPolicies.getMappingOrigin({ integrationClientId,
+        externalCenterId:row.external_center_id, externalResidentId:row.external_resident_id });
       items.push(externalSubjectMappingProjection(row, resident, center));
     }
     return { items, pagination:{ page:paging.page, limit:paging.limit, total,
       totalPages:total ? Math.ceil(total / paging.limit) : 0 } };
   }
 
+  async function listIntegrationAlerts(input = {}) {
+    if (input.integrationClientId) await requireClient(input.integrationClientId, { active:false });
+    return identityPolicies.listAlerts(input);
+  }
+
+  async function updateIntegrationAlertStatus({ alertId, status, actorReference }) {
+    const alert = await identityPolicies.updateAlertStatus({ alertId, status, actorReference });
+    const client = await requireClient(alert.integrationClientId, { active:false });
+    await audit('integration.identity_alert_status_changed', actorReference, {
+      organizationId:client.organization_id, integrationClientId:client.integration_client_id,
+    }, {});
+    return alert;
+  }
+
   return {
     createOrganization, listOrganizations, getOrganizationForCenter,
     ensureOrganizationForCenter, listOrganizationCenters, relinkCenter,
     listCenterCapabilities, listCenterResidentOptions, isCenterCapabilityEnabled, setCenterCapability,
-    createIntegrationClient, inspectIntegrationClient, listIntegrationClients,
+    createIntegrationClient, inspectIntegrationClient, listIntegrationClients, setIdentityResolutionPolicy,
     setIntegrationClientStatus, revokeIntegrationClient, addClientCenterScope, removeClientCenterScope,
     addClientEventScope, removeClientEventScope,
     issueCredential, rotateCredential, revokeCredential, authenticateCredential, assertIntegrationIdentityActive,
     mapExternalCenter, deactivateExternalCenterMapping, listExternalCenterMappings,
     mapExternalSubject, observeExternalSubject, deactivateExternalSubjectMapping, listExternalSubjectMappings,
+    learnExternalIdentity,
+    listIntegrationAlerts, updateIntegrationAlertStatus,
+    identityPolicies,
     repository,
   };
 }

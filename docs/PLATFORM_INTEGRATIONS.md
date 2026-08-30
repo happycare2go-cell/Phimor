@@ -10,11 +10,14 @@ The canonical domains do not branch on a vendor name.
 - A bearer credential resolves the trusted Integration Client, Organization,
   and `source_system`; values in a clinical event cannot replace that identity.
 - Center and event scopes must be explicitly granted by System Admin.
-- External Center and Resident identities use exact mappings. Names, rooms,
-  and LINE groups are not patient identity and never authorize a request.
+- Existing External Center and Resident mappings are authoritative. A client
+  may optionally bootstrap a missing mapping from exactly one normalized full
+  name match inside its Organization and explicit Center scopes. Room, phone,
+  aliases, fuzzy/AI matching, and LINE groups are never identity authority.
 - The mapped Resident must belong to the mapped Center and Care Profile.
-- Unknown Residents become `pending_subject_mapping`. PHIMOR does not guess or
-  attach the payload to another person.
+- Unknown Residents follow the Integration Client policy: legacy/manual clients
+  may use `pending_subject_mapping`; commissioned-only clients return a safe
+  HTTP 200 `ignored_*` result without retaining clinical payload.
 - Credential secrets are displayed once and only salted hashes are stored.
 
 The Center capabilities `vital_signs_v1` and `daily_care_v1` are OFF when the
@@ -211,7 +214,10 @@ Care notification and do not create a second Vital notification.
 `subject.expected_line_group_id` is optional. It is a routing assertion for
 cross-system reconciliation, not authentication, patient identity, or a LINE
 destination. Only an active PHIMOR `GroupBinding` for the resolved Care Profile
-is authoritative.
+is authoritative. The outcomes below apply after identity admission, including
+clients using `optional_for_ingest`. A client configured
+`required_before_ingest` is intentionally ignored before inbox/canonical
+storage when no active Family GroupBinding exists.
 
 - Expected group omitted: use the existing verified Family GroupBinding and,
   if none exists, the established Care Profile owner fallback policy.
@@ -249,6 +255,29 @@ A valid event for an unknown external Resident is durably retained as
 and no LINE notification is created. System Admin performs an exact mapping,
 after which pending events are reprocessed in arrival order. Name, room, and
 expected group are never fuzzy identity keys.
+
+Automatic-policy clients search only active Residents with the current linked
+Care Profile in explicitly allowed active Centers. Exact first + last name is
+normalized with Unicode normalization and collapsed whitespace; Latin text is
+case-insensitive while Thai remains exact. Exactly one eligible candidate
+learns the external Center and Resident IDs atomically with inbox acceptance.
+An active verified PHIMOR Family GroupBinding may be required by client policy.
+An existing mapping is never replaced because a later display name changes.
+
+Commissioned-only ignored statuses include center not commissioned, missing or
+unresolved/ambiguous subject name, inactive Resident, unready Care Profile,
+missing verified Family group, mapping conflict, and client-scope mismatch.
+They return HTTP 200 with `accepted:false` and `stored:false`; malformed schema,
+unsupported fields/types/units, authentication, scope, payload size, and reused
+event ID conflicts retain their normal 4xx contract. Ignored events have no
+inbox row, so their event ID/payload hash is intentionally not retained. A
+later replay after an operational correction is a fresh attempt.
+
+Ambiguity produces one deduped operational alert containing only safe external
+references, normalized display name, candidate Center names, timestamps, and
+count. It contains no clinical payload, Family/LINE identity, group ID, or
+credential. Per-client ignored/processed telemetry uses a fixed bounded set of
+counter keys.
 
 ## Acknowledgement, idempotency, and recovery
 

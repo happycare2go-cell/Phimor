@@ -1,5 +1,8 @@
-const {id,withTransaction}=require('../db');
+const {id,withTransaction,withTransactionLocks}=require('../db');
 const {tenantResolver}=require('./tenantResolver');const {platformService}=require('./platformService');
+const {integrationIdentityResolutionService}=require('./integrationIdentityResolutionService');
+const {safeIdentityKey}=require('../domain/integrationIdentity');
+const {GROUP_BINDING_TRANSACTION_KEY}=require('./groupBindingRepository');
 const {vitalSignService}=require('./vitalSignService');const {dailyCareService}=require('./dailyCareService');
 const {createIntegrationEventRepository}=require('./integrationEventRepository');
 const {IntegrationEventError,normalizeEnvelope}=require('../domain/integrationEvents');
@@ -14,25 +17,59 @@ function projection(row,{duplicate=false}={}){const status=row.status==='pending
 function deterministic(error){return error instanceof IntegrationEventError||(Number(error?.status)>=400&&Number(error?.status)<500);}
 function maskedRoutingId(value){const clean=String(value||'').trim();if(!clean)return null;if(clean.length<=8)return `${clean.slice(0,2)}…${clean.slice(-2)}`;return `${clean.slice(0,4)}…${clean.slice(-4)}`;}
 function createIntegrationEventService(overrides={}){const repository=overrides.repository||createIntegrationEventRepository();const resolver=overrides.tenantResolver||tenantResolver;const platform=overrides.platformService||platformService;const vitals=overrides.vitalSignService||vitalSignService;const daily=overrides.dailyCareService||dailyCareService;const idFactory=overrides.idFactory||id;const transact=overrides.withTransaction||withTransaction;const now=overrides.now||(()=>new Date());
-  async function ingest({identity,input}){const {envelope,payloadSha256}=normalizeEnvelope(input);
-    const tenant=await resolver.authorizeResolvedIntegrationTarget({identity,eventType:envelope.eventType,externalCenterId:envelope.subject.externalCenterId});
+  const identityResolution=overrides.identityResolutionService
+    ||(overrides.tenantResolver?null:integrationIdentityResolutionService);
+  const transactLocks=overrides.withTransactionLocks||withTransactionLocks;
+  const policyStore=overrides.integrationIdentityPolicyService||platform.identityPolicies||null;
+  async function insertAndProcess({identity,envelope,payloadSha256,prepared=null}){
+    const tenant=prepared?.action==='process'?prepared.tenant
+      :await resolver.authorizeResolvedIntegrationTarget({identity,eventType:envelope.eventType,externalCenterId:envelope.subject.externalCenterId});
     let row=await repository.insertEvent({integrationEventId:idFactory('IEVT'),integrationClientId:identity.integrationClientId,
       organizationId:identity.organizationId,externalEventId:envelope.eventId,eventType:envelope.eventType,payloadSha256,
       canonicalPayload:envelope,externalCenterId:envelope.subject.externalCenterId,
       externalResidentId:envelope.subject.externalResidentId,centerId:tenant.centerId,
       expectedLineGroupId:envelope.subject.expectedLineGroupId||null});
     if(!row){row=await repository.findByExternalId(identity.integrationClientId,envelope.eventId);if(!row)throw new IntegrationEventError('EVENT_INGESTION_RACE','รับ event ไม่สำเร็จ',503);if(row.payload_sha256!==payloadSha256)throw new IntegrationEventError('EVENT_ID_PAYLOAD_CONFLICT','Event ID นี้เคยใช้กับ payload อื่น',409);return projection(row,{duplicate:true});}
-    return processEvent(row.integration_event_id);
+    return processEvent(row.integration_event_id,prepared?.action==='process'?prepared:null);
   }
-  async function processEvent(integrationEventId){
+  async function ingest({identity,input}){const {envelope,payloadSha256}=normalizeEnvelope(input);
+    if(!identityResolution)return insertAndProcess({identity,envelope,payloadSha256});
+    const lockHash=safeIdentityKey([identity.integrationClientId,envelope.subject.externalCenterId,
+      envelope.subject.externalResidentId]);
+    const locks=[`integration-client-control:${identity.integrationClientId}`,`integration-identity:${lockHash}`,
+      `integration-center-mapping:${identity.integrationClientId}:${envelope.subject.externalCenterId}`,
+      `integration-subject-mapping:${identity.integrationClientId}:${envelope.subject.externalCenterId}:${envelope.subject.externalResidentId}`];
+    return transactLocks(locks,async()=>{
+      const policy=policyStore?await policyStore.getPolicy(identity.integrationClientId):null;
+      const resolveAndProcess=async()=>{
+        const prepared=await identityResolution.resolve({identity,eventType:envelope.eventType,subject:envelope.subject});
+        if(prepared?.action==='ignored')return prepared.result;
+        return insertAndProcess({identity,envelope,payloadSha256,prepared});
+      };
+      return policy?.familyGroupRequirement==='required_before_ingest'
+        ?transactLocks([GROUP_BINDING_TRANSACTION_KEY],resolveAndProcess)
+        :resolveAndProcess();
+    });
+  }
+  async function processEvent(integrationEventId,prepared=null){
     const claimed=await transact(`integration-event-claim:${integrationEventId}`,()=>repository.claimEvent(integrationEventId));
     if(!claimed){const current=await repository.findEvent(integrationEventId);if(!current)throw new IntegrationEventError('EVENT_NOT_FOUND','ไม่พบ event',404);return projection(current,{duplicate:true});}
     const envelope=claimed.canonical_payload;
     try{return await transact(`integration-event-work:${integrationEventId}`,async()=>{
         const identity={integrationClientId:claimed.integration_client_id,organizationId:claimed.organization_id,sourceSystem:null};
         const client=await platform.inspectIntegrationClient(claimed.integration_client_id);identity.sourceSystem=client.sourceSystem;
-        const tenant=await resolver.authorizeResolvedIntegrationTarget({identity,eventType:claimed.event_type,externalCenterId:claimed.external_center_id});
-        let subject=await resolver.resolveExternalSubject({tenant,externalResidentId:claimed.external_resident_id,display:envelope.subject});
+        let tenant;let subject;
+        if(prepared?.action==='process'){tenant=prepared.tenant;subject=prepared.subject;}
+        else if(identityResolution&&claimed.pending_reason!=='subject_mapping'){
+          const resolved=await identityResolution.resolve({identity,eventType:claimed.event_type,subject:envelope.subject});
+          if(resolved?.action==='ignored'){
+            const rejected=await repository.markRejected(integrationEventId,String(resolved.result.status||'ignored_mapping_conflict').toUpperCase());
+            return projection(rejected);
+          }
+          if(resolved?.action==='process'){tenant=resolved.tenant;subject=resolved.subject;}
+        }
+        if(!tenant)tenant=await resolver.authorizeResolvedIntegrationTarget({identity,eventType:claimed.event_type,externalCenterId:claimed.external_center_id});
+        if(!subject)subject=await resolver.resolveExternalSubject({tenant,externalResidentId:claimed.external_resident_id,display:envelope.subject});
         if(subject.status!=='mapped'||!subject.careProfileId){await platform.observeExternalSubject({integrationClientId:claimed.integration_client_id,
           externalCenterId:claimed.external_center_id,externalResidentId:claimed.external_resident_id,
           firstName:envelope.subject.firstName,lastName:envelope.subject.lastName,displayName:envelope.subject.displayName,room:envelope.subject.room});
@@ -74,7 +111,9 @@ function createIntegrationEventService(overrides={}){const repository=overrides.
           expectedLineGroupId:resourceType==='daily_care_report'?envelope.subject.expectedLineGroupId||null:null,
           verifiedLineGroupId:notification?.verifiedLineGroupId||null,
           groupReconciliationStatus:notification?.groupReconciliationStatus||null,
-          notificationIntentStatus:resourceType==='daily_care_report'?(notification?.notificationStatus||'enqueue_failed'):'not_applicable'});return projection(processed);
+          notificationIntentStatus:resourceType==='daily_care_report'?(notification?.notificationStatus||'enqueue_failed'):'not_applicable'});
+        if(identityResolution&&policyStore)await policyStore.incrementMetric(claimed.integration_client_id,'processed');
+        return projection(processed);
       });}catch(error){return transact(`integration-event-failure:${integrationEventId}`,async()=>{
         if(deterministic(error)){const code=publicCodeFor(error,{status:Number(error?.status)||422});const rejected=await repository.markRejected(integrationEventId,code);return projection(rejected);}
         const attempts=Number(claimed.attempt_count)||1;const dead=attempts>=MAX_ATTEMPTS;const delayMs=Math.min(60*60*1000,2**Math.max(0,attempts-1)*60*1000);

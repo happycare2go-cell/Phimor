@@ -17,7 +17,9 @@ vendor-neutral workflow.
 2. add only the pilot Center scope;
 3. add only `care.daily_report.finalized` and, if agreed,
    `care.vitals.recorded` event scopes;
-4. create the exact external Center mapping;
+4. configure `exact_name_learning` + `ignore` +
+   `required_before_ingest`; do not type HHS Center/Resident IDs for the normal
+   automatic-learning path;
 5. choose **ออก Credential** in the client detail (backed by
    `POST /api/admin/platform/integration-clients/:integrationClientId/credentials`);
 6. copy the returned token once into an approved secret channel/manager; and
@@ -112,8 +114,10 @@ their existing controls.
 - [ ] One active Integration Client belongs to the Organization.
 - [ ] Client Center scope contains only the pilot Center.
 - [ ] Event scope contains `care.daily_report.finalized` and only agreed extras.
-- [ ] External branch ID maps exactly to the pilot Center.
-- [ ] External Resident ID maps exactly to the Resident in that Center.
+- [ ] Identity policy is exact-name learning + ignore + Family Group required.
+- [ ] HHS first name + last name exactly matches one current Care Profile name
+  across the allowed Center scope; room and phone are not matching keys.
+- [ ] No conflicting learned/manual external Center or Resident mapping exists.
 - [ ] Resident has the intended Care Profile relationship.
 - [ ] PHIMOR OA has an active, verified Family GroupBinding for that profile.
 - [ ] HHS expected group equals the masked/full value verified through the
@@ -147,8 +151,10 @@ PHIMOR or HHS records on its own.
 
 1. Confirm both Center capabilities are in their intended state.
 2. Confirm Integration Client, Center, and event scopes.
-3. Confirm external Center mapping.
-4. Confirm exact Resident mapping.
+3. Confirm no conflicting mapping exists; the first valid unique event may
+   learn its external Center mapping.
+4. Confirm the exact current Care Profile name is unique and the first valid
+   event may learn its external Resident mapping.
 5. Confirm the PHIMOR OA verified Family GroupBinding.
 6. Confirm expected group matches.
 7. Send one fictional/test Day finalized event from the approved pilot sender.
@@ -167,10 +173,13 @@ PHIMOR or HHS records on its own.
 17. Correct the PHIMOR verified binding through the approved Family flow.
 18. Use System Admin “ตรวจสอบอีกครั้ง”; verify routing becomes eligible and
     idempotency prevents duplicate delivery.
-19. Test a never-mapped Resident; require 202 `pending_subject_mapping`, no
-    clinical attachment to another person, and no notification.
-20. Map the Resident exactly in System Admin; verify pending events reprocess
-    without vendor resend.
+19. Test a never-mapped non-matching Resident; require HTTP 200
+    `ignored_subject_unresolved`, `accepted:false`, `stored:false`, no inbox,
+    clinical record, pending subject, or notification.
+20. Test an ambiguous exact name; require HTTP 200
+    `ignored_subject_ambiguous` and one non-clinical deduped Admin alert. Correct
+    the mapping, then have HHS resend only if the dropped historical item is
+    required. PHIMOR cannot reprocess a payload it intentionally did not retain.
 
 ## Message-cost expectation
 
@@ -190,7 +199,7 @@ finalized records, notification intents, and provider acceptance counts daily.
 ## Stop conditions before a real pilot
 
 Stop if backup cannot be verified, migration checksums differ, production
-auto-deploy cannot be held, exact Center/Resident mapping is uncertain,
+auto-deploy cannot be held, exact identity resolution/mapping is uncertain,
 GroupBinding is missing/mismatched for the positive-path test, capabilities are
 not scoped to the pilot Center, or credential transfer cannot use an approved
 secret channel.

@@ -78,6 +78,20 @@ function createPlatformAdminRouter() {
     }));
   }));
 
+  router.get('/integration-identity-alerts', platformAction(async (req, res, service) => {
+    res.json(await service.listIntegrationAlerts({
+      integrationClientId:req.query.integrationClientId || null,
+      status:req.query.status || null, limit:req.query.limit,
+    }));
+  }));
+
+  router.patch('/integration-identity-alerts/:alertId/status', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {}; assertBodyKeys(body, ['status']);
+    res.json({ alert:await service.updateIntegrationAlertStatus({
+      alertId:req.params.alertId, status:body.status, actorReference,
+    }) });
+  }));
+
   router.post('/integration-events/:integrationEventId/reconcile-group', platformAction(async (req, res) => {
     res.json(await eventServiceFor(req).reconcileGroupRouting({
       integrationEventId:req.params.integrationEventId,
@@ -148,6 +162,14 @@ function createPlatformAdminRouter() {
 
   router.get('/integration-clients/:integrationClientId', platformAction(async (req, res, service) => {
     res.json({ integrationClient: await service.inspectIntegrationClient(req.params.integrationClientId) });
+  }));
+
+  router.patch('/integration-clients/:integrationClientId/identity-resolution-policy', platformAction(async (req, res, service, actorReference) => {
+    const body = req.body || {};
+    assertBodyKeys(body, ['identityResolutionMode', 'unresolvedEventPolicy', 'familyGroupRequirement']);
+    res.json({ policy:await service.setIdentityResolutionPolicy({
+      integrationClientId:req.params.integrationClientId, policy:body, actorReference,
+    }) });
   }));
 
   router.patch('/integration-clients/:integrationClientId/status', platformAction(async (req, res, service, actorReference) => {

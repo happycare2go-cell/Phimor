@@ -32,6 +32,7 @@ function createMemoryPlatformRepository() {
     async listCapabilities(centerId) { return state.capabilities.filter((row)=>row.center_id===centerId).map(clone); },
     async findCapability(centerId,key) { return clone(state.capabilities.find((row)=>row.center_id===centerId&&row.capability_key===key)); },
     async upsertCapability(record) { let row=state.capabilities.find((item)=>item.center_id===record.centerId&&item.capability_key===record.capabilityKey);if(!row){row={center_id:record.centerId,capability_key:record.capabilityKey};state.capabilities.push(row)}row.enabled=record.enabled;row.enabled_at=record.enabled?stamp():null;row.updated_at=stamp();return clone(row); },
+    async lockIdentityLearningCandidate(){ return true; },
     async createIntegrationClient(record) { if(state.clients.some((item)=>item.client_code===record.clientCode))throw Object.assign(new Error('duplicate client code'),{code:'23505'});const row={integration_client_id:record.integrationClientId,organization_id:record.organizationId,client_code:record.clientCode,display_name:record.displayName,source_system:record.sourceSystem,status:record.status||'active',created_at:stamp(),updated_at:stamp(),revoked_at:null};state.clients.push(row);return clone(row); },
     async findIntegrationClient(id) { return clone(state.clients.find((row)=>row.integration_client_id===id)); },
     async listIntegrationClients(orgId) { return state.clients.filter((row)=>row.organization_id===orgId).map(clone); },

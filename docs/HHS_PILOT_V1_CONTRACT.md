@@ -39,10 +39,10 @@ or data-dependent requirement without making it a global platform rule.
 | `event_type` | REQUIRED | Exactly `care.daily_report.finalized`. |
 | `occurred_at` | REQUIRED | RFC 3339 timestamp for the finalized event. |
 | `subject.center_external_id` | REQUIRED | Exact external branch ID already mapped to the allowed PHIMOR Center. |
-| `subject.resident_external_id` | REQUIRED | Exact external Resident ID. Unknown values become `pending_subject_mapping`. |
+| `subject.resident_external_id` | REQUIRED | Stable external Resident ID. For the commissioned HHS policy, the first unique exact-name event learns this ID; later events use that mapping as authority. |
 | `subject.expected_line_group_id` | OPTIONAL / SHOULD | HHS should send its expected Family group for reconciliation. It is not authorization or a destination. |
-| `subject.display.first_name` | OPTIONAL | Matching hint for System Admin only; never identity. |
-| `subject.display.last_name` | OPTIONAL | Matching hint for System Admin only; never identity. |
+| `subject.display.first_name` | CONDITIONAL | Required with `last_name` only for the first exact-name learning attempt; display metadata after mapping. |
+| `subject.display.last_name` | CONDITIONAL | Required with `first_name` only for the first exact-name learning attempt; display metadata after mapping. |
 | `subject.display.room` | OPTIONAL | Matching hint and factual display when appropriate; never identity. |
 | `data.external_record_id` | REQUIRED | Stable final Daily Care record identity; separate canonical dedupe boundary. |
 | `data.care_date` | REQUIRED | Calendar date `YYYY-MM-DD`. |
@@ -161,14 +161,13 @@ Family `GroupBinding`:
 - match: the finalized record is stored and notification is eligible;
 - mismatch: the record is stored, LINE is held, state is
   `group_binding_mismatch`;
-- expected supplied but PHIMOR binding missing: the record is stored, LINE is
-  held, state is `group_binding_missing`;
-- expected omitted: the existing PHIMOR GroupBinding/owner fallback policy is
-  used.
+- PHIMOR binding missing under the commissioned HHS strict policy: the event is
+  ignored before inbox/canonical storage as `ignored_family_group_not_bound`;
+- expected omitted with an existing verified binding: that PHIMOR binding
+  remains the only eligible destination.
 
-There is no “send anyway”. When an expected group is present but cannot be
-verified, PHIMOR does not fall back to the owner and never routes directly to
-the vendor-supplied group ID.
+There is no “send anyway”. PHIMOR does not fall back to the owner for this HHS
+policy and never routes directly to the vendor-supplied group ID.
 
 ## Responses, retryability, and safe rejection details
 
@@ -194,14 +193,22 @@ SQL errors, stack traces, credentials, LINE IDs, or the clinical payload.
 | `202 processed` | Accepted and canonicalized. Do not resend. |
 | `202 pending_subject_mapping` | Accepted durably; PHIMOR will reprocess after exact mapping. Do not resend. |
 | `202 retrying` | Accepted durably; PHIMOR owns bounded internal retry. Do not resend. |
+| `200 ignored_*` | Intentionally dropped by the commissioned-only identity policy. `accepted:false`, `stored:false`; do not retry automatically. Resend after operational correction only when the historical item is required. |
 | `200` with `duplicate:true` and accepted/durable state | The same normalized payload is already processed or durably owned by PHIMOR. Stop retrying. |
 | `400`, `401`, `403`, `409`, `413`, `422` with `retryable:false` | Terminal. Alert operations and correct contract/configuration. |
 | `429` with `retryable:true` | Retry using the same event and payload after `Retry-After`. |
 | `5xx` with `retryable:true` | Acceptance was not confirmed; retry same event/payload with backoff. |
 
-`pending_subject_mapping` is an accepted state, not an error. Group mismatch or
-missing binding also does not invalidate canonical care; it holds only the
-notification path.
+`pending_subject_mapping` remains an accepted state for generic clients using
+the legacy manual/pending policy. The commissioned HHS policy uses exact-name
+learning + ignore + required Family GroupBinding, so unresolved, ambiguous, or
+not-ready first events return HTTP 200 `ignored_*` without an inbox/clinical
+payload. Under that strict policy, a missing verified Family GroupBinding is
+ignored before canonical ingestion. When a verified binding exists but
+`expected_line_group_id` mismatches it, canonical care may still be stored and
+only the notification path is held; the external group value is never routing
+authority. Optional-group legacy clients preserve their existing
+store-without-notify behavior.
 
 A duplicate of an inbox event already in terminal `rejected` or `dead` state
 returns a terminal non-2xx response, never an accepted HTTP 200. This remains
@@ -229,4 +236,7 @@ Representative terminal public codes include `CENTER_MAPPING_NOT_FOUND`,
 HHS should use a transactional/durable outbox but PHIMOR does not require a
 specific queue technology. Retry timeouts, 429, and 5xx with exponential
 backoff; honor `Retry-After`. Terminal 4xx must create an HHS operational
-alert. A 202 `pending_subject_mapping` is accepted and must not be resent.
+alert. A 202 `pending_subject_mapping` is accepted and must not be resent for a
+legacy-policy client. An HHS `ignored_*` response is terminal for that attempt;
+after correcting commissioning, HHS may resend the same finalized snapshot if
+the historical record is required because PHIMOR retained no payload.

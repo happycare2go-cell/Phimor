@@ -107,6 +107,22 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
       );
     },
 
+    async lockIdentityLearningCandidate({ centerId, residentId, careProfileId }) {
+      const locks = [
+        ['centers', 'center_id', centerId],
+        ['careProfiles', 'care_profile_id', careProfileId],
+        ['residents', 'resident_id', residentId],
+      ];
+      for (const [table, field, value] of locks) {
+        const row = await one(
+          `SELECT id FROM "${table}" WHERE data->>'${field}' = $1 FOR UPDATE`,
+          [value]
+        );
+        if (!row) return false;
+      }
+      return true;
+    },
+
     createIntegrationClient(record) {
       return one(
         `INSERT INTO integration_clients (
@@ -363,7 +379,7 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
       return many(
         `SELECT external_subject_mapping_id, integration_client_id, organization_id,
           external_center_id, external_resident_id, center_id, resident_id,
-          care_profile_id, mapping_status, room, created_at, updated_at,
+          care_profile_id, mapping_status, room, last_seen_at, created_at, updated_at,
           deactivated_at
          FROM external_subject_mappings
          WHERE integration_client_id = $1
