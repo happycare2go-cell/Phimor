@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ผู้ดูแลระบบพี่หมอ</title>
   <link rel="stylesheet" href="../assets/mascot-ui.css">
+  <link rel="stylesheet" href="../shared/app-shell.css">
   <link rel="stylesheet" href="./care-operations-ui.css">
   <link rel="stylesheet" href="./privacy-operations-ui.css">
   <style>
@@ -19,7 +20,7 @@
 </head>
 <body>
   <div class="top"><h1>ผู้ดูแลระบบพี่หมอ</h1><div>จัดการสาขา สิทธิแพ็กเกจ และตรวจสอบ Care Profile</div></div>
-  <main class="wrap">
+  <main class="wrap" id="loginWrap">
     <section class="card" id="login">
       <div class="mascot-callout mascot-callout--important mascot-callout--compact">
         <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">System Admin</span><h2 class="mascot-callout__title">ยืนยันบัญชีผู้ดูแลระบบอย่างปลอดภัยครับ</h2><p class="mascot-callout__text">ใช้ ADMIN API Key เฉพาะการผูกบัญชีครั้งแรก และไม่ควรส่งคีย์ให้ผู้อื่น</p></div>
@@ -28,21 +29,32 @@
       <h2>ยืนยันผู้ดูแลระบบครั้งแรก</h2><p class="muted">ระบบตรวจบัญชี LINE จาก LIFF อัตโนมัติ กรุณาใส่ ADMIN API Key ครั้งเดียวเพื่อผูกบัญชี LINE นี้เป็นผู้ดูแลระบบ</p>
       <div class="row"><input id="apiKey" type="password" autocomplete="current-password" placeholder="ADMIN API Key" style="flex:1"><button onclick="bootstrapAdmin()">ยืนยันบัญชีนี้</button></div><p id="loginError" class="bad"></p>
     </section>
-    <section id="app" hidden>
-      <div class="mascot-callout">
-        <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ภาพรวมระบบ</span><h2 class="mascot-callout__title">ตรวจสาขา แพ็กเกจ และ Care Profile ได้จากศูนย์กลางครับ</h2><p class="mascot-callout__text">รายการใกล้หมดอายุและสาขาที่ยังไม่ได้กำหนดแพ็กเกจควรได้รับการตรวจสอบก่อน</p></div>
-        <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
-      </div>
-      <div class="card row"><strong style="flex:1">สาขาทั้งหมด</strong><button class="secondary" onclick="loadCenters()">รีเฟรช</button><button class="danger" onclick="logout()">ออกจากระบบ</button></div>
-      <div class="card" aria-labelledby="paymentLookupTitle">
-        <h2 id="paymentLookupTitle">ตรวจสอบการชำระ Consult Case</h2>
-        <p class="muted">ค้นหาแบบตรงตัวด้วยเลขอ้างอิง PHIMOR, Consult Case ID หรือ Omise Charge ID โดยไม่ใช้ยอดเงินหรือข้อมูลสุขภาพในการเดารายการ</p>
-        <div class="row"><input id="paymentReference" autocomplete="off" placeholder="ใส่เลขอ้างอิง" style="flex:1"><button id="paymentLookupButton" onclick="lookupConsultationPayment()">ตรวจสอบ</button></div>
-        <p id="paymentLookupError" class="bad" role="alert" aria-live="assertive"></p>
-        <div id="paymentLookupResult" hidden></div>
-      </div>
-      <div class="card"><div id="summary" class="grid"></div></div>
-      <div class="card" id="centerDirectoryCard">
+  </main>
+  <div id="app" class="phimor-shell" hidden>
+    <nav class="phimor-primary-nav" aria-label="เมนูหลักผู้ดูแลระบบ">
+      <button type="button" class="phimor-primary-nav__item" data-shell-destination="overview" data-shell-icon="⌂">ภาพรวม</button>
+      <button type="button" class="phimor-primary-nav__item" data-shell-destination="centers" data-shell-icon="▦">ศูนย์</button>
+      <button type="button" class="phimor-primary-nav__item" data-shell-destination="integrations" data-shell-icon="⇄">ระบบเชื่อมต่อ</button>
+      <button type="button" class="phimor-primary-nav__item" data-shell-destination="review" data-shell-icon="!">งานต้องตรวจ</button>
+      <button type="button" class="phimor-primary-nav__item" data-shell-destination="more" data-shell-icon="•••">เพิ่มเติม</button>
+    </nav>
+    <main class="wrap phimor-shell__content" id="adminShellContent">
+      <section class="phimor-shell__panel" data-shell-panel="overview" aria-labelledby="adminOverviewTitle">
+        <div class="mascot-callout">
+          <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ภาพรวมระบบ</span><h2 class="mascot-callout__title" id="adminOverviewTitle">ตรวจสถานะที่มีอยู่จริงโดยไม่เปิดข้อมูลสุขภาพครับ</h2><p class="mascot-callout__text">เลือกศูนย์ ระบบเชื่อมต่อ หรืองานที่ต้องตรวจจากทางลัดด้านล่าง</p></div>
+          <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
+        </div>
+        <div class="card"><div id="summary" class="grid" role="status" aria-live="polite"><div class="muted">กำลังโหลดภาพรวมศูนย์...</div></div></div>
+        <div class="phimor-launch-grid" aria-label="ทางลัดงานระบบ">
+          <button type="button" class="phimor-launch-card" data-shell-destination="centers"><strong>ศูนย์ดูแล</strong><span>ค้นหา ตรวจแพ็กเกจ และรายละเอียดการดำเนินงาน</span></button>
+          <button type="button" class="phimor-launch-card" data-shell-destination="integrations"><strong>ระบบเชื่อมต่อ</strong><span>จัดการ scope, Credential และ Mapping</span></button>
+          <button type="button" class="phimor-launch-card" data-shell-destination="review"><strong>งานต้องตรวจ</strong><span>คำขอข้อมูล ผู้พักรอเชื่อม และกลุ่ม LINE</span></button>
+        </div>
+      </section>
+
+      <section class="phimor-shell__panel" data-shell-panel="centers" aria-labelledby="adminCentersTitle" hidden>
+        <div class="card row"><div style="flex:1"><h2 id="adminCentersTitle" style="margin:0">ศูนย์ดูแล</h2><p class="muted" style="margin:4px 0 0">ค้นหาและจัดการข้อมูลการดำเนินงานโดยไม่เปิดข้อมูลสุขภาพ</p></div><button class="secondary" onclick="loadCenters()">รีเฟรช</button></div>
+        <div class="card" id="centerDirectoryCard">
         <div class="directory-toolbar">
           <label class="sr-only" for="search">ค้นหาชื่อศูนย์</label>
           <input id="search" autocomplete="off" placeholder="ค้นหาชื่อศูนย์" oninput="scheduleCenterSearch()" style="width:100%">
@@ -63,13 +75,39 @@
           <span id="centerPageLabel" class="muted"></span>
           <button type="button" class="secondary" id="centerNextPage" onclick="changeCenterPage(1)">หน้าถัดไป</button>
         </div>
-      </div>
-      <section class="card privacy-ops" id="privacyOperationsPanel" aria-labelledby="privacyOperationsTitle">
+        </div>
+      </section>
+
+      <section class="phimor-shell__panel" data-shell-panel="integrations" aria-labelledby="adminIntegrationsTitle" hidden>
+        <h2 id="adminIntegrationsTitle" class="sr-only">ระบบเชื่อมต่อ</h2>
+        <div id="adminIntegrationHost"></div>
+      </section>
+
+      <section class="phimor-shell__panel" data-shell-panel="review" aria-labelledby="adminReviewTitle" hidden>
+        <div class="card"><h2 id="adminReviewTitle" style="margin:0">งานต้องตรวจ</h2><p class="muted">แสดงเฉพาะสถานะและการดำเนินการที่ระบบรองรับ ไม่แสดง payload หรือข้อมูลสุขภาพ</p></div>
+        <section class="card privacy-ops" id="privacyOperationsPanel" aria-labelledby="privacyOperationsTitle">
         <div class="privacy-ops__header"><div><h2 id="privacyOperationsTitle">คำขอเกี่ยวกับข้อมูลส่วนบุคคล</h2><p class="muted">คิวดำเนินงานแบบควบคุม แสดงข้อมูลผู้ขอเท่าที่จำเป็น</p></div><button type="button" class="secondary" id="privacyOperationsRefresh">รีเฟรชคิว</button></div>
         <p class="privacy-ops__notice">การเปลี่ยนสถานะคำขอไม่ลบ ส่งออก แก้ไข หรือจำกัดข้อมูลอัตโนมัติ ผู้ปฏิบัติงานต้องดำเนินการตามขั้นตอนที่ได้รับอนุมัติและเก็บหลักฐานอย่างเหมาะสม</p>
         <div id="privacyOperationsLive" class="privacy-ops__live" role="status" aria-live="polite"></div><div id="privacyOperationsContent"></div>
+        </section>
+        <div id="adminReviewCareHost"></div>
+        <section class="card" aria-labelledby="reliabilityTitle"><div class="row"><div style="flex:1"><h2 id="reliabilityTitle" style="margin:0">สถานะคิวและงานเบื้องหลัง</h2><p class="muted">แสดงเฉพาะจำนวนและสถานะที่ปลอดภัย</p></div><button type="button" class="secondary" onclick="loadReliability()">ตรวจสอบ</button></div><div id="reliabilityResult" class="muted" role="status" aria-live="polite">กดตรวจสอบเมื่อต้องการดูสถานะล่าสุด</div></section>
       </section>
-      <section class="card care-ops" id="careOperationsPanel" aria-labelledby="careOperationsTitle">
+
+      <section class="phimor-shell__panel" data-shell-panel="more" aria-labelledby="adminMoreTitle" hidden>
+        <div class="card"><h2 id="adminMoreTitle" style="margin:0">เพิ่มเติม</h2><p class="muted">งานตั้งค่าและตรวจสอบที่ไม่ได้ใช้เป็นประจำ</p></div>
+        <div class="card" aria-labelledby="paymentLookupTitle">
+          <h2 id="paymentLookupTitle">ตรวจสอบการชำระ Consult Case</h2>
+          <p class="muted">ค้นหาแบบตรงตัวด้วยเลขอ้างอิง PHIMOR, Consult Case ID หรือ Omise Charge ID โดยไม่ใช้ยอดเงินหรือข้อมูลสุขภาพในการเดารายการ</p>
+          <div class="row"><input id="paymentReference" aria-label="เลขอ้างอิงการชำระ" autocomplete="off" placeholder="ใส่เลขอ้างอิง" style="flex:1"><button id="paymentLookupButton" onclick="lookupConsultationPayment()">ตรวจสอบ</button></div>
+          <p id="paymentLookupError" class="bad" role="alert" aria-live="assertive"></p>
+          <div id="paymentLookupResult" hidden></div>
+        </div>
+        <div id="adminMoreCareHost"></div>
+        <div class="card row"><strong style="flex:1">บัญชีผู้ดูแลระบบ</strong><button class="danger" onclick="logout()">ออกจากระบบ</button></div>
+      </section>
+
+      <section class="card care-ops" id="careOperationsPanel" aria-labelledby="careOperationsTitle" hidden>
         <div class="care-ops__header">
           <div><h2 id="careOperationsTitle">ศูนย์และระบบเชื่อมต่อ</h2><p class="muted">ตั้งค่าความสามารถ เชื่อมผู้พัก และตรวจสอบเส้นทางแจ้งครอบครัว โดยไม่เปิดดูข้อมูลสุขภาพ</p></div>
           <button type="button" class="secondary" id="careOperationsRefresh">รีเฟรชงานระบบ</button>
@@ -84,8 +122,8 @@
         </nav>
         <div class="care-ops__content" id="careOperationsContent" aria-live="polite"><div class="care-ops__empty">เข้าสู่ระบบเพื่อโหลดข้อมูลงานระบบ</div></div>
       </section>
-    </section>
-  </main>
+    </main>
+  </div>
   <dialog id="detail"><div class="row"><h2 id="detailTitle" style="flex:1"></h2><button class="secondary" onclick="detail.close()">ปิด</button></div><div id="detailBody"></div></dialog>
   <dialog id="subscriptionDialog" aria-labelledby="subscriptionTitle">
     <form onsubmit="saveSubscription(event)">
@@ -106,10 +144,13 @@
     </form>
   </dialog>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="../shared/app-shell.js"></script>
   <script src="./care-operations-ui.js"></script>
   <script src="./privacy-operations-ui.js"></script>
   <script>
-    const BACKEND_URL=window.PHIMOR_BACKEND_URL||'https://phimor-backend.onrender.com';let centers=[];let CARE_OPERATIONS_UI=null;let PRIVACY_OPERATIONS_UI=null;
+    const BACKEND_URL=window.PHIMOR_BACKEND_URL||'https://phimor-backend.onrender.com';let centers=[];let CARE_OPERATIONS_UI=null;let PRIVACY_OPERATIONS_UI=null;let ADMIN_SHELL=null;
+    const ADMIN_DESTINATIONS=Object.freeze(['overview','centers','integrations','review','more']);
+    const adminLoaded={overview:false,centers:false,integrations:false,review:false,more:false};
     let centerSearchTimer=null;let subscriptionPreviewRequest=0;let centerDirectory={search:'',status:'all',page:1,limit:20,counts:{all:0,active:0,trial:0,expired:0,notConfigured:0,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:0,totalPages:0}};
     const esc=(v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let idToken='';
@@ -117,9 +158,31 @@
     async function bootstrapAdmin(){loginError.textContent='';const adminKey=document.querySelector('#apiKey').value.trim();if(!adminKey){loginError.textContent='กรุณาใส่ ADMIN API Key';return}try{await api('/api/admin/bootstrap',{method:'POST',headers:{'X-Admin-Key':adminKey},body:'{}'});document.querySelector('#apiKey').value='';await enterAdmin()}catch(e){loginError.textContent=e.message}}
     function ensureCareOperationsUI(){if(CARE_OPERATIONS_UI||!window.PhimorCareOperationsUI)return CARE_OPERATIONS_UI;CARE_OPERATIONS_UI=window.PhimorCareOperationsUI.createController({doc:document,request:api,confirmAction:async(title,message)=>window.confirm(`${title}\n\n${message}`)});careOperationsRefresh.addEventListener('click',()=>CARE_OPERATIONS_UI.load());return CARE_OPERATIONS_UI}
     function ensurePrivacyOperationsUI(){if(PRIVACY_OPERATIONS_UI||!window.PhimorPrivacyOperationsUI)return PRIVACY_OPERATIONS_UI;PRIVACY_OPERATIONS_UI=window.PhimorPrivacyOperationsUI.createController({doc:document,request:api,confirmAction:async(title,message)=>window.confirm(`${title}\n\n${message}`)});privacyOperationsRefresh.addEventListener('click',()=>PRIVACY_OPERATIONS_UI.load());return PRIVACY_OPERATIONS_UI}
-    async function enterAdmin(){await loadCenters();login.hidden=true;app.hidden=false;await Promise.all([ensureCareOperationsUI()?.load(),ensurePrivacyOperationsUI()?.load()])}
+    function closeAdminDestinationDialogs(){document.querySelectorAll('dialog[open]').forEach((dialog)=>{try{dialog.close()}catch(_){dialog.removeAttribute('open')}})}
+    function placeCareOperations(hostId,tabs,preferred){const panel=document.getElementById('careOperationsPanel'),host=document.getElementById(hostId),controller=ensureCareOperationsUI();host.append(panel);panel.hidden=false;controller.setAvailableTabs(tabs,preferred);return controller}
+    async function onAdminDestination({destination,previous}){
+      if(previous&&previous!==destination)closeAdminDestinationDialogs();
+      if(destination==='overview'||destination==='centers'){
+        if(!adminLoaded.centers){await loadCenters();adminLoaded.centers=true;adminLoaded.overview=true}
+        return;
+      }
+      if(destination==='integrations'){
+        const controller=placeCareOperations('adminIntegrationHost',['integrations'],'integrations');
+        if(!adminLoaded.integrations){await controller.load({tabs:['integrations']});adminLoaded.integrations=true}
+        return;
+      }
+      if(destination==='review'){
+        const controller=placeCareOperations('adminReviewCareHost',['pending','groups','alerts'],'pending');
+        if(!adminLoaded.review){await Promise.all([controller.load({tabs:['pending','groups','alerts']}),ensurePrivacyOperationsUI().load()]);adminLoaded.review=true}
+        return;
+      }
+      const controller=placeCareOperations('adminMoreCareHost',['overview','capabilities'],'overview');
+      if(!adminLoaded.more){await controller.load({tabs:['overview','capabilities']});adminLoaded.more=true}
+    }
+    function initialAdminDestination(){const params=new URLSearchParams(location.search),view=params.get('view');return({centers:'centers',integrations:'integrations',pending:'review',groups:'review',alerts:'review',capabilities:'more',overview:'more'}[view]||params.get('section')||'overview')}
+    async function enterAdmin(){login.hidden=true;app.hidden=false;try{if(!window.PhimorAppShell)throw new Error('APP_SHELL_MISSING');if(!ADMIN_SHELL)ADMIN_SHELL=window.PhimorAppShell.createDestinationRouter({doc:document,destinations:ADMIN_DESTINATIONS,initial:'overview',queryKey:'section',onNavigate:onAdminDestination});await ADMIN_SHELL.start(initialAdminDestination());loginWrap.hidden=true}catch(error){app.hidden=true;loginWrap.hidden=false;login.hidden=false;throw error}}
     function logout(){if(window.liff?.isLoggedIn())liff.logout();location.reload()}
-    async function loadCenters({resetPage=false}={}){if(resetPage)centerDirectory.page=1;centerDirectoryLive.textContent='กำลังโหลดรายชื่อศูนย์...';const q=new URLSearchParams({search:centerDirectory.search,subscriptionStatus:centerDirectory.status,page:String(centerDirectory.page),limit:String(centerDirectory.limit)});try{const d=await api('/api/admin/centers?'+q.toString());centers=d.items||d.centers||[];centerDirectory.counts=d.counts||fallbackCenterCounts(centers);centerDirectory.pagination=d.pagination||{page:1,limit:centers.length||20,total:centers.length,totalPages:centers.length?1:0};centerDirectory.page=centerDirectory.pagination.page;render()}catch(e){centerDirectoryLive.textContent=e.message||'โหลดรายชื่อศูนย์ไม่สำเร็จ';throw e}}
+    async function loadCenters({resetPage=false}={}){if(resetPage)centerDirectory.page=1;centerDirectoryLive.textContent='กำลังโหลดรายชื่อศูนย์...';const q=new URLSearchParams({search:centerDirectory.search,subscriptionStatus:centerDirectory.status,page:String(centerDirectory.page),limit:String(centerDirectory.limit)});try{const d=await api('/api/admin/centers?'+q.toString());centers=d.items||d.centers||[];centerDirectory.counts=d.counts||fallbackCenterCounts(centers);centerDirectory.pagination=d.pagination||{page:1,limit:centers.length||20,total:centers.length,totalPages:centers.length?1:0};centerDirectory.page=centerDirectory.pagination.page;adminLoaded.centers=true;adminLoaded.overview=true;render()}catch(e){centerDirectoryLive.textContent=e.message||'โหลดรายชื่อศูนย์ไม่สำเร็จ';throw e}}
     function scheduleCenterSearch(){clearTimeout(centerSearchTimer);centerSearchTimer=setTimeout(()=>{centerDirectory.search=search.value.trim();loadCenters({resetPage:true}).catch(()=>{})},250)}
     function setCenterFilter(statusName){centerDirectory.status=statusName;document.querySelectorAll('.directory-filter').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.status===statusName)));loadCenters({resetPage:true}).catch(()=>{})}
     function changeCenterPage(delta){const target=centerDirectory.page+delta;if(target<1||target>centerDirectory.pagination.totalPages)return;centerDirectory.page=target;loadCenters().catch(()=>{})}
@@ -127,6 +190,7 @@
     function fallbackCenterCounts(items){const value={all:items.length,active:0,trial:0,expired:0,notConfigured:0,notStarted:0,suspended:0};for(const c of items){const state=fallbackDirectoryStatus(c),key=state==='not_configured'?'notConfigured':state==='not_started'?'notStarted':state;if(Object.hasOwn(value,key))value[key]+=1}return value}
     function paymentDate(value){return value?new Date(value).toLocaleString('th-TH'):'-'}
     async function lookupConsultationPayment(){const reference=paymentReference.value.trim();paymentLookupError.textContent='';paymentLookupResult.hidden=true;paymentLookupResult.textContent='';if(!reference){paymentLookupError.textContent='กรุณาใส่เลขอ้างอิง';return}paymentLookupButton.disabled=true;try{const d=await api(`/api/admin/consultation-payments/lookup?reference=${encodeURIComponent(reference)}`);paymentLookupResult.innerHTML=`<div class="grid"><div><b>เลขอ้างอิง PHIMOR</b><div>${esc(d.paymentReference)}</div></div><div><b>Omise Charge ID</b><div>${esc(d.providerChargeId||'-')}</div></div><div><b>สถานะ Order</b><div>${esc(d.orderStatus)} / ${esc(d.provisioningStatus)}</div></div><div><b>Consult Case</b><div>${esc(d.caseId||'-')} · ${esc(d.caseState||'-')}</div></div><div><b>ยอดชำระ</b><div>${esc((Number(d.amountMinor||0)/100).toFixed(2))} ${esc(d.currency)}</div></div><div><b>ชำระเมื่อ</b><div>${esc(paymentDate(d.paidAt))}</div></div><div><b>Payment processing</b><div>${esc(d.paymentProcessingStatus||'-')} ${d.paymentFailureCode?`· ${esc(d.paymentFailureCode)}`:''}</div></div><div><b>เข้าคิว/รับเคส</b><div>${esc(paymentDate(d.queuedAt))} / ${esc(paymentDate(d.acceptedAt))}</div></div></div>`;paymentLookupResult.hidden=false}catch(e){paymentLookupError.textContent=e.message||'ตรวจสอบรายการไม่สำเร็จ'}finally{paymentLookupButton.disabled=false}}
+    async function loadReliability(){reliabilityResult.textContent='กำลังตรวจสอบ...';try{const d=await api('/api/admin/operations/reliability');const n=d.notifications||{},states=d.integration?.states||{},scheduler=d.scheduler||{};reliabilityResult.innerHTML=`<div class="grid"><div><b>Notification</b><div>รอส่ง ${esc(n.pending??0)} · ล้มเหลว ${esc(n.dead??n.deadLetter??0)}</div></div><div><b>Integration</b><div>ลองใหม่ ${esc(states.retrying||0)} · หยุดแล้ว ${esc(states.dead||0)} · รอเชื่อม ${esc(states.pending_subject_mapping||0)}</div></div><div><b>Scheduler</b><div>งานที่ตั้งค่า ${esc(scheduler.configuredJobs||0)}</div></div></div>`}catch(e){reliabilityResult.textContent=e.message||'โหลดสถานะไม่สำเร็จ กรุณาลองอีกครั้ง'}}
     function formatCenterDate(value){return value?new Date(value).toLocaleDateString('th-TH',{timeZone:'Asia/Bangkok'}):''}
     function status(c){const state=fallbackDirectoryStatus(c),labels={active:'ใช้งานอยู่',trial:'ทดลองใช้',expired:'หมดอายุ',not_configured:'ยังไม่กำหนดแพ็กเกจ',not_started:'ยังไม่ถึงวันเริ่ม',suspended:'ระงับการใช้งาน'};return `<span class="pill ${['active','trial'].includes(state)?'ok':'bad'}">${esc(labels[state]||'ไม่พร้อมใช้งาน')}</span>`}
     function statusDetail(c){const state=fallbackDirectoryStatus(c),end=formatCenterDate(c.subscription?.expiresAt||c.subscriptionEndAt),remaining=c.subscription?.remainingDays;if(state==='trial')return end?`ทดลองใช้ถึง ${end}${Number.isFinite(remaining)?` · เหลือ ${remaining} วัน`:''}`:'ช่วงทดลองใช้';if(state==='active')return end?`ใช้งานถึง ${end}`:'ใช้งานอยู่';if(state==='expired')return end?`หมดอายุ ${end}`:'แพ็กเกจหมดอายุ';if(state==='not_started')return c.subscription?.startsAt?`เริ่มใช้ ${formatCenterDate(c.subscription.startsAt)}`:'ยังไม่ถึงวันเริ่ม';if(state==='suspended')return'ศูนย์ถูกระงับการใช้งาน โดยยังเก็บข้อมูลแพ็กเกจเดิมไว้';return'ผู้ดูแลระบบยังไม่ได้กำหนดแพ็กเกจ'}

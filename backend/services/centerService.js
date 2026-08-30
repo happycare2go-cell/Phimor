@@ -341,6 +341,14 @@ async function setActiveCenterForStaff(lineUserId, centerId) {
   return { ok: true };
 }
 
+async function getActiveCenterIdForStaff(lineUserId) {
+  const context = await StaffContexts.findOne((row) => row.line_user_id === lineUserId);
+  if (!context?.center_id) return null;
+  const membership = await CenterStaff.findOne((row) => row.line_user_id === lineUserId
+    && row.center_id === context.center_id && (!row.status || row.status === 'active'));
+  return membership ? context.center_id : null;
+}
+
 async function listCentersByStaffUser(lineUserId) {
   const memberships = await CenterStaff.findWhere((s) => s.line_user_id === lineUserId && (!s.status || s.status === 'active'));
   const centers = [];
@@ -660,5 +668,5 @@ module.exports = {
   removeStaffFromGroup,
   approveStaff, revokeStaff, createCenterManagedCareProfile, getOrCreateResidentInvite,
   transferOwner, reconcileAllCenterStaff,
-  setActiveCenterForStaff, listCentersByStaffUser,
+  setActiveCenterForStaff, getActiveCenterIdForStaff, listCentersByStaffUser,
 };

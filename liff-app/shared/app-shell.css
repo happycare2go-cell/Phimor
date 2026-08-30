@@ -1,0 +1,182 @@
+:root {
+  --phimor-font: "Sarabun", "Noto Sans Thai", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --phimor-navy: #1c2b64;
+  --phimor-blue: #2f5aa8;
+  --phimor-yellow: #deb14e;
+  --phimor-bg: #f5f7fa;
+  --phimor-card: #fff;
+  --phimor-text: #172044;
+  --phimor-muted: #5a6580;
+  --phimor-border: #dfe4ef;
+  --phimor-success: #0f6e56;
+  --phimor-warning: #7a5200;
+  --phimor-error: #b42318;
+  --phimor-space-1: 8px;
+  --phimor-space-2: 12px;
+  --phimor-space-3: 16px;
+  --phimor-space-4: 24px;
+  --phimor-space-5: 32px;
+  --phimor-radius: 16px;
+  --phimor-control-height: 44px;
+  --phimor-content-width: 1120px;
+  --phimor-mobile-nav-height: 72px;
+}
+
+html { background: var(--phimor-bg); }
+body { font-family: var(--phimor-font); }
+.phimor-shell, .phimor-shell *, .phimor-shell *::before, .phimor-shell *::after { box-sizing: border-box; }
+button, input, select, textarea { font-family: inherit; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--phimor-yellow);
+  outline: 3px solid color-mix(in srgb, var(--phimor-yellow) 78%, white);
+  outline-offset: 2px;
+}
+
+.phimor-shell {
+  width: 100%;
+  min-width: 0;
+}
+
+.phimor-shell__content {
+  width: min(100%, var(--phimor-content-width));
+  min-width: 0;
+  margin-inline: auto;
+  padding-bottom: calc(var(--phimor-mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 16px);
+}
+
+.phimor-shell__panel[hidden] { display: none !important; }
+[hidden] { display: none !important; }
+.sr-only { position:absolute !important; width:1px !important; height:1px !important; padding:0 !important; margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important; white-space:nowrap !important; border:0 !important; }
+
+.phimor-primary-nav {
+  position: fixed;
+  z-index: 80;
+  inset: auto 0 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  min-height: var(--phimor-mobile-nav-height);
+  padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
+  border-top: 1px solid var(--phimor-border);
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 -8px 24px rgba(28, 43, 100, .08);
+}
+
+.phimor-primary-nav__item {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 5px 3px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--phimor-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+}
+
+.phimor-primary-nav__item::before {
+  content: attr(data-shell-icon);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.phimor-primary-nav__item[aria-current="page"] {
+  background: #eef1fa;
+  color: var(--phimor-navy);
+  font-weight: 800;
+}
+
+.phimor-launch-grid,
+.phimor-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--phimor-space-2);
+}
+
+.phimor-launch-card {
+  appearance: none;
+  width: 100%;
+  min-height: 88px;
+  padding: 14px;
+  border: 1px solid var(--phimor-border);
+  border-radius: 14px;
+  background: var(--phimor-card);
+  color: var(--phimor-navy);
+  text-align: left;
+  cursor: pointer;
+}
+
+.phimor-launch-card strong,
+.phimor-launch-card span { display: block; }
+.phimor-launch-card span { margin-top: 5px; color: var(--phimor-muted); font-size: 12px; line-height: 1.45; }
+.phimor-launch-card:disabled { cursor: not-allowed; opacity: .58; }
+
+.phimor-shell-state {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  padding: 24px;
+  border: 1px dashed var(--phimor-border);
+  border-radius: var(--phimor-radius);
+  background: var(--phimor-card);
+  color: var(--phimor-muted);
+  text-align: center;
+}
+
+.phimor-shell-state button { margin-top: 12px; min-height: var(--phimor-control-height); }
+
+@media (max-width: 380px) {
+  .phimor-primary-nav__item { font-size: 10px; }
+  .phimor-launch-grid, .phimor-summary-grid { grid-template-columns: 1fr; }
+}
+
+@media (min-width: 900px) {
+  .phimor-shell {
+    display: grid;
+    grid-template-columns: 228px minmax(0, 1fr);
+    align-items: start;
+    max-width: 1440px;
+    margin-inline: auto;
+  }
+
+  .phimor-primary-nav {
+    position: sticky;
+    inset: 0 auto auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: calc(100vh - 96px);
+    padding: 24px 14px;
+    border-top: 0;
+    border-right: 1px solid var(--phimor-border);
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .phimor-primary-nav__item {
+    grid-template-columns: 28px 1fr;
+    place-items: center start;
+    width: 100%;
+    min-height: 48px;
+    padding: 10px 12px;
+    font-size: 14px;
+    text-align: left;
+  }
+
+  .phimor-primary-nav__item::before { font-size: 17px; }
+  .phimor-shell__content { padding: 24px 28px 48px; }
+  .phimor-launch-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}

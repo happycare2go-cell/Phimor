@@ -7,16 +7,18 @@
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="../environment.js"></script>
 <script src="../runtime-config.js"></script>
+<script src="../shared/app-shell.js"></script>
 <script src="../shared/clinical-action-dialog.js"></script>
 <script src="./lab-review-runtime.js"></script>
 <script src="./care-recording-ui.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
+<link rel="stylesheet" href="../shared/app-shell.css">
 <link rel="stylesheet" href="../shared/clinical-action-dialog.css">
 <link rel="stylesheet" href="./care-recording-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --red:#D64545; --gray:#5A6580; }
   *{box-sizing:border-box}
-  body{margin:0;font-family:'Sarabun','Noto Sans Thai',sans-serif;background:var(--bg);color:#1a1a2e;font-size:15px}
+  body{margin:0;font-family:'Sarabun','Noto Sans Thai',system-ui,sans-serif;background:var(--bg);color:#1a1a2e;font-size:15px;overflow-x:hidden}
   .hdr{background:var(--navy);color:#fff;padding:16px 18px}
   .hdr .logo{font-size:19px;font-weight:700}
   .hdr .sub{font-size:12px;opacity:.8;margin-top:2px}
@@ -45,7 +47,7 @@
   .btn-outline{background:#fff;color:var(--navy);border:1px solid var(--navy)}
   .btn-copy{background:#111;color:#fff;border:1px solid #111}
   .btn-danger{background:#FCEBEB;color:var(--red);border:1px solid var(--red)}
-  .btn-sm{padding:6px 12px;font-size:12px;border-radius:7px}
+  .btn-sm{padding:8px 12px;font-size:12px;border-radius:7px;min-height:44px}
   .row{display:flex;gap:8px}
   .row>*{flex:1}
   .resident-item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #EEF1F8}
@@ -101,6 +103,16 @@
   .lab-observation{border:1px solid #D8DEEC;border-radius:12px;padding:12px;margin-top:10px;background:#FAFBFD}
   .lab-observation__header{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .lab-review-note{font-size:12px;line-height:1.65;color:var(--gray);margin:8px 0 0}
+  .center-shell-content{padding:16px;min-height:55vh}.center-destination-state{margin-bottom:12px;color:var(--gray);font-size:13px}.center-destination-state:empty{display:none}.center-destination-state[data-tone="error"]{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px;border:1px solid #F0B4AE;border-radius:10px;background:#FFF4F2;color:#8F241A}.center-destination-state .btn{flex:0 0 auto;min-height:44px}
+  .center-home-heading{margin:0 0 5px;color:var(--navy);font-size:20px}.center-home-copy{margin:0;color:var(--gray);line-height:1.6}
+  .center-role-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}.center-role-summary>div{border:1px solid #E3E7F0;border-radius:12px;padding:12px;background:#FAFBFD}.center-role-summary strong{display:block;color:var(--navy);font-size:18px}.center-role-summary span{display:block;margin-top:4px;color:var(--gray);font-size:12px}
+  .center-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.center-action-card{width:100%;min-height:86px;text-align:left;border:1px solid #D9DFEC;border-radius:12px;background:#fff;padding:12px 14px;color:var(--navy);cursor:pointer}.center-action-card strong,.center-action-card span{display:block}.center-action-card span{margin-top:5px;color:var(--gray);font-size:12px;line-height:1.45}.center-action-card:disabled{opacity:.55;cursor:not-allowed}
+  .legacy-surface[hidden]{display:none!important}.legacy-surface{min-width:0}.more-back{margin-bottom:12px;min-height:44px}
+  #centerCareRoot[data-surface-mode="record"] .center-care__history,#centerCareRoot[data-surface-mode="record"] .center-care__review{display:none!important}
+  #centerCareRoot[data-surface-mode="work"] .center-care__history,#centerCareRoot[data-surface-mode="work"] #centerVitalForm,#centerCareRoot[data-surface-mode="work"] #centerDailyForm{display:none!important}
+  #centerCareRoot[data-surface-mode="history"] .center-care__review,#centerCareRoot[data-surface-mode="history"] #centerVitalForm,#centerCareRoot[data-surface-mode="history"] #centerDailyForm{display:none!important}
+  @media(max-width:390px){.center-action-grid,.center-role-summary{grid-template-columns:1fr}}
+  @media(min-width:900px){.center-shell-content{padding:24px 28px 48px}.modal{width:min(720px,calc(100vw - 280px));margin-inline:auto;border-radius:16px}.modal-bg{align-items:center}}
 </style>
 </head>
 <body>
@@ -133,18 +145,27 @@
 <div class="modal-bg" id="confirmActionModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmActionTitle"><h3 id="confirmActionTitle">ยืนยันการดำเนินการ</h3><p id="confirmActionMessage" style="line-height:1.7"></p><div class="row"><button class="btn btn-outline" onclick="finishConfirm(false)">กลับ</button><button class="btn btn-danger" id="confirmActionButton" onclick="finishConfirm(true)">ยืนยัน</button></div></div></div>
 <div id="packageBanner" style="display:none;margin:12px 16px;padding:12px;border-radius:10px;background:#FFF3CD;color:#7A5200;font-size:13px"></div>
 
-<div class="tabs">
-  <div class="tab active" data-view="residents">ผู้พัก</div>
-  <div class="tab" data-view="care" id="careRecordTab" hidden>บันทึกการดูแล</div>
-  <div class="tab" data-view="transport">รอดำเนินการ</div>
-  <div class="tab" data-view="ratecard">ราคาบริการ</div>
-  <div class="tab" data-view="staff" id="staffTab">ทีมงาน</div>
-</div>
+<div class="phimor-shell" id="centerAppShell">
+<nav class="phimor-primary-nav" aria-label="เมนูหลักศูนย์">
+  <button type="button" class="phimor-primary-nav__item" data-shell-destination="home" data-shell-icon="⌂">หน้าหลัก</button>
+  <button type="button" class="phimor-primary-nav__item" data-shell-destination="residents" data-shell-icon="♙">ผู้พัก</button>
+  <button type="button" class="phimor-primary-nav__item" data-shell-destination="record" data-shell-icon="＋">บันทึก</button>
+  <button type="button" class="phimor-primary-nav__item" data-shell-destination="work" data-shell-icon="✓">งาน</button>
+  <button type="button" class="phimor-primary-nav__item" data-shell-destination="more" data-shell-icon="•••">เพิ่มเติม</button>
+</nav>
+<main class="phimor-shell__content center-shell-content" id="centerShellContent">
+
+<section class="phimor-shell__panel" data-shell-panel="home" id="view-home" aria-labelledby="centerHomeTitle">
+  <div class="card"><h1 class="center-home-heading" id="centerHomeTitle">หน้าหลัก</h1><p class="center-home-copy" id="centerHomeIntro">กำลังเตรียมภาพรวมที่ตรงกับบทบาทของคุณ...</p><div id="centerHomeSummary" class="center-role-summary"></div></div>
+  <div id="centerHomeState" class="center-destination-state" role="status" aria-live="polite"></div>
+  <div class="card"><h3>ทางลัด</h3><div id="centerHomeActions" class="center-action-grid"></div></div>
+  <div class="card" id="centerHomeOperational"><h3>งานที่มีอยู่ในระบบ</h3><div id="centerHomeOperationalContent" class="resident-meta">เลือกทางลัดเพื่อเปิดรายการล่าสุด โดยระบบไม่อ้างว่าเป็นงานที่มอบหมายให้คุณ</div></div>
+</section>
 
 <!-- ═══ S2: รายชื่อผู้พัก ═══ -->
-<div class="view active" id="view-residents">
+<section class="phimor-shell__panel" data-shell-panel="residents" id="view-residents" aria-labelledby="residentsTitle" hidden>
   <div class="mascot-callout">
-    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ภาพรวมสาขา</span><h2 class="mascot-callout__title">ดูแลผู้พักและข้อมูลสุขภาพสำคัญได้จากหน้านี้ครับ</h2><p class="mascot-callout__text">เลือกผู้พักเพื่อดู Clinical Summary แก้ข้อมูล หรือบันทึกรายการยา</p></div>
+    <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ผู้พัก</span><h2 class="mascot-callout__title" id="residentsTitle">ค้นหาและดูแลผู้พักในศูนย์นี้ครับ</h2><p class="mascot-callout__text">การเพิ่มผู้พักแยกจากรายชื่อ เพื่อให้ค้นหางานประจำได้ง่ายขึ้น</p></div>
     <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
   </div>
   <div class="card" id="directCare2goButton" style="display:none">
@@ -176,13 +197,38 @@
     </div>
   </div>
 
-  <div class="search"><input type="text" id="searchInput" placeholder="ค้นหาชื่อผู้พัก..." oninput="renderResidents()"></div>
+  <div id="residentsDestinationState" class="center-destination-state" role="status" aria-live="polite"></div>
+  <div class="search"><label class="sr-only" for="searchInput">ค้นหาชื่อผู้พัก</label><input type="text" id="searchInput" placeholder="ค้นหาชื่อผู้พัก..." oninput="renderResidents()"></div>
   <div id="residentList"></div>
-</div>
+</section>
 
-<div class="view" id="view-care">
-  <div id="centerCareRoot"></div>
-</div>
+<section class="phimor-shell__panel" data-shell-panel="record" id="view-record" aria-labelledby="recordTitle" hidden>
+  <div class="card"><h2 id="recordTitle" style="margin:0;color:var(--navy)">บันทึกข้อมูล</h2><p class="center-home-copy">เลือกประเภทการบันทึก แล้วใช้แบบฟอร์มเดิมที่ตรวจสอบสิทธิ์และความสามารถของศูนย์</p></div>
+  <div id="recordDestinationState" class="center-destination-state" role="status" aria-live="polite"></div>
+  <div class="card"><div class="center-action-grid">
+    <button type="button" class="center-action-card" id="recordVitalAction" onclick="openRecordingForm('vital')"><strong>บันทึกสัญญาณชีพ</strong><span>กรอกเฉพาะค่าที่วัดได้จริง</span></button>
+    <button type="button" class="center-action-card" id="recordDailyAction" onclick="openRecordingForm('daily')"><strong>บันทึกการดูแล</strong><span>ส่งให้ผู้จัดการตรวจตาม workflow เดิม</span></button>
+    <button type="button" class="center-action-card" onclick="showDocumentIntakeGuidance()"><strong>ส่งรูปเอกสาร</strong><span>ส่งในแชทส่วนตัวกับพี่หมอ โดยใช้ศูนย์ที่เลือกอยู่</span></button>
+  </div></div>
+  <div id="recordCareHost"><div id="centerCareRoot"></div></div>
+</section>
+
+<section class="phimor-shell__panel" data-shell-panel="work" id="view-work" aria-labelledby="workTitle" hidden>
+  <div class="card"><h2 id="workTitle" style="margin:0;color:var(--navy)">งาน</h2><p class="center-home-copy">รายการรอตรวจ รายการส่งกลับ นัดหมาย และการเดินทางตามสิทธิ์ของบทบาท</p></div>
+  <div id="workDestinationState" class="center-destination-state" role="status" aria-live="polite"></div>
+  <div class="card"><div class="center-action-grid"><button type="button" class="center-action-card" onclick="showCareWork()"><strong>รายการรอตรวจ / ส่งกลับ</strong><span>ใช้สถานะจริงจาก Daily Care</span></button><button type="button" class="center-action-card" onclick="showCareHistory()"><strong>ประวัติและการแก้ไข</strong><span>ดูรายการที่ยืนยันแล้วตามสิทธิ์</span></button></div></div>
+  <div id="workCareHost"></div>
+  <div id="workTransportHost"></div>
+</section>
+
+<section class="phimor-shell__panel" data-shell-panel="more" id="view-more" aria-labelledby="moreTitle" hidden>
+  <div class="card"><h2 id="moreTitle" style="margin:0;color:var(--navy)">เพิ่มเติม</h2><p class="center-home-copy">แสดงเฉพาะการตั้งค่าและเครื่องมือที่บทบาทของคุณมีสิทธิ์</p></div>
+  <div id="moreDestinationState" class="center-destination-state" role="status" aria-live="polite"></div>
+  <div class="card" id="moreMenuCard"><div id="centerMoreActions" class="center-action-grid"></div></div>
+  <section class="card" id="centerGroupOperations" hidden aria-labelledby="centerGroupOperationsTitle"><h3 id="centerGroupOperationsTitle">กลุ่ม LINE สำหรับงานศูนย์</h3><p class="resident-meta">เจ้าของหรือผู้จัดการสร้างรหัส แล้วส่งด้วยบัญชี LINE เดิมในกลุ่มภายใน 15 นาที</p><button class="btn btn-outline" style="width:100%;min-height:44px" onclick="createStaffBindingCode()">สร้างรหัสผูกกลุ่ม</button><div id="staffBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div></section>
+  <div id="moreDetailHost"></div>
+  <div id="moreSurfaceParking" hidden></div>
+</section>
 
 <div class="modal-bg" id="appointmentModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="appointmentModalTitle">
@@ -207,7 +253,7 @@
 <!-- ═══ S4: แก้ไขการ์ดก่อนส่ง — เข้าถึงผ่าน ?view=edit-card&cardId=xxx เท่านั้น ไม่อยู่ใน Tab Bar ปกติ ═══
      (ข้อ E3-E8: กรอกค่า AI ไว้ล่วงหน้า + แสดงรูปต้นฉบับ + Date/Time Picker + เปลี่ยนผู้พักได้
      + กลับไปการ์ดยืนยันเสมอ ไม่ส่งตรง + ไฮไลต์ช่องที่ถูกแก้) -->
-<div class="view" id="view-edit-card">
+<section class="legacy-surface" id="view-edit-card" hidden>
   <div class="mascot-callout mascot-callout--important mascot-callout--compact">
     <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ต้องตรวจสอบ</span><h2 class="mascot-callout__title">เทียบข้อมูลกับเอกสารต้นฉบับก่อนส่งให้ครอบครัวครับ</h2><p class="mascot-callout__text">แก้ไขเฉพาะข้อมูลที่ไม่ตรง แล้วบันทึกเพื่อกลับไปยืนยันอีกครั้ง</p></div>
     <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
@@ -285,7 +331,7 @@
   </div>
 
   <button class="btn btn-primary" id="ecGenericSaveButton" onclick="saveCardEdit()">บันทึกและกลับไปตรวจ</button>
-</div>
+</section>
 
 <!-- ═══ S3: แก้ไขผู้พัก (Modal) ═══ -->
 <div class="modal-bg" id="editResidentModal">
@@ -326,7 +372,7 @@
 </div></div>
 
 <!-- ═══ FR-K1, K2: ตารางนัดของทุกผู้พักในศูนย์ + FR-L ชั้นที่ 2: รอศูนย์ตัดสินใจ ═══ -->
-<div class="view" id="view-transport">
+<section class="legacy-surface" id="view-transport" hidden>
   <div class="mascot-callout mascot-callout--important mascot-callout--compact">
     <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">นัดและการเดินทาง</span><h2 class="mascot-callout__title">รายการที่ต้องตัดสินใจจะแสดงเด่นไว้ให้ครับ</h2><p class="mascot-callout__text">ตรวจวันนัดและเลือกว่าศูนย์จัดการเองหรือส่งต่อ Care2Go</p></div>
     <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
@@ -339,10 +385,10 @@
     <h3>รอศูนย์ตัดสินใจ</h3>
     <div id="transportList"></div>
   </div>
-</div>
+</section>
 
 <!-- ═══ FR-M: ราคาบริการของศูนย์ ═══ -->
-<div class="view" id="view-ratecard">
+<section class="legacy-surface" id="view-ratecard" hidden>
   <div class="mascot-callout mascot-callout--compact">
     <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">บริการของสาขา</span><h2 class="mascot-callout__title">กำหนดราคาและบริการที่สาขารับจัดการได้ครับ</h2><p class="mascot-callout__text">รายการที่ปิดไว้จะเสนอทางเลือก Care2Go ให้แทน</p></div>
     <img class="mascot-callout__image" src="../assets/mascot/phimor-review.png" alt="">
@@ -368,21 +414,13 @@
     </div>
     <div style="margin-top:14px"><button id="saveRateCardButton" class="btn btn-primary" onclick="saveRateCard()">บันทึกราคา</button></div>
   </div>
-</div>
+</section>
 
 <!-- ═══ FR-A4: ทีมงาน ═══ -->
-<div class="view" id="view-staff">
+<section class="legacy-surface" id="view-staff" hidden>
   <div class="mascot-callout mascot-callout--success mascot-callout--compact">
     <div class="mascot-callout__copy"><span class="mascot-callout__eyebrow">ทีมงานและสิทธิ์</span><h2 class="mascot-callout__title">จัดการผู้จัดการ พนักงาน และกลุ่มของสาขาได้ที่นี่ครับ</h2><p class="mascot-callout__text">ถอนสิทธิ์ผู้ที่ออกจากงานทันที เพื่อหยุดการเข้าถึงข้อมูลผู้พัก</p></div>
     <img class="mascot-callout__image" src="../assets/mascot/phimor-important.png" alt="">
-  </div>
-  <div class="card">
-    <h3>📍 ข้อมูลสาขาสำหรับประสาน Care2Go</h3>
-    <label>ที่อยู่/จุดรับของสาขา</label>
-    <textarea id="centerAddress" rows="3" placeholder="กรอกที่อยู่และจุดสังเกต"></textarea>
-    <label>เบอร์ติดต่อเจ้าของศูนย์</label>
-    <input id="centerContactPhone" type="tel" placeholder="เช่น 0812345678">
-    <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveCenterSettings()">บันทึกข้อมูลสาขา</button></div>
   </div>
   <div class="card">
     <h3>➕ แต่งตั้งผู้จัดการ</h3>
@@ -390,13 +428,22 @@
     <select id="newManagerId"><option value="">เลือกพนักงาน</option></select>
     <div style="margin-top:12px"><button class="btn btn-primary" onclick="appointManager()">แต่งตั้ง</button></div>
   </div>
-  <div class="card">
-    <h3>🔗 ผูกกลุ่มพนักงานของสาขานี้</h3>
-    <p style="font-size:12px;color:var(--gray)">สร้างรหัส แล้วส่งรหัสในกลุ่มหลังเชิญพี่หมอเข้ากลุ่ม รหัสมีอายุ 15 นาที</p>
-    <button class="btn btn-outline" style="width:100%" onclick="createStaffBindingCode()">สร้างรหัสผูกกลุ่ม</button>
-    <div id="staffBindingCode" style="font-weight:700;text-align:center;margin-top:10px"></div>
-  </div>
   <div class="card"><h3>รายชื่อทีมงาน</h3><div id="staffList"></div></div>
+</section>
+
+<section class="legacy-surface" id="view-settings" hidden>
+  <div class="card">
+    <h3>ข้อมูลและการตั้งค่าศูนย์</h3>
+    <p class="resident-meta">ใช้ข้อมูลนี้สำหรับการประสานงานของศูนย์ ไม่ใช่ข้อมูลสุขภาพของผู้พัก</p>
+    <label for="centerAddress">ที่อยู่/จุดรับของศูนย์</label>
+    <textarea id="centerAddress" rows="3" placeholder="กรอกที่อยู่และจุดสังเกต"></textarea>
+    <label for="centerContactPhone">เบอร์ติดต่อศูนย์</label>
+    <input id="centerContactPhone" type="tel" placeholder="เช่น 0812345678">
+    <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveCenterSettings()">บันทึกข้อมูลศูนย์</button></div>
+  </div>
+</section>
+
+</main>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -410,6 +457,14 @@ let CENTER_ID = null;
 let CENTERS = [];
 let residentsCache = [];
 let CURRENT_ROLE = null;
+let CENTER_SHELL = null;
+let CENTER_CONTEXT_GENERATION = 0;
+let CENTER_ENTITLED = true;
+let CENTER_UI_CAPABILITIES = {};
+let CENTER_RECORD_CAPABILITIES = {};
+let CENTER_DESTINATION = 'home';
+let MORE_SURFACE = null;
+const CENTER_DESTINATIONS = Object.freeze(['home','residents','record','work','more']);
 const CENTER_GROUP_CODE_DISPLAY = new Map();
 let centerMedicationDraftImage = null;
 let centerMedicationAwaitingConfirmation = false;
@@ -441,18 +496,22 @@ function renderLineIdentity(profile){
 }
 
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._hideTimer); t._hideTimer=setTimeout(()=>t.classList.remove('show'),Math.max(3200,Math.min(6500,String(msg).length*90))); }
-function openModal(id){ document.getElementById(id).classList.add('show'); }
-function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+const modalFocusOrigins=new WeakMap();
+function openModal(id){const overlay=document.getElementById(id);if(!overlay)return;modalFocusOrigins.set(overlay,document.activeElement);overlay.classList.add('show');const dialog=overlay.querySelector('[role="dialog"],.modal');if(dialog&&!dialog.hasAttribute('role')){dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true')}setTimeout(()=>{const target=overlay.querySelector('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])');target?.focus()},0)}
+function closeModal(id){const overlay=document.getElementById(id);if(!overlay)return;overlay.classList.remove('show');const origin=modalFocusOrigins.get(overlay);modalFocusOrigins.delete(overlay);if(origin?.isConnected)setTimeout(()=>origin.focus(),0)}
 function centerConditionOptions(selected=''){
   const values=[...new Set([...STANDARD_CONDITIONS,...centerMedicationConditions,...(selected?[selected]:[])])];
   return `<option value="">ไม่ระบุ/ไม่พบในเอกสาร</option>`+values.map(x=>`<option value="${esc(x)}" ${x===selected?'selected':''}>${esc(x)}</option>`).join('');
 }
 
 async function api(path, opts={}) {
+  const requestGeneration=CENTER_CONTEXT_GENERATION;
+  const contextGuard=opts.contextGuard!==false;
+  const fetchOptions={...opts};delete fetchOptions.contextGuard;
   const res = await fetch(BACKEND_URL + path, {
-    ...opts,
+    ...fetchOptions,
     cache: 'no-store',
-    headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(opts.headers||{}) },
+    headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID, ...(fetchOptions.headers||{}) },
   });
   const data = await res.json().catch(()=>({}));
   if (!res.ok) {
@@ -460,24 +519,22 @@ async function api(path, opts={}) {
     toast(message);
     const error = new Error(message); error.status = res.status; throw error;
   }
+  if(contextGuard&&requestGeneration!==CENTER_CONTEXT_GENERATION){const error=new Error('บริบทศูนย์เปลี่ยนแล้ว');error.stale=true;throw error}
   return data;
 }
 
-document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-  document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
-  t.classList.add('active');
-  document.getElementById('view-'+t.dataset.view).classList.add('active');
-  if (t.dataset.view === 'transport') loadTransport();
-  if (t.dataset.view === 'ratecard') loadRateCard();
-  if (t.dataset.view === 'staff') loadStaff();
-});
+document.addEventListener('keydown',(event)=>{const overlay=document.querySelector('.modal-bg.show');if(!overlay)return;if(event.key==='Escape'){event.preventDefault();closeModal(overlay.id);return}if(event.key!=='Tab')return;const focusable=[...overlay.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')].filter((node)=>node.offsetParent!==null);if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}});
 
 // ── S2: ผู้พัก ──
 async function loadResidents() {
-  const data = await api('/api/residents?centerId=' + CENTER_ID);
+  const requestedCenterId=CENTER_ID,requestedGeneration=CENTER_CONTEXT_GENERATION;
+  const data = await api('/api/residents?centerId=' + encodeURIComponent(requestedCenterId));
+  if(requestedGeneration!==CENTER_CONTEXT_GENERATION||requestedCenterId!==CENTER_ID)return{stale:true};
   residentsCache = data.residents;
+  RESIDENTS_LOADED_GENERATION=requestedGeneration;
   renderResidents();
+  renderCenterHome();
+  return{stale:false};
 }
 function renderResidents() {
   const q = document.getElementById('searchInput').value.trim().toLowerCase();
@@ -746,9 +803,6 @@ async function saveRateCard() {
 
 // ── FR-A4: ทีมงาน ──
 async function loadStaff() {
-  const center = CENTERS.find(c => c.center_id === CENTER_ID) || {};
-  document.getElementById('centerAddress').value = center.address || '';
-  document.getElementById('centerContactPhone').value = center.contact_phone || '';
   const data = await api('/api/center/staff?centerId=' + CENTER_ID);
   const labels = { owner:'เจ้าของศูนย์', manager:'ผู้จัดการ', staff:'พนักงาน' };
   document.getElementById('staffList').innerHTML = data.staff.map(s => `
@@ -761,13 +815,14 @@ async function loadStaff() {
     .filter(s => s.role === 'staff' && (!s.status || s.status === 'active'))
     .map(s => `<option value="${esc(s.staff_id)}">${esc(s.display_identity)}</option>`).join('');
 }
+function loadCenterSettings(){const center=CENTERS.find((item)=>item.center_id===CENTER_ID)||{};centerAddress.value=center.settings?.address||'';centerContactPhone.value=center.settings?.contactPhone||''}
 async function saveCenterSettings() {
   const updated = await api('/api/center/settings?centerId=' + CENTER_ID, { method:'PATCH', body:JSON.stringify({
     address:document.getElementById('centerAddress').value,
     contactPhone:document.getElementById('centerContactPhone').value,
   }) });
   const index = CENTERS.findIndex(c => c.center_id === CENTER_ID);
-  if (index >= 0) CENTERS[index] = { ...CENTERS[index], ...updated };
+  if (index >= 0) CENTERS[index] = { ...CENTERS[index], settings:{...CENTERS[index].settings,...updated.settings} };
   toast('บันทึกข้อมูลสาขาแล้ว');
 }
 async function appointManager() {
@@ -801,41 +856,70 @@ async function copyForwardText(text){
   }catch(_){window.prompt('กดค้างเพื่อคัดลอกข้อความนี้',text)}
 }
 
-async function selectCenter(centerId) {
-  centerCareUi.clear();
-  CENTER_GROUP_CODE_DISPLAY.clear();
-  const center = CENTERS.find(c => c.center_id === centerId);
-  if (!center) return toast('ไม่พบสาขาที่คุณมีสิทธิ์');
-  if (!applySelectedCenterContext(center)) return;
-  await loadResidents();
-  await syncCenterCareContext();
-  const activeView = document.querySelector('.tab.active')?.dataset.view;
-  if (activeView === 'staff') await loadStaff();
-  if (activeView === 'transport') await loadTransport();
-  if (activeView === 'ratecard') await loadRateCard();
+let RESIDENTS_LOADED_GENERATION=-1;
+let CARE_CONTEXT_READY_GENERATION=-1;
+
+function roleCapabilities(role){
+  const manage=role==='owner'||role==='manager';
+  return{canManageResidents:manage,canCreateResident:manage,canReviewDailyCare:manage,canFinalizeDailyCare:manage,
+    canManageTeam:role==='owner',canManageCenterSettings:role==='owner',canManageRateCard:manage,
+    canBindCenterGroup:manage,canIssueFamilyGroupCode:manage,canIssueOwnershipClaim:manage};
+}
+
+function setDestinationState(destination,message='',tone=''){
+  const node=document.getElementById(`${destination}DestinationState`)||document.getElementById('centerHomeState');
+  if(!node)return;node.replaceChildren();node.dataset.tone=tone;
+  if(message){const text=document.createElement('span');text.textContent=message;node.append(text)}
+  if(message&&tone==='error'){const retry=document.createElement('button');retry.type='button';retry.className='btn btn-outline btn-sm';retry.textContent='ลองอีกครั้ง';retry.addEventListener('click',()=>loadCurrentCenterDestination().catch(()=>{}));node.append(retry)}
+}
+
+function closeCenterModals(){document.querySelectorAll('.modal-bg.show').forEach((overlay)=>closeModal(overlay.id));document.querySelectorAll('dialog[open]').forEach((dialog)=>{try{dialog.close()}catch(_){dialog.removeAttribute('open')}})}
+
+function invalidateCenterState(){
+  CENTER_CONTEXT_GENERATION+=1;RESIDENTS_LOADED_GENERATION=-1;CARE_CONTEXT_READY_GENERATION=-1;
+  residentsCache=[];CENTER_RECORD_CAPABILITIES={};CENTER_GROUP_CODE_DISPLAY.clear();centerCareUi.clear();editCardRequestGuard.invalidate();
+  currentCard=null;currentCardOriginal=null;currentLabCorrectionContext=null;MORE_SURFACE=null;
+  closeCenterModals();['residentList','centerApptList','transportList','staffList'].forEach((id)=>{const node=document.getElementById(id);if(node)node.replaceChildren()});
+  document.getElementById('moreDetailHost').replaceChildren();document.getElementById('centerGroupOperations').hidden=true;
+  document.getElementById('staffBindingCode').replaceChildren();
+}
+
+async function selectCenter(centerId,{initial=false}={}) {
+  const previousId=CENTER_ID,previousCenter=CENTERS.find((item)=>item.center_id===CENTER_ID);
+  const requested=CENTERS.find((item)=>item.center_id===centerId);
+  if(!requested){document.getElementById('centerSelector').value=previousId||'';return toast('ไม่พบสาขาที่คุณมีสิทธิ์')}
+  if(!initial&&centerId===previousId)return loadCurrentCenterDestination();
+  invalidateCenterState();CENTER_ID=null;CURRENT_ROLE=null;
+  const selector=document.getElementById('centerSelector');selector.disabled=true;document.getElementById('centerNameLabel').textContent='กำลังเปลี่ยนศูนย์...';
+  try{
+    const result=await api('/api/center/active-center',{method:'POST',body:JSON.stringify({centerId}),contextGuard:false});
+    const center=result.center||requested,index=CENTERS.findIndex((item)=>item.center_id===centerId);
+    if(index>=0)CENTERS[index]={...requested,...center};
+    applySelectedCenterContext(CENTERS[index]||center);selector.value=centerId;
+    await loadCurrentCenterDestination();
+  }catch(error){
+    if(previousCenter){applySelectedCenterContext(previousCenter);selector.value=previousId;await loadCurrentCenterDestination().catch(()=>{})}
+    else{selector.value='';document.getElementById('centerNameLabel').textContent=error.message||'เปลี่ยนศูนย์ไม่สำเร็จ'}
+  }finally{selector.disabled=false}
 }
 
 window.addEventListener('pagehide',()=>CENTER_GROUP_CODE_DISPLAY.clear());
 
 function applyRoleControls(role){
-  const canManage=role==='owner'||role==='manager';
-  document.getElementById('addResidentCard').style.display=canManage?'':'none';
-  document.querySelector('.tab[data-view="transport"]').style.display=canManage?'':'none';
-  document.querySelector('.tab[data-view="ratecard"]').style.display=canManage?'':'none';
-  document.getElementById('staffTab').style.display=role==='owner'?'':'none';
-  const active=document.querySelector('.tab.active');
-  if(active&&active.style.display==='none')document.querySelector('.tab[data-view="residents"]').click();
+  const capabilities=CENTER_UI_CAPABILITIES;
+  document.getElementById('addResidentCard').hidden=!capabilities.canCreateResident;
+  renderCenterHome();renderMoreActions();
 }
 
 function applySelectedCenterContext(center){
   CENTER_ID=center.center_id;
   CURRENT_ROLE=center.myRole;
+  CENTER_UI_CAPABILITIES={...roleCapabilities(center.myRole),...(center.uiCapabilities||{})};
   const roleLabel=({owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[center.myRole]||center.myRole);
   document.getElementById('centerNameLabel').textContent=`${roleLabel} · ${center.name}`;
   document.getElementById('centerSelector').value=center.center_id;
-  applyRoleControls(center.myRole);
   const allowed=applySubscription(center);
-  if(allowed&&!document.querySelector('.tab.active'))document.querySelector('.tab[data-view="residents"]').click();
+  applyRoleControls(center.myRole);
   return allowed;
 }
 async function removeManager(id) {
@@ -847,18 +931,78 @@ async function removeManager(id) {
 
 function applySubscription(center) {
   const banner=document.getElementById('packageBanner'), s=center.subscription||{};
+  CENTER_ENTITLED=Boolean(s.allowed);
   if (!s.allowed) {
     banner.style.display='block';
     banner.textContent = s.code==='center_suspended' ? 'ศูนย์นี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ' : `แพ็กเกจพี่หมอของสาขานี้ยังไม่พร้อมหรือหมดอายุแล้ว${s.expiresAt?' เมื่อ '+new Date(s.expiresAt).toLocaleDateString('th-TH'):''} กรุณาติดต่อเจ้าหน้าที่`;
-    document.querySelector('.tabs').style.display='none'; document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.querySelectorAll('[data-shell-destination="residents"],[data-shell-destination="record"],[data-shell-destination="work"]').forEach((button)=>{button.disabled=true;button.setAttribute('aria-disabled','true')});
     return false;
   }
-  document.querySelector('.tabs').style.display='flex';
+  document.querySelectorAll('[data-shell-destination="residents"],[data-shell-destination="record"],[data-shell-destination="work"]').forEach((button)=>{button.disabled=false;button.removeAttribute('aria-disabled')});
   if (s.needsConfiguration) { banner.style.display='block'; banner.textContent='สาขานี้เป็นข้อมูลเดิมที่ยังไม่ได้กำหนดวันหมดอายุ กรุณาติดต่อผู้ดูแลระบบ'; }
   else if (s.remainingDays<=3) { banner.style.display='block'; banner.textContent=`แพ็กเกจจะหมดอายุวันที่ ${new Date(s.expiresAt).toLocaleDateString('th-TH')} กรุณาติดต่อเจ้าหน้าที่เพื่อต่ออายุ`; }
   else banner.style.display='none';
   return true;
 }
+
+function renderCenterHome(){
+  if(!CENTER_ID)return;
+  const center=CENTERS.find((item)=>item.center_id===CENTER_ID)||{},roleLabel={owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[CURRENT_ROLE]||CURRENT_ROLE;
+  const intro={owner:'ดูภาพรวมการดำเนินงาน แล้วเปิดการตั้งค่าที่ใช้ไม่บ่อยจากหน้าเพิ่มเติม',manager:'เปิดงานรอตรวจ บันทึกข้อมูล และจัดการนัดหมายตามสิทธิ์ของผู้จัดการ',staff:'บันทึกข้อมูลจริงและแก้ไขรายการที่ถูกส่งกลับ โดยไม่มีการอ้างว่าเป็นงานที่มอบหมาย'}[CURRENT_ROLE]||'เลือกงานที่ต้องการดำเนินการ';
+  centerHomeIntro.textContent=`${roleLabel} · ${center.name} — ${intro}`;
+  const packageText=center.subscription?.allowed?(center.subscription?.expiresAt?new Date(center.subscription.expiresAt).toLocaleDateString('th-TH'):'ใช้งานได้'):'ไม่พร้อมใช้งาน';
+  const groupState=center.centerStaffGroup?.status==='verified'?'พร้อม':'ยังไม่พร้อม';
+  const workflow=centerCareUi.workflowSummary();
+  centerHomeSummary.innerHTML=`<div><strong>${esc(residentsCache.length)}</strong><span>ผู้พักปัจจุบัน</span></div><div><strong>${esc(workflow.returned)}</strong><span>รายการส่งกลับที่มีอยู่</span></div>${CURRENT_ROLE!=='staff'?`<div><strong>${esc(workflow.awaitingReview)}</strong><span>รายงานรอตรวจ</span></div>`:''}<div><strong>${esc(packageText)}</strong><span>${CURRENT_ROLE==='owner'?'สถานะแพ็กเกจ':'สิทธิ์ศูนย์'}</span></div>${CURRENT_ROLE!=='staff'?`<div><strong>${esc(groupState)}</strong><span>กลุ่ม LINE สำหรับงานศูนย์</span></div>`:''}`;
+  const actions=[
+    ['บันทึกสัญญาณชีพ',CENTER_RECORD_CAPABILITIES.vital_signs_v1?'ค่าที่วัดได้จริง':'ศูนย์นี้ยังไม่ได้เปิดใช้',"navigateCenter('record').then(()=>openRecordingForm('vital'))",CENTER_RECORD_CAPABILITIES.vital_signs_v1!==true],
+    ['บันทึกการดูแล',CENTER_RECORD_CAPABILITIES.daily_care_v1?'ส่งตาม workflow เดิม':'ศูนย์นี้ยังไม่ได้เปิดใช้',"navigateCenter('record').then(()=>openRecordingForm('daily'))",CENTER_RECORD_CAPABILITIES.daily_care_v1!==true],
+    ['ผู้พัก','ค้นหาและดูข้อมูลตามสิทธิ์',"navigateCenter('residents')",false],['งาน','รายการส่งกลับ/รอตรวจตามบทบาท',"navigateCenter('work')",false],
+  ];
+  if(CURRENT_ROLE==='staff')actions.splice(2,0,['ส่งรูปเอกสาร','ผ่านแชทส่วนตัวกับพี่หมอ','showDocumentIntakeGuidance()']);
+  if(CURRENT_ROLE==='owner')actions.push(
+    ['ทีมงานและบทบาท','จัดการสิทธิ์บุคลากร',"navigateCenter('more').then(()=>openMoreSurface('staff'))"],
+    ['แพ็กเกจ','ดูสถานะโดยไม่มีการซื้อเอง',"navigateCenter('more').then(()=>openMoreSurface('package'))"],
+    ['กลุ่ม LINE','ตรวจความพร้อมกลุ่มงานศูนย์',"navigateCenter('more').then(()=>openMoreSurface('group'))"],
+    ['ตั้งค่าศูนย์','ข้อมูลติดต่อและจุดรับ',"navigateCenter('more').then(()=>openMoreSurface('settings'))"],
+  );
+  centerHomeActions.innerHTML=actions.map(([title,copy,action,disabled=false])=>`<button type="button" class="center-action-card" onclick="${action}"${disabled?' disabled aria-disabled="true"':''}><strong>${esc(title)}</strong><span>${esc(copy)}</span></button>`).join('');
+  centerHomeOperationalContent.textContent=CURRENT_ROLE==='staff'?`${workflow.returned?`มีรายการส่งกลับ ${workflow.returned} รายการ เปิด “งาน” เพื่อแก้ไข`:'ยังไม่มีรายการส่งกลับ'} · ระบบยังไม่มีข้อมูลมอบหมายงานรายบุคคล`:CURRENT_ROLE==='manager'?`มีรายงานรอตรวจ ${workflow.awaitingReview} รายการ และส่งกลับ ${workflow.returned} รายการ · เปิด “งาน” สำหรับนัดหมายและการเดินทาง`:`มีรายงานรอตรวจ ${workflow.awaitingReview} รายการ และส่งกลับ ${workflow.returned} รายการ · เปิด “เพิ่มเติม” สำหรับทีมงาน แพ็กเกจ กลุ่ม LINE และการตั้งค่าศูนย์`;
+}
+
+function renderMoreActions(){
+  if(!CURRENT_ROLE)return;const actions=[];
+  if(CENTER_UI_CAPABILITIES.canManageTeam)actions.push(['ทีมงานและบทบาท','อนุมัติ แต่งตั้ง หรือถอนสิทธิ์',"openMoreSurface('staff')"]);
+  if(CENTER_UI_CAPABILITIES.canManageCenterSettings)actions.push(['ตั้งค่าศูนย์','ข้อมูลติดต่อและจุดรับของศูนย์',"openMoreSurface('settings')"]);
+  if(CENTER_UI_CAPABILITIES.canBindCenterGroup)actions.push(['กลุ่ม LINE','สร้างรหัสผูกกลุ่มงานศูนย์',"openMoreSurface('group')"]);
+  if(CENTER_UI_CAPABILITIES.canManageRateCard)actions.push(['ราคาบริการ','กำหนดบริการที่ศูนย์รับจัดการ',"openMoreSurface('ratecard')"]);
+  if(CURRENT_ROLE==='owner')actions.push(['แพ็กเกจ','ดูสถานะปัจจุบัน (ยังไม่มี self-service)',"openMoreSurface('package')"]);
+  actions.push(['ช่วยเหลือ','คู่มือและช่องทางติดต่อ',"openMoreSurface('help')"]);
+  centerMoreActions.innerHTML=actions.map(([title,copy,action])=>`<button type="button" class="center-action-card" onclick="${action}"><strong>${esc(title)}</strong><span>${esc(copy)}</span></button>`).join('');
+}
+
+function resetMoreSurface(){
+  const parking=document.getElementById('moreSurfaceParking');
+  ['view-ratecard','view-staff','view-settings'].forEach((id)=>{const node=document.getElementById(id);if(node){node.hidden=true;parking.append(node)}});
+  centerGroupOperations.hidden=true;moreDetailHost.replaceChildren();MORE_SURFACE=null;
+}
+async function openMoreSurface(kind){
+  resetMoreSurface();MORE_SURFACE=kind;
+  if(kind==='group'&&CENTER_UI_CAPABILITIES.canBindCenterGroup){centerGroupOperations.hidden=false;centerGroupOperations.scrollIntoView({behavior:'smooth',block:'start'});return}
+  if(kind==='ratecard'&&CENTER_UI_CAPABILITIES.canManageRateCard){const node=document.getElementById('view-ratecard');moreDetailHost.append(node);node.hidden=false;await loadRateCard();return}
+  if(kind==='staff'&&CENTER_UI_CAPABILITIES.canManageTeam){const node=document.getElementById('view-staff');moreDetailHost.append(node);node.hidden=false;await loadStaff();return}
+  if(kind==='settings'&&CENTER_UI_CAPABILITIES.canManageCenterSettings){const node=document.getElementById('view-settings');moreDetailHost.append(node);node.hidden=false;loadCenterSettings();return}
+  const card=document.createElement('section');card.className='card';
+  if(kind==='package'){const center=CENTERS.find((item)=>item.center_id===CENTER_ID)||{},s=center.subscription||{};card.innerHTML=`<h3>แพ็กเกจของศูนย์</h3><p>${s.expiresAt?`ใช้งานได้ถึง ${esc(new Date(s.expiresAt).toLocaleDateString('th-TH'))}`:'ยังไม่มีวันหมดอายุที่แสดงได้'}</p><p class="resident-meta">การต่ออายุยังดำเนินการผ่านผู้ดูแลระบบ ไม่มีการซื้อหรือตัดเงินจากหน้านี้</p>`}
+  else card.innerHTML='<h3>ช่วยเหลือ</h3><p class="resident-meta">หากพบปัญหา กรุณาติดต่อผู้ดูแลระบบของศูนย์โดยไม่ส่งข้อมูลสุขภาพหรือรหัสลับในกลุ่มสาธารณะ</p>';
+  moreDetailHost.append(card);
+}
+
+function placeCareSurface(mode){const host=document.getElementById(mode==='record'?'recordCareHost':'workCareHost'),root=document.getElementById('centerCareRoot');host.append(root);centerCareUi.setMode(mode);return root}
+function openRecordingForm(kind){placeCareSurface('record');const form=document.getElementById(kind==='vital'?'centerVitalForm':'centerDailyForm');if(form?.hidden)return toast('ศูนย์นี้ยังไม่ได้เปิดใช้การบันทึกประเภทนี้');form?.scrollIntoView({behavior:'smooth',block:'start'})}
+function showCareWork(){placeCareSurface('work');document.getElementById('centerDailyReview')?.scrollIntoView({behavior:'smooth',block:'start'})}
+function showCareHistory(){placeCareSurface('history');document.getElementById('centerLabHistory')?.scrollIntoView({behavior:'smooth',block:'start'})}
+function showDocumentIntakeGuidance(){toast('ปิด LIFF แล้วส่งรูปในแชทส่วนตัวกับพี่หมอ ระบบจะใช้ศูนย์ที่เลือกอยู่นี้')}
 
 // ── S4: แก้ไขการ์ดก่อนส่ง (ข้อ E3-E8) ──
 const labReviewRuntime = window.PhimorCenterLabReview;
@@ -871,28 +1015,68 @@ const centerCareUi = centerCareRuntime.mount({
   api,
   notify: toast,
   onOpenLabDraft: openLabCorrectionDraft,
+  onEditReturned:()=>navigateCenter('record').then(()=>placeCareSurface('record')),
   onVisibility(visible) {
-    const tab = document.getElementById('careRecordTab');
-    tab.hidden = !visible;
-    if (!visible && tab.classList.contains('active')) document.querySelector('.tab[data-view="residents"]').click();
+    const hasVital=CENTER_RECORD_CAPABILITIES.vital_signs_v1===true,hasDaily=CENTER_RECORD_CAPABILITIES.daily_care_v1===true;
+    recordVitalAction.disabled=!hasVital;recordVitalAction.title=hasVital?'':'ศูนย์นี้ยังไม่ได้เปิดใช้สัญญาณชีพ';
+    recordDailyAction.disabled=!hasDaily;recordDailyAction.title=hasDaily?'':'ศูนย์นี้ยังไม่ได้เปิดใช้บันทึกการดูแลประจำวัน';
+    document.querySelectorAll('[data-shell-destination="record"]').forEach((button)=>{button.disabled=!CENTER_ENTITLED||!visible;button.setAttribute('aria-disabled',String(!CENTER_ENTITLED||!visible))});
   },
 });
 
 async function syncCenterCareContext() {
-  const requestedCenterId = CENTER_ID;
+  const requestedCenterId = CENTER_ID,requestedGeneration=CENTER_CONTEXT_GENERATION;
   centerCareUi.clear();
   try {
     const data = await api(`/api/center/${encodeURIComponent(requestedCenterId)}/capabilities`);
-    if (requestedCenterId !== CENTER_ID) return;
-    centerCareUi.setContext({
+    if (requestedCenterId !== CENTER_ID||requestedGeneration!==CENTER_CONTEXT_GENERATION) return{stale:true};
+    CENTER_RECORD_CAPABILITIES=data.capabilities||{};
+    await centerCareUi.setContext({
       centerId: requestedCenterId,
       role: CURRENT_ROLE,
       residents: residentsCache,
       capabilities: data.capabilities || {},
     });
+    CARE_CONTEXT_READY_GENERATION=requestedGeneration;
+    return{stale:false};
   } catch (_) {
-    if (requestedCenterId === CENTER_ID) centerCareUi.clear();
+    if (requestedCenterId === CENTER_ID&&requestedGeneration===CENTER_CONTEXT_GENERATION)centerCareUi.clear();
+    return{stale:true};
   }
+}
+
+async function loadCurrentCenterDestination(){return onCenterDestination({destination:CENTER_SHELL?.current()||CENTER_DESTINATION,previous:CENTER_DESTINATION,source:'context'})}
+function navigateCenter(destination,options={}){if(!CENTER_SHELL)return Promise.resolve();return CENTER_SHELL.navigate(destination,{history:options.history||'push',focus:Boolean(options.focus),source:options.source||'app'})}
+
+async function onCenterDestination({destination,previous}){
+  CENTER_DESTINATION=destination;setDestinationState(destination,'กำลังโหลด...');
+  if(previous&&previous!==destination){closeCenterModals();if(previous==='more')resetMoreSurface()}
+  if(!CENTER_ID){setDestinationState(destination,'ยังไม่ได้เลือกศูนย์','error');return}
+  if(!CENTER_ENTITLED&&!['home','more'].includes(destination)){setDestinationState(destination,'ศูนย์นี้ยังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ','error');return}
+  const generation=CENTER_CONTEXT_GENERATION;
+  try{
+    if(destination==='home'){
+      if(CENTER_ENTITLED&&RESIDENTS_LOADED_GENERATION!==generation)await loadResidents();
+      if(CENTER_ENTITLED&&CARE_CONTEXT_READY_GENERATION!==generation){await centerCareUi.setMode('work');await syncCenterCareContext()}
+      if(generation!==CENTER_CONTEXT_GENERATION)return;renderCenterHome();
+    }else if(destination==='residents'){
+      if(RESIDENTS_LOADED_GENERATION!==generation)await loadResidents();else renderResidents();
+    }else if(destination==='record'){
+      placeCareSurface('record');
+      if(RESIDENTS_LOADED_GENERATION!==generation)await loadResidents();
+      if(CARE_CONTEXT_READY_GENERATION!==generation)await syncCenterCareContext();else await centerCareUi.setMode('record');
+    }else if(destination==='work'){
+      placeCareSurface('work');
+      if(RESIDENTS_LOADED_GENERATION!==generation)await loadResidents();
+      if(CARE_CONTEXT_READY_GENERATION!==generation)await syncCenterCareContext();else await centerCareUi.setMode('work');
+      const transport=document.getElementById('view-transport');
+      if(['owner','manager'].includes(CURRENT_ROLE)){workTransportHost.append(transport);transport.hidden=false;await loadTransport()}
+      else transport.hidden=true;
+    }else{
+      renderMoreActions();resetMoreSurface();
+    }
+    if(generation===CENTER_CONTEXT_GENERATION)setDestinationState(destination,'');
+  }catch(error){if(error?.stale||generation!==CENTER_CONTEXT_GENERATION)return;setDestinationState(destination,error?.message||'โหลดข้อมูลไม่สำเร็จ กรุณาลองอีกครั้ง','error')}
 }
 let currentCard = null, currentCardOriginal = null, medRowSeq = 0, labObservationSeq = 0;
 let currentLabCorrectionContext = null;
@@ -1002,17 +1186,16 @@ function openLabCorrectionDraft({residentId,report}={}) {
   document.getElementById('ecResident').replaceChildren(option);document.getElementById('ecResident').disabled=true;
   document.getElementById('editCardBanner').querySelector('h3').textContent='ตรวจและแก้ไขผล Lab ฉบับใหม่';
   renderLabReview(currentCard);
-  document.querySelector('.tabs').style.display='none';document.querySelectorAll('.view').forEach((view)=>view.classList.remove('active'));
-  document.getElementById('view-edit-card').classList.add('active');
+  document.querySelector('.phimor-primary-nav').hidden=true;document.querySelectorAll('[data-shell-panel]').forEach((view)=>view.hidden=true);
+  document.getElementById('view-edit-card').hidden=false;
   globalThis.scrollTo?.({top:0,behavior:'smooth'});
 }
 
 async function closeLabCorrectionEditor() {
   currentLabCorrectionContext=null;document.getElementById('ecResident').disabled=false;
   document.getElementById('editCardBanner').querySelector('h3').textContent='ตรวจสอบและแก้ไขก่อนส่ง';
-  document.querySelector('.tabs').style.display='flex';document.querySelectorAll('.view').forEach((view)=>view.classList.remove('active'));document.querySelectorAll('.tab').forEach((tab)=>tab.classList.remove('active'));
-  document.getElementById('view-care').classList.add('active');document.getElementById('careRecordTab').classList.add('active');
-  await syncCenterCareContext();
+  document.getElementById('view-edit-card').hidden=true;document.querySelector('.phimor-primary-nav').hidden=false;
+  await navigateCenter('work',{history:'replace'});showCareHistory();
 }
 
 function toDateTimeLocal(value) {
@@ -1239,35 +1422,39 @@ async function main() {
   renderLineIdentity(LINE_PROFILE);
   LINE_ID_TOKEN = liff.getIDToken();
 
-  const me = await api('/api/center/me');
+  const me = await api('/api/center/me',{contextGuard:false});
   CENTERS = me.centers.filter(Boolean);
   if (CENTERS.length === 0) throw new Error('ไม่พบสาขาที่คุณมีสิทธิ์');
   const selector = document.getElementById('centerSelector');
   selector.innerHTML = CENTERS.map(c => `<option value="${c.center_id}">${esc(c.name)} · ${{owner:'เจ้าของศูนย์',manager:'ผู้จัดการ',staff:'พนักงาน'}[c.myRole]||c.myRole}</option>`).join('');
   selector.style.display = CENTERS.length > 1 ? 'block' : 'none';
-  if (!applySelectedCenterContext(CENTERS[0])) return;
+  const activeCenter=CENTERS.find((center)=>center.center_id===me.actorContext?.activeCenterId);
+  const initialCenter=activeCenter||CENTERS[0];
+  invalidateCenterState();
+  if(activeCenter||!initialCenter.subscription?.allowed)applySelectedCenterContext(initialCenter);
+  else await selectCenter(initialCenter.center_id,{initial:true});
+
+  if(!window.PhimorAppShell)throw new Error('APP_SHELL_MISSING');
+  CENTER_SHELL=window.PhimorAppShell.createDestinationRouter({doc:document,destinations:CENTER_DESTINATIONS,initial:'home',queryKey:'section',onNavigate:onCenterDestination});
 
   // อ่าน URL Parameter เพื่อ Route ไปหน้าที่ถูกต้อง (ใช้กับปุ่ม Rich Menu และลิงก์แก้ไขการ์ดจาก LINE)
-  const view = new URLSearchParams(location.search).get('view');
-  const cardId = new URLSearchParams(location.search).get('cardId');
+  const params=new URLSearchParams(location.search),view=params.get('view'),cardId=params.get('cardId');
 
   if (view === 'edit-card' && cardId) {
-    // หน้าแก้ไขการ์ด (S4) เข้าถึงเฉพาะทาง ไม่ต้องมี Tab Bar ให้สลับไปมา
-    document.querySelector('.tabs').style.display = 'none';
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-edit-card').classList.add('active');
+    await loadResidents();
+    document.querySelector('.phimor-primary-nav').hidden=true;
+    document.querySelectorAll('[data-shell-panel]').forEach((panel)=>panel.hidden=true);
+    document.getElementById('view-edit-card').hidden=false;
     await loadEditCard(cardId);
     return;
   }
-
-  await loadResidents();
-  await syncCenterCareContext();
-  if (view === 'transport') {
-    document.querySelector('.tab[data-view="transport"]').click();
-  }
+  const destination=({residents:'residents',transport:'work',care:'record',ratecard:'more',staff:'more'}[view]||params.get('section')||'home');
+  await CENTER_SHELL.start(!CENTER_ENTITLED&&!['home','more'].includes(destination)?'home':destination);
+  if(view==='ratecard')await openMoreSurface('ratecard');
+  if(view==='staff'&&CURRENT_ROLE==='owner')await openMoreSurface('staff');
 }
 main().catch(err => {
-  console.error(err);
+  console.error('CENTER_LIFF_START_FAILED',{code:err?.code||'UNAVAILABLE'});
   const message = err?.message || 'เชื่อมต่อไม่สำเร็จ';
   document.getElementById('centerNameLabel').textContent = message;
   toast(message);

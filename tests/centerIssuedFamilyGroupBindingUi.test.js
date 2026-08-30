@@ -33,7 +33,8 @@ test('Center code UI is one-time, in-memory, 15-minute copy UX and has mobile to
   assert.match(centerHtml, /\.toast\{[^}]*pointer-events:none;z-index:99/);
   assert.match(centerHtml, /\.modal-bg\{[^}]*z-index:100/);
   assert.match(centerHtml, /pagehide[^\n]*CENTER_GROUP_CODE_DISPLAY\.clear\(\)/);
-  assert.match(centerHtml, /selectCenter\(centerId\)[\s\S]*?CENTER_GROUP_CODE_DISPLAY\.clear\(\)/);
+  assert.match(centerHtml, /function invalidateCenterState\(\)[\s\S]*?CENTER_GROUP_CODE_DISPLAY\.clear\(\)/);
+  assert.match(centerHtml, /async function selectCenter\(centerId,[\s\S]*?invalidateCenterState\(\)/);
   assert.doesNotMatch(centerHtml, /localStorage[^\n]*CENTER_GROUP|sessionStorage[^\n]*CENTER_GROUP/);
 });
 

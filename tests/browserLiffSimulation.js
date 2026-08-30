@@ -39,6 +39,8 @@ const FAMILY_CARE_HISTORY_SOURCE = fs.readFileSync(path.resolve(__dirname, '..',
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
 const FAMILY_MEDICATION_OPERATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'medication-operation.js'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
+const APP_SHELL_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.js'), 'utf8');
+const APP_SHELL_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.css'), 'utf8');
 const CLINICAL_ACTION_DIALOG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.js'), 'utf8');
 const CLINICAL_ACTION_DIALOG_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.css'), 'utf8');
 const FAMILY_LAB_RESULTS_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'lab-results-ui.css'), 'utf8');
@@ -58,10 +60,12 @@ function localHtml(name) {
     .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
     .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
+    .replace('<script src="../shared/app-shell.js"></script>', `<script>${APP_SHELL_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
     .replace('<script src="./medication-operation.js"></script>', `<script>${FAMILY_MEDICATION_OPERATION_SOURCE}</script>`)
     .replace('<script src="../shared/clinical-action-dialog.js"></script>', `<script>${CLINICAL_ACTION_DIALOG_SOURCE}</script>`)
     .replace('<link rel="stylesheet" href="../shared/clinical-action-dialog.css">', `<style>${CLINICAL_ACTION_DIALOG_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="../shared/app-shell.css">', `<style>${APP_SHELL_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./lab-results-ui.css">', `<style>${FAMILY_LAB_RESULTS_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`);
 }
@@ -285,12 +289,22 @@ async function centerFamilyLinkingJourney(browser) {
   let centerLinkCreates=0;
   await mockBackend(centerPage,async(url,request)=>{
     if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
-    if(url.pathname==='/api/center/me')return{centers:[
+    if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId:'CTR1'},centers:[
       {center_id:'CTR1',name:'ศูนย์ตัวอย่าง',myRole:'owner',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}},
       {center_id:'CTR2',name:'ศูนย์สาขาพนักงาน',myRole:'staff',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}},
     ]};
+    if(url.pathname==='/api/center/active-center'&&request.method()==='POST'){
+      const centerId=request.postDataJSON().centerId;
+      const center=centerId==='CTR2'
+        ?{center_id:'CTR2',name:'ศูนย์สาขาพนักงาน',myRole:'staff',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}}
+        :{center_id:'CTR1',name:'ศูนย์ตัวอย่าง',myRole:'owner',status:'active',subscription:{allowed:true,state:'active',remainingDays:30}};
+      return{actorContext:{activeCenterId:centerId},center};
+    }
     if(url.pathname==='/api/residents')return{residents:[]};
     if(url.pathname==='/api/center/appointments')return{appointments:[]};
+    if(/^\/api\/center\/CTR\d\/capabilities$/.test(url.pathname))return{capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+    if(/^\/api\/center\/CTR\d\/daily-care\/review$/.test(url.pathname))return{items:[]};
+    if(url.pathname==='/api/transport/pending')return{pending:[]};
     if(url.pathname==='/api/center/care-profile-link-requests'&&request.method()==='POST'){
       centerLinkCreates+=1;return{status:201,body:{linkUrl:'https://liff.line.me/SIM_FAMILY?centerLink=fictional-review-token',expiresAt:'2026-09-05T12:00:00.000Z'}};
     }
@@ -299,6 +313,7 @@ async function centerFamilyLinkingJourney(browser) {
   await centerPage.setContent(localHtml('center-admin'),{waitUntil:'domcontentloaded'});
   await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('ศูนย์ตัวอย่าง'));
   assert.equal(await centerPage.locator('#lineDisplayName').textContent(),'ผู้ใช้จำลอง');
+  await centerPage.locator('[data-shell-destination="residents"]').first().click();
   const existingChoice=centerPage.getByRole('button',{name:/เชื่อม Care Profile ที่มีอยู่แล้ว/});
   const newChoice=centerPage.getByRole('button',{name:/สร้าง Care Profile ใหม่/}).first();
   assert.equal(await existingChoice.isVisible(),true);
@@ -323,13 +338,18 @@ async function centerFamilyLinkingJourney(browser) {
   await centerPage.locator('#centerSelector').selectOption('CTR2');
   await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('พนักงาน · ศูนย์สาขาพนักงาน'));
   assert.equal(await centerPage.locator('#addResidentCard').isHidden(),true);
-  assert.equal(await centerPage.locator('.tab[data-view="transport"]').isHidden(),true);
-  assert.equal(await centerPage.locator('#staffTab').isHidden(),true);
+  await centerPage.locator('[data-shell-destination="work"]').first().click();
+  assert.equal(await centerPage.locator('#view-transport').isHidden(),true);
+  await centerPage.locator('[data-shell-destination="more"]').first().click();
+  assert.equal(await centerPage.getByRole('button',{name:/ทีมงานและบทบาท/}).count(),0);
+  assert.equal(await centerPage.getByRole('button',{name:/กลุ่ม LINE/}).count(),0);
   await centerPage.locator('#centerSelector').selectOption('CTR1');
   await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('เจ้าของศูนย์ · ศูนย์ตัวอย่าง'));
+  await centerPage.locator('[data-shell-destination="residents"]').first().click();
   assert.equal(await centerPage.locator('#addResidentCard').isVisible(),true);
-  assert.equal(await centerPage.locator('.tab[data-view="transport"]').isVisible(),true);
-  assert.equal(await centerPage.locator('#staffTab').isVisible(),true);
+  await centerPage.locator('[data-shell-destination="more"]').first().click();
+  assert.equal(await centerPage.getByRole('button',{name:/ทีมงานและบทบาท/}).isVisible(),true);
+  assert.equal(await centerPage.getByRole('button',{name:/กลุ่ม LINE/}).isVisible(),true);
   await centerPage.close();
 
   const familyPage=await browser.newPage({viewport:{width:390,height:844}});
@@ -389,14 +409,16 @@ async function centerPendingJourney(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
     if (url.pathname === '/config/liff') return { publicBackendUrl:SIMULATED_BACKEND_URL, centerAdminLiffId:'SIM_CENTER' };
-    if (url.pathname === '/api/center/me') return { centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
+    if (url.pathname === '/api/center/me') return { actorContext:{activeCenterId:'CTR1'}, centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
     if (url.pathname === '/api/residents') return { residents: [] };
     if (url.pathname === '/api/center/appointments') return { appointments: [] };
+    if (url.pathname === '/api/center/CTR1/capabilities') return {capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+    if (url.pathname === '/api/center/CTR1/daily-care/review') return {items:[]};
     if (url.pathname === '/api/transport/pending') return { pending: [] };
     return { status: 404, body: { message: `unmocked ${url.pathname}` } };
   });
   await page.setContent(localHtml('center-admin'), { waitUntil: 'domcontentloaded' });
-  await page.locator('.tab[data-view="transport"]').click();
+  await page.locator('[data-shell-destination="work"]').first().click();
   await page.waitForSelector('#transportList .empty');
   assert.strictEqual((await page.locator('#transportList').textContent()).trim(), 'ไม่มีรายการรอดำเนินการ');
   assert.ok(!(await page.locator('#toast').textContent()).includes('ผิดพลาด'));
@@ -407,16 +429,18 @@ async function centerPendingFailureIsVisible(browser) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mockBackend(page, async (url) => {
     if (url.pathname === '/config/liff') return { publicBackendUrl:SIMULATED_BACKEND_URL, centerAdminLiffId:'SIM_CENTER' };
-    if (url.pathname === '/api/center/me') return { centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
+    if (url.pathname === '/api/center/me') return { actorContext:{activeCenterId:'CTR1'}, centers: [{ center_id:'CTR1', name:'ศูนย์จำลอง', myRole:'owner', status:'active', subscription:{allowed:true,remainingDays:30} }] };
     if (url.pathname === '/api/residents') return { residents: [] };
     if (url.pathname === '/api/center/appointments') return { appointments: [] };
+    if (url.pathname === '/api/center/CTR1/capabilities') return {capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+    if (url.pathname === '/api/center/CTR1/daily-care/review') return {items:[]};
     if (url.pathname === '/api/transport/pending') return { status:500, body:{ message:'ระบบเดินทางจำลองขัดข้อง' } };
     return { status:404, body:{ message:`unmocked ${url.pathname}` } };
   });
   await page.setContent(localHtml('center-admin'), { waitUntil:'domcontentloaded' });
-  await page.locator('.tab[data-view="transport"]').click();
-  await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('ระบบเดินทางจำลองขัดข้อง'));
-  assert.match(await page.locator('#toast').textContent(), /ระบบเดินทางจำลองขัดข้อง/);
+  await page.locator('[data-shell-destination="work"]').first().click();
+  await page.waitForFunction(() => document.querySelector('#workDestinationState').textContent.includes('ระบบเดินทางจำลองขัดข้อง'));
+  assert.match(await page.locator('#workDestinationState').textContent(), /ระบบเดินทางจำลองขัดข้อง/);
   await page.close();
 }
 
@@ -453,8 +477,9 @@ async function adminSubscriptionJourney(browser) {
   });
   await page.setContent(localHtml('system-admin'), { waitUntil:'domcontentloaded' });
   await page.waitForSelector('#app:not([hidden])');
-  const adminMobile=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,searchHeight:document.querySelector('#search').getBoundingClientRect().height,chipHeight:document.querySelector('.directory-filter').getBoundingClientRect().height,filterOverflow:getComputedStyle(document.querySelector('.directory-filters')).overflowX}));
-  assert.equal(adminMobile.overflow,true);assert.ok(adminMobile.searchHeight>=44);assert.ok(adminMobile.chipHeight>=44);assert.equal(adminMobile.filterOverflow,'auto');
+  await page.locator('[data-shell-destination="centers"]').first().click();
+  const adminMobile=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,wide:[...document.querySelectorAll('*')].filter((node)=>node.getBoundingClientRect().right>document.documentElement.clientWidth+1).slice(0,8).map((node)=>({tag:node.tagName,id:node.id,className:String(node.className||''),right:Math.round(node.getBoundingClientRect().right)})),searchHeight:document.querySelector('#search').getBoundingClientRect().height,chipHeight:document.querySelector('.directory-filter').getBoundingClientRect().height,filterOverflow:getComputedStyle(document.querySelector('.directory-filters')).overflowX}));
+  assert.equal(adminMobile.overflow,true,JSON.stringify(adminMobile));assert.ok(adminMobile.searchHeight>=44);assert.ok(adminMobile.chipHeight>=44);assert.equal(adminMobile.filterOverflow,'auto');
   await page.getByRole('button', { name:'ปรับสิทธิ' }).click();
   await page.waitForFunction(()=>document.querySelector('#renewalNewExpiry').textContent.includes('29/10/2569'));
   assert.equal(await page.locator('#monthlyRenewalPanel').isVisible(),true);
@@ -604,13 +629,86 @@ async function adminCareOperationsJourney(browser) {
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await page.setContent(localHtml('system-admin'), {waitUntil:'domcontentloaded'}); await page.waitForSelector('#app:not([hidden])');
-  assert.match(await page.locator('#careOperationsContent').textContent(), /สัญญาณชีพ/);
+  await page.locator('[data-shell-destination="review"]').first().click();
+  await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('เชื่อมผู้พัก'));
   await page.getByRole('button',{name:'ผู้พักรอเชื่อม'}).click(); await page.getByRole('button',{name:'เชื่อมผู้พัก'}).click();
   await page.locator('select[aria-label="เลือกผู้พักที่ต้องการเชื่อม"]').selectOption('RES-A'); await page.getByRole('button',{name:'ยืนยันเชื่อมผู้พัก'}).click();
   await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('ไม่มีผู้พักรอเชื่อม')); assert.equal(mapped,1);
   await page.getByRole('button',{name:'กลุ่ม LINE'}).click(); assert.match(await page.locator('#careOperationsContent').textContent(), /MISMATCH/);
   await page.getByRole('button',{name:'ตรวจสอบอีกครั้ง'}).click(); await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('VERIFIED')); assert.equal(reconciled,1);
   assert.doesNotMatch(await page.locator('#careOperationsPanel').textContent(), /send anyway|ส่งต่อไปเลย/i); await page.close();
+}
+
+async function roleBasedShellJourney(browser) {
+  async function openCenter(role, viewport={width:390,height:844}) {
+    const page=await browser.newPage({viewport});
+    const centerId=`CTR-${role.toUpperCase()}`;
+    await mockBackend(page,async(url)=>{
+      if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
+      if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId:centerId},centers:[{center_id:centerId,centerId,name:`ศูนย์บทบาท ${role}`,myRole:role,role,status:'active',subscription:{allowed:true,state:'active',remainingDays:20},entitlement:{allowed:true,state:'active',remainingDays:20},centerStaffGroup:{status:'verified'}}]};
+      if(url.pathname==='/api/residents')return{residents:[]};
+      if(url.pathname===`/api/center/${centerId}/capabilities`)return{capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+      if(url.pathname===`/api/center/${centerId}/daily-care/review`)return{items:[]};
+      if(url.pathname==='/api/transport/pending')return{pending:[]};
+      return{status:404,body:{message:`unmocked ${url.pathname}`}};
+    });
+    await page.setContent(localHtml('center-admin'),{waitUntil:'domcontentloaded'});
+    await page.waitForFunction(()=>document.querySelector('[data-shell-destination="home"]').getAttribute('aria-current')==='page');
+    return page;
+  }
+
+  for(const role of ['owner','manager','staff']){
+    const page=await openCenter(role);
+    const mobile=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,navCount:document.querySelectorAll('.phimor-primary-nav>[data-shell-destination]').length,navPosition:getComputedStyle(document.querySelector('.phimor-primary-nav')).position,selectorHeight:document.querySelector('#centerSelector').getBoundingClientRect().height||44}));
+    assert.equal(mobile.overflow,true);assert.equal(mobile.navCount,5);assert.equal(mobile.navPosition,'fixed');assert.ok(mobile.selectorHeight>=44);
+    await page.locator('[data-shell-destination="more"]').first().click();
+    const more=await page.locator('#centerMoreActions').textContent();
+    if(role==='owner'){assert.match(more,/ทีมงานและบทบาท/);assert.match(more,/แพ็กเกจ/);assert.match(more,/กลุ่ม LINE/);}
+    if(role==='manager'){assert.doesNotMatch(more,/ทีมงานและบทบาท|แพ็กเกจ/);assert.match(more,/กลุ่ม LINE/);assert.match(more,/ราคาบริการ/);}
+    if(role==='staff'){assert.doesNotMatch(more,/ทีมงานและบทบาท|แพ็กเกจ|กลุ่ม LINE|ราคาบริการ/);assert.match(more,/ช่วยเหลือ/);}
+    if(role==='owner'){
+      await page.locator('#centerMoreActions').getByRole('button',{name:/ตั้งค่าศูนย์/}).click();
+      assert.equal(await page.locator('#view-settings').isVisible(),true);
+      await page.locator('[data-shell-destination="home"]').first().click();
+      await page.locator('[data-shell-destination="more"]').first().click();
+      await page.locator('#centerMoreActions').getByRole('button',{name:/ตั้งค่าศูนย์/}).click();
+      assert.equal(await page.locator('#view-settings').isVisible(),true);
+    }
+    await page.locator('[data-shell-destination="record"]').first().click();
+    assert.equal(await page.locator('#view-record').isVisible(),true);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+    await page.close();
+  }
+
+  const desktop=await openCenter('owner',{width:1280,height:800});
+  const desktopLayout=await desktop.evaluate(()=>({overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,navPosition:getComputedStyle(document.querySelector('.phimor-primary-nav')).position,shellColumns:getComputedStyle(document.querySelector('.phimor-shell')).gridTemplateColumns,contentWidth:document.querySelector('.phimor-shell__content').getBoundingClientRect().width}));
+  assert.equal(desktopLayout.overflow,true);assert.equal(desktopLayout.navPosition,'sticky');assert.match(desktopLayout.shellColumns,/228px/);assert.ok(desktopLayout.contentWidth<1100);
+  await desktop.close();
+
+  const admin=await browser.newPage({viewport:{width:390,height:844}});
+  await mockBackend(admin,async(url)=>{
+    if(url.pathname==='/config/liff')return{systemAdminLiffId:'SIM_ADMIN'};
+    if(url.pathname==='/api/admin/centers')return{items:[],centers:[],counts:{all:0,active:0,trial:0,expired:0,notConfigured:0,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:0,totalPages:0}};
+    if(url.pathname==='/api/admin/platform/organizations')return{organizations:[]};
+    if(url.pathname==='/api/admin/platform/pending-subjects')return{items:[]};
+    if(url.pathname==='/api/admin/platform/integration-events/status')return{items:[]};
+    if(url.pathname==='/api/admin/platform/integration-identity-alerts')return{items:[]};
+    if(url.pathname==='/api/admin/data-requests')return{requests:[]};
+    return{status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await admin.setContent(localHtml('system-admin'),{waitUntil:'domcontentloaded'});
+  await admin.waitForSelector('#app:not([hidden])');
+  for(const destination of ['overview','centers','integrations','review','more']){
+    await admin.locator(`[data-shell-destination="${destination}"]`).first().click();
+    await admin.waitForFunction((value)=>document.querySelector(`[data-shell-destination="${value}"]`).getAttribute('aria-current')==='page',destination);
+    assert.equal(await admin.locator(`[data-shell-panel="${destination}"]`).isVisible(),true);
+  }
+  assert.equal(await admin.locator('.phimor-primary-nav>[data-shell-destination]').count(),5);
+  assert.equal(await admin.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await admin.setViewportSize({width:1280,height:800});
+  assert.equal(await admin.evaluate(()=>getComputedStyle(document.querySelector('.phimor-primary-nav')).position),'sticky');
+  assert.equal(await admin.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await admin.close();
 }
 
 async function pharmacistConsoleJourney(browser) {
@@ -644,7 +742,7 @@ async function pharmacistConsoleJourney(browser) {
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
   const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
-  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, pharmacistConsoleJourney };
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, roleBasedShellJourney, pharmacistConsoleJourney };
   for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }

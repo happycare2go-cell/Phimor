@@ -130,9 +130,11 @@ test('stale failure and double submit cannot overwrite the current Center state'
 });
 
 test('Center LIFF mounts capability-gated mobile forms without browser persistence', () => {
-  assert.match(htmlSource, /id="careRecordTab" hidden/);
+  assert.match(htmlSource, /data-shell-destination="record"/);
+  assert.match(htmlSource, /data-shell-panel="record"/);
   assert.match(htmlSource, /api\/center\/\$\{encodeURIComponent\(requestedCenterId\)\}\/capabilities/);
   assert.match(htmlSource, /centerCareUi\.clear\(\)/);
+  assert.match(htmlSource, /centerCareUi\.setMode\('record'\)/);
   assert.match(uiSource, /aria-live="polite"/);
   assert.match(uiSource, /รายงานรอตรวจ/);assert.match(uiSource,/ยืนยันและส่งครอบครัว/);
   assert.match(uiSource, /inputmode="decimal"/);

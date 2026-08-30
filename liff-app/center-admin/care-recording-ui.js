@@ -256,7 +256,7 @@
     return shifted.toISOString().slice(0, 16);
   }
 
-  function mount({ root, api, notify = () => {}, onVisibility = () => {}, onOpenLabDraft = () => {} } = {}) {
+  function mount({ root, api, notify = () => {}, onVisibility = () => {}, onOpenLabDraft = () => {}, onEditReturned = () => {} } = {}) {
     if (!root) throw new Error('root is required');
     const controller = createController({ api });
     root.innerHTML = `
@@ -356,6 +356,7 @@
     const actionDialog=globalScope.PhimorClinicalActionDialog?.createDialog({doc:globalScope.document});
     let reviewItems = [];
     let returnedItems = [];
+    let surfaceMode = 'all';
     let labHistoryItems=[];let vitalHistoryItems=[];let dailyHistoryItems=[];
 
     function escapeHtml(value) {
@@ -515,6 +516,29 @@
       });
     }
 
+    function refreshForMode() {
+      const state = controller.snapshot();
+      if (!state) return Promise.resolve();
+      if (surfaceMode === 'record') return Promise.resolve();
+      if (surfaceMode === 'work') return refreshWorkflow();
+      if (surfaceMode === 'history') return Promise.all([
+        labHistorySection.hidden ? null : refreshLabHistory(),
+        state.capabilities?.[CAPABILITIES.vital] ? refreshVitalHistory() : null,
+        state.capabilities?.[CAPABILITIES.daily] ? refreshDailyHistory() : null,
+      ]);
+      return Promise.all([refreshWorkflow(),labHistorySection.hidden?null:refreshLabHistory(),
+        state.capabilities?.[CAPABILITIES.vital]?refreshVitalHistory():null,
+        state.capabilities?.[CAPABILITIES.daily]?refreshDailyHistory():null]);
+    }
+
+    function setMode(nextMode = 'all') {
+      surfaceMode = ['record','work','history','all'].includes(nextMode) ? nextMode : 'all';
+      root.dataset.surfaceMode = surfaceMode;
+      return refreshForMode().catch(() => {
+        if (surfaceMode === 'work' || surfaceMode === 'all') reviewSection.querySelector('.center-care__review-status').textContent = 'โหลดรายงานรอตรวจไม่สำเร็จ กรุณาลองใหม่';
+      });
+    }
+
     function setContext(next) {
       const state = controller.configure(next);
       resetForms();
@@ -528,8 +552,9 @@
       dailyForm.querySelector('[data-daily-vitals]').hidden = !vitalEnabled;
       unavailable.hidden = vitalEnabled || dailyEnabled;
       onVisibility(vitalEnabled || dailyEnabled || !labHistorySection.hidden);
-      Promise.all([refreshWorkflow(),labHistorySection.hidden?null:refreshLabHistory(),vitalEnabled?refreshVitalHistory():null,dailyEnabled?refreshDailyHistory():null]).catch(() => {
+      return refreshForMode().then(() => state).catch(() => {
         reviewSection.querySelector('.center-care__review-status').textContent = 'โหลดรายงานรอตรวจไม่สำเร็จ กรุณาลองใหม่';
+        return state;
       });
     }
 
@@ -591,7 +616,7 @@
     returnedSection.addEventListener('click', (event) => {
       const button = event.target.closest('[data-care-action="edit-returned"]'); if (!button) return;
       const report = returnedItems.find((item) => item.dailyReportId === button.dataset.reportId);
-      if (report) populateReturned(report);
+      if (report) { onEditReturned(report); populateReturned(report); }
     });
     root.addEventListener('click',(event)=>{const button=event.target.closest?.('[data-clinical-action]');if(button)runClinicalAction(button);});
     root.querySelectorAll('[data-refresh-history]').forEach((button)=>button.addEventListener('click',()=>{
@@ -599,7 +624,8 @@
     }));
     root.querySelector('#centerLabResident').addEventListener('change',refreshLabHistory);
     clear();
-    return { setContext, clear, snapshot:controller.snapshot };
+    return { setContext, setMode, clear, snapshot:controller.snapshot,
+      workflowSummary:() => ({ awaitingReview:reviewItems.length, returned:returnedItems.length }) };
   }
 
   const api = { CAPABILITIES, CenterCareUiError, buildVitalObservations, buildShift,

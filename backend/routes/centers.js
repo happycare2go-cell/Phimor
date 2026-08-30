@@ -8,8 +8,8 @@ const centerService = require('../services/centerService');
 const familyService = require('../services/familyService');
 const healthHistoryService = require('../services/careProfileHealthHistoryService');
 const transportService = require('../services/transportService');
-const { CenterStaff, Centers } = require('../db');
-const { projectCenter } = require('../services/centerProjection');
+const { CenterStaff, Centers, GroupBindings } = require('../db');
+const { projectCenter, projectCenterContext } = require('../services/centerProjection');
 const { platformService: defaultPlatformService } = require('../services/platformService');
 const { displayIdentity } = require('../utils/safeIdentity');
 const accessService = require('../services/accessService');
@@ -32,17 +32,47 @@ async function staffRecordInCenter(centerId, staffId) {
   return CenterStaff.findOne((row) => row.center_id === centerId && row.staff_id === staffId);
 }
 
+function safeCenterContext(center, role, subscription, staffGroupBound = false) {
+  return projectCenterContext(center, { role, subscription, staffGroupBound });
+}
+
 router.use(requireAuth);
 
 // GET /api/center/me — ข้อมูลศูนย์ของผู้ใช้ปัจจุบัน
 router.get('/center/me', asyncHandler(async (req, res) => {
   const staffRows = await CenterStaff.findWhere((s) => s.line_user_id === req.user.lineUserId && (!s.status || s.status === 'active'));
   if (staffRows.length === 0) return res.status(404).json({ error: 'not_found', message: 'ไม่พบศูนย์ที่ท่านมีสิทธิ์' });
+  const authorizedCenterIds = new Set(staffRows.map((row) => row.center_id));
+  const staffGroupRows = await GroupBindings.findWhere((row) => row.kind === 'center_staff'
+    && authorizedCenterIds.has(row.center_id) && (!row.status || row.status === 'active') && !row.unbound_at);
+  const staffGroupCenterIds = new Set(staffGroupRows.map((row) => row.center_id));
   const centers = await Promise.all(staffRows.map(async (s) => {
     const c = await Centers.findOne((x) => x.center_id === s.center_id);
-    return projectCenter(c, { myRole: s.role, subscription: require('../services/subscriptionService').entitlement(c) });
+    if (!c) return null;
+    const subscription = require('../services/subscriptionService').entitlement(c);
+    return safeCenterContext(c, s.role, subscription, staffGroupCenterIds.has(c.center_id));
   }));
-  res.json({ centers });
+  const available = centers.filter(Boolean).sort((a, b) => String(a.name).localeCompare(String(b.name), 'th')
+    || String(a.centerId).localeCompare(String(b.centerId)));
+  const activeCenterId = await centerService.getActiveCenterIdForStaff(req.user.lineUserId);
+  res.json({ actorContext:{ activeCenterId:available.some((item) => item.centerId === activeCenterId) ? activeCenterId : null }, centers:available });
+}));
+
+router.post('/center/active-center', asyncHandler(async (req, res) => {
+  const centerId = typeof req.body?.centerId === 'string' ? req.body.centerId.trim() : '';
+  if (!centerId) return res.status(400).json({ error:'bad_request', message:'ไม่ระบุศูนย์' });
+  const membership = await CenterStaff.findOne((row) => row.center_id === centerId
+    && row.line_user_id === req.user.lineUserId && ['owner','manager','staff'].includes(row.role)
+    && (!row.status || row.status === 'active'));
+  const selectedCenter = membership ? await Centers.findOne((row) => row.center_id === centerId) : null;
+  if (!membership || !selectedCenter) return res.status(403).json({ error:'forbidden', message:'คุณไม่มีสิทธิ์เลือกศูนย์นี้' });
+  const result = await centerService.setActiveCenterForStaff(req.user.lineUserId, centerId);
+  if (!result.ok) return res.status(403).json({ error:'forbidden', message:'คุณไม่มีสิทธิ์เลือกศูนย์นี้' });
+  const staffGroupBound = Boolean(await GroupBindings.findOne((row) => row.kind === 'center_staff'
+    && row.center_id === centerId && (!row.status || row.status === 'active') && !row.unbound_at));
+  const subscription = require('../services/subscriptionService').entitlement(selectedCenter);
+  const center = safeCenterContext(selectedCenter, membership.role, subscription, staffGroupBound);
+  res.json({ actorContext:{ activeCenterId:centerId }, center });
 }));
 
 // Center LIFF capability projection. The backend remains authoritative and
@@ -62,7 +92,8 @@ router.patch('/center/settings', requireCenterStaff(['owner']), asyncHandler(asy
   const result = await centerService.updateCenterSettings({ centerId:req.centerId, requesterLineId:req.user.lineUserId,
     address:req.body.address, contactPhone:req.body.contactPhone });
   if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
-  res.json(projectCenter(result.center));
+  res.json({ centerId:result.center.center_id, name:result.center.name,
+    settings:{ address:result.center.address || '', contactPhone:result.center.contact_phone || '' } });
 }));
 
 // GET /api/center/staff — รายชื่อผู้มีสิทธิ์จัดการ (เจ้าของเท่านั้น)

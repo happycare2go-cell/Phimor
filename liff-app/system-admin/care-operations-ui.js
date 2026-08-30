@@ -162,7 +162,7 @@
     const state = {
       activeTab:'capabilities', loading:false, error:null, organizations:[], centers:[],
       capabilities:new Map(), integrations:[], pending:[], operational:[], identityAlerts:[], mapping:null, feedback:null,
-      integrationSearch:'', detail:null,
+      integrationSearch:'', detail:null, availableTabs:tabs.map((tab) => tab.dataset.careOpsTab), loadedTabs:new Set(),
     };
     const send = (descriptor) => request(descriptor.path, descriptor.options);
     const element = (tag, className, text) => {
@@ -548,7 +548,10 @@
     }
     function renderOverview() {
       const summary = element('div', 'care-ops__summary');
-      [[state.organizations.length, 'Organizations'], [state.centers.length, 'Centers'], [state.integrations.length, 'Integrations'], [state.pending.length, 'รอเชื่อมผู้พัก']]
+      const values = [[state.organizations.length, 'Organizations'], [state.centers.length, 'Centers']];
+      if (state.loadedTabs.has('integrations')) values.push([state.integrations.length, 'Integrations']);
+      if (state.loadedTabs.has('pending')) values.push([state.pending.length, 'รอเชื่อมผู้พัก']);
+      values
         .forEach(([value, label]) => { const box = element('div'); box.append(element('strong', '', String(value)), element('span', 'care-ops__meta', label)); summary.append(box); });
       const list = element('div', 'care-ops__list');
       state.organizations.forEach((organization) => {
@@ -557,10 +560,14 @@
       }); content.replaceChildren(summary, list);
     }
     function render() {
-      tabs.forEach((tab) => tab.setAttribute('aria-selected', String(tab.dataset.careOpsTab === state.activeTab)));
+      tabs.forEach((tab) => {
+        const available = state.availableTabs.includes(tab.dataset.careOpsTab);
+        tab.hidden = !available;
+        tab.setAttribute('aria-selected', String(available && tab.dataset.careOpsTab === state.activeTab));
+      });
       if (state.loading) return content.replaceChildren(element('div', 'care-ops__spinner', 'กำลังโหลดข้อมูลงานระบบ…'));
       if (state.error) {
-        const error = element('div', 'care-ops__error', state.error); const retry = button('ลองอีกครั้ง', load); content.replaceChildren(error, retry); return;
+        const error = element('div', 'care-ops__error', state.error); const retry = button('ลองอีกครั้ง', () => load()); content.replaceChildren(error, retry); return;
       }
       ({ overview:renderOverview, capabilities:renderCapabilities, integrations:renderIntegrations, pending:renderPending, groups:renderGroups, alerts:renderIdentityAlerts }[state.activeTab] || renderOverview)();
       if (state.feedback) {
@@ -568,48 +575,68 @@
         feedback.setAttribute('role', 'status'); content.prepend(feedback);
       }
     }
-    async function load() {
+    async function load({ tabs:requestedTabs } = {}) {
+      const requested = safeArray(requestedTabs?.length ? requestedTabs : state.availableTabs)
+        .filter((tab) => state.availableTabs.includes(tab));
+      const needsFoundation = requested.some((tab) => ['overview','capabilities','integrations','pending','groups','alerts'].includes(tab));
+      const needsCapabilities = requested.includes('capabilities');
+      const needsIntegrations = requested.some((tab) => ['integrations','pending','groups','alerts'].includes(tab));
+      const needsPending = requested.includes('pending');
+      const needsOperational = requested.includes('groups');
+      const needsAlerts = requested.includes('alerts');
       const token = ++generation; state.loading = true; state.error = null; render();
       try {
         const [organizationsResult, pendingResult, operationalResult, alertResult] = await Promise.all([
-          request('/api/admin/platform/organizations', { method:'GET' }),
-          request('/api/admin/platform/pending-subjects?limit=100', { method:'GET' }),
-          request('/api/admin/platform/integration-events/status?limit=100', { method:'GET' }),
-          request('/api/admin/platform/integration-identity-alerts?limit=100', { method:'GET' }),
+          needsFoundation ? request('/api/admin/platform/organizations', { method:'GET' }) : Promise.resolve(null),
+          needsPending ? request('/api/admin/platform/pending-subjects?limit=100', { method:'GET' }) : Promise.resolve(null),
+          needsOperational ? request('/api/admin/platform/integration-events/status?limit=100', { method:'GET' }) : Promise.resolve(null),
+          needsAlerts ? request('/api/admin/platform/integration-identity-alerts?limit=100', { method:'GET' }) : Promise.resolve(null),
         ]);
-        const organizations = safeArray(organizationsResult?.organizations);
-        const centerGroups = await Promise.all(organizations.map(async (organization) => {
+        const organizations = needsFoundation ? safeArray(organizationsResult?.organizations) : state.organizations;
+        const centerGroups = needsFoundation ? await Promise.all(organizations.map(async (organization) => {
           const result = await request(`/api/admin/platform/organizations/${encodeURIComponent(organization.organizationId)}/centers`, { method:'GET' });
           return safeArray(result?.centers).map((center) => ({ ...center, organizationId:organization.organizationId, organizationName:organization.displayName }));
-        }));
-        const centers = centerGroups.flat();
-        const capabilityGroups = await Promise.all(centers.map(async (center) => {
+        })) : [];
+        const centers = needsFoundation ? centerGroups.flat() : state.centers;
+        const capabilityGroups = needsCapabilities ? await Promise.all(centers.map(async (center) => {
           const result = await request(`/api/admin/platform/centers/${encodeURIComponent(center.centerId)}/capabilities`, { method:'GET' });
           return [center.centerId, safeArray(result?.capabilities)];
-        }));
-        const clientGroups = await Promise.all(organizations.map(async (organization) => {
+        })) : null;
+        const clientGroups = needsIntegrations ? await Promise.all(organizations.map(async (organization) => {
           const result = await request(`/api/admin/platform/organizations/${encodeURIComponent(organization.organizationId)}/integration-clients`, { method:'GET' });
           return safeArray(result?.integrationClients).map((client) => ({ ...client, organizationName:organization.displayName }));
-        }));
-        const clients = clientGroups.flat();
-        const integrations = await Promise.all(clients.map(async (client) => {
+        })) : [];
+        const clients = needsIntegrations ? clientGroups.flat() : [];
+        const integrations = needsIntegrations ? await Promise.all(clients.map(async (client) => {
           const result = await request(`/api/admin/platform/integration-clients/${encodeURIComponent(client.integrationClientId)}`, { method:'GET' });
           return { ...result.integrationClient, organizationName:client.organizationName };
-        }));
+        })) : state.integrations;
         if (token !== generation) return { ignored:true, stale:true };
-        Object.assign(state, { organizations, centers, capabilities:new Map(capabilityGroups), integrations,
-          pending:safeArray(pendingResult?.items), operational:safeArray(operationalResult?.items),
-          identityAlerts:safeArray(alertResult?.items), loading:false, error:null }); render();
+        Object.assign(state, { organizations, centers, integrations, loading:false, error:null });
+        if (capabilityGroups) state.capabilities = new Map(capabilityGroups);
+        if (needsPending) state.pending = safeArray(pendingResult?.items);
+        if (needsOperational) state.operational = safeArray(operationalResult?.items);
+        if (needsAlerts) state.identityAlerts = safeArray(alertResult?.items);
+        requested.forEach((tab) => state.loadedTabs.add(tab));
+        render();
         return state;
       } catch (error) { if (token === generation) { state.loading = false; state.error = errorMessage(error); render(); } return { status:'unavailable' }; }
     }
-    function setTab(tab) { state.activeTab = tab; state.mapping = null; render(); }
+    function setTab(tab) { if (!state.availableTabs.includes(tab)) return; state.activeTab = tab; state.mapping = null; render(); }
+    function setAvailableTabs(availableTabs, preferred) {
+      const normalized = safeArray(availableTabs).filter((tab) => tabs.some((button) => button.dataset.careOpsTab === tab));
+      state.availableTabs = normalized.length ? normalized : tabs.map((tab) => tab.dataset.careOpsTab);
+      state.activeTab = state.availableTabs.includes(preferred) ? preferred
+        : state.availableTabs.includes(state.activeTab) ? state.activeTab : state.availableTabs[0];
+      state.mapping = null; render(); return state.activeTab;
+    }
     tabs.forEach((tab) => tab.addEventListener('click', () => setTab(tab.dataset.careOpsTab)));
     if (doc.defaultView && !doc.defaultView.__phimorIntegrationSecretCleanupBound) {
       doc.defaultView.addEventListener('pagehide', () => oneTimeSecret.clear());
       doc.defaultView.__phimorIntegrationSecretCleanupBound = true;
     }
-    return { load, render, setTab, snapshot:() => ({ ...state, capabilities:new Map(state.capabilities) }) };
+    return { load, render, setTab, setAvailableTabs,
+      snapshot:() => ({ ...state, capabilities:new Map(state.capabilities), loadedTabs:new Set(state.loadedTabs) }) };
   }
   return { CAPABILITY_LABELS, SUPPORTED_EVENT_TYPES, CLIENT_STATUS_LABELS, GROUP_LABELS, IDENTITY_POLICY_LABELS,
     EVENT_STATUS_LABELS, REJECTION_REASON_LABELS, buildResidentOptionsRequest, buildMappingRequest,
