@@ -19,6 +19,7 @@ const privacyService = require('../services/privacyService');
 const { displayIdentity } = require('../utils/safeIdentity');
 const { createPlusPaymentSupportService } = require('../services/plusPaymentSupportService');
 const adminCenterDirectoryService = require('../services/adminCenterDirectoryService');
+const { createAdminDashboardService } = require('../services/adminDashboardService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
 const plusPaymentSupport = createPlusPaymentSupportService();
@@ -42,6 +43,14 @@ router.post('/bootstrap', requireAuth, asyncHandler(async (req, res) => {
 
 router.use(requireAdminKey);
 router.use('/platform', createPlatformAdminRouter());
+
+router.get('/dashboard', asyncHandler(async (req, res) => {
+  const dashboardService = req.app.locals.adminDashboardService || createAdminDashboardService({
+    notificationService:req.app.locals.notificationService || require('../services/notificationService'),
+    schedulerHealth:req.app.locals.schedulerHealth || (() => ({ configuredJobs:0, jobs:{} })),
+  });
+  res.json(await dashboardService.getDashboard());
+}));
 
 // Minimal reliability projection for operators. It exposes only counts and
 // scheduler metadata; notification bodies and integration payloads stay out.

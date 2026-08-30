@@ -133,6 +133,29 @@ test('GET /api/admin/centers คืนรายชื่อศูนย์ทั
   assert.strictEqual(body.pagination.limit, 20);
 });
 
+test('dashboard projection is Admin-only, bounded and contains aggregate values only', async () => {
+  app.locals.adminDashboardService = { async getDashboard() {
+    return {
+      centers:{ total:4, active:2, trial:1, nearExpiry:1, expired:1, suspended:0, notConfigured:0 },
+      integrations:{ total:2, active:1, suspended:1, revoked:0, ready:1, notReady:1 },
+      exceptions:{ pendingSubjectMapping:1, groupBindingMissing:1, groupBindingMismatch:0,
+        identityAmbiguity:0, dsrAwaitingAction:1, accessRequests:0, integrationFailures:0,
+        notificationDeadLetters:0, schedulerFailures:0 },
+      platform:{ configuredSchedulerJobs:15, schedulerFailures:0, warningCount:0, state:'operational' },
+    };
+  } };
+  let response = await callAdmin('/api/admin/dashboard');
+  assert.equal(response.status, 401);
+  response = await callAdmin('/api/admin/dashboard', { headers:{ 'X-Admin-Key':REAL_ADMIN_KEY } });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.centers.total, 4);
+  assert.equal(body.integrations.ready, 1);
+  assert.equal(body.exceptions.dsrAwaitingAction, 1);
+  assert.doesNotMatch(JSON.stringify(body), /patient|medication|vital|lab|line_user|group_id|credential|payload/i);
+  delete app.locals.adminDashboardService;
+});
+
 test('Admin Center directory searches names server-side, filters authoritative states and returns search-scoped counts', async () => {
   const seed = async (center) => {
     await db.Centers.insert(center);
