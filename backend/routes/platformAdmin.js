@@ -46,6 +46,13 @@ function createPlatformAdminRouter() {
     res.json({ organizations: await service.listOrganizations() });
   }));
 
+  router.get('/operations-foundation', platformAction(async (req, res, service) => {
+    res.json(await service.getOperationsFoundation({
+      includeCapabilities:req.query.includeCapabilities,
+      limit:req.query.limit, centerLimit:req.query.centerLimit,
+    }));
+  }));
+
   router.get('/pending-subjects', platformAction(async (req, res) => {
     res.json(await eventServiceFor(req).listPendingSubjects({
       integrationClientId:req.query.integrationClientId || null,

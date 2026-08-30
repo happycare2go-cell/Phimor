@@ -27,6 +27,35 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
       return many('SELECT * FROM organizations ORDER BY display_name ASC, organization_id ASC');
     },
 
+    listOperationsFoundation({ limit = 200, centerLimit = 500, includeCapabilities = false }) {
+      return one(
+        `WITH organization_slice AS (
+          SELECT * FROM organizations ORDER BY LOWER(display_name), organization_id LIMIT $1
+        ), center_rows AS (
+          SELECT oc.organization_id, oc.center_id, oc.linked_at,
+            c.data->>'name' AS center_name, COALESCE(c.data->>'status','active') AS center_status,
+            CASE WHEN $3::boolean THEN COALESCE(jsonb_agg(jsonb_build_object(
+              'capability_key',cap.capability_key,'enabled',cap.enabled,
+              'enabled_at',cap.enabled_at,'updated_at',cap.updated_at
+            ) ORDER BY cap.capability_key) FILTER (WHERE cap.capability_key IS NOT NULL),'[]'::jsonb)
+            ELSE '[]'::jsonb END AS capabilities
+          FROM organization_centers oc
+          INNER JOIN organization_slice o ON o.organization_id=oc.organization_id
+          INNER JOIN centers c ON c.data->>'center_id'=oc.center_id
+          LEFT JOIN center_capabilities cap ON cap.center_id=oc.center_id
+          GROUP BY oc.organization_id,oc.center_id,oc.linked_at,c.data
+          ORDER BY LOWER(c.data->>'name'),oc.center_id LIMIT $2
+        )
+        SELECT jsonb_build_object(
+          'organizations',COALESCE((SELECT jsonb_agg(to_jsonb(o) ORDER BY LOWER(o.display_name),o.organization_id) FROM organization_slice o),'[]'::jsonb),
+          'centers',COALESCE((SELECT jsonb_agg(to_jsonb(cr) ORDER BY LOWER(cr.center_name),cr.center_id) FROM center_rows cr),'[]'::jsonb),
+          'organizationTotal',(SELECT COUNT(*)::int FROM organizations),
+          'centerTotal',(SELECT COUNT(*)::int FROM organization_centers)
+        ) AS foundation`,
+        [limit, centerLimit, includeCapabilities]
+      ).then((row) => row?.foundation || { organizations:[], centers:[], organizationTotal:0, centerTotal:0 });
+    },
+
     linkCenter({ organizationId, centerId, actorReference }) {
       return one(
         `INSERT INTO organization_centers (

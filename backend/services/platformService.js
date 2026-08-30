@@ -204,6 +204,29 @@ function createPlatformService(overrides = {}) {
     return (await repository.listOrganizations()).map(organizationProjection);
   }
 
+  async function getOperationsFoundation(input = {}) {
+    const limit = Math.min(200, Math.max(1, Number.parseInt(input.limit, 10) || 200));
+    const centerLimit = Math.min(500, Math.max(1, Number.parseInt(input.centerLimit, 10) || 500));
+    const includeCapabilities = input.includeCapabilities === true || input.includeCapabilities === '1';
+    const result = await repository.listOperationsFoundation({ limit, centerLimit, includeCapabilities });
+    const organizations = (result.organizations || []).map(organizationProjection);
+    const centers = (result.centers || []).map((row) => {
+      const values = new Map((row.capabilities || []).map((item) => [item.capability_key,item]));
+      return {
+        centerId:row.center_id, organizationId:row.organization_id,
+        name:row.center_name || null, status:row.center_status || null, linkedAt:row.linked_at || null,
+        ...(includeCapabilities ? { capabilities:CAPABILITY_KEYS.map((key) => ({
+          centerId:row.center_id, capabilityKey:key, enabled:Boolean(values.get(key)?.enabled),
+          enabledAt:values.get(key)?.enabled_at || null, updatedAt:values.get(key)?.updated_at || null,
+        })) } : {}),
+      };
+    });
+    const organizationTotal = Math.max(organizations.length, Number(result.organizationTotal ?? result.organization_total) || 0);
+    const centerTotal = Math.max(centers.length, Number(result.centerTotal ?? result.center_total) || 0);
+    return { organizations, centers, bounded:{ organizationLimit:limit, centerLimit,
+      organizationsTruncated:organizationTotal>organizations.length, centersTruncated:centerTotal>centers.length } };
+  }
+
   async function getOrganizationForCenter(centerId) {
     await requireCenter(centerId);
     return organizationProjection(await repository.findOrganizationForCenter(centerId));
@@ -971,7 +994,7 @@ function createPlatformService(overrides = {}) {
   }
 
   return {
-    createOrganization, listOrganizations, getOrganizationForCenter,
+    createOrganization, listOrganizations, getOperationsFoundation, getOrganizationForCenter,
     ensureOrganizationForCenter, listOrganizationCenters, relinkCenter,
     listCenterCapabilities, listCenterResidentOptions, isCenterCapabilityEnabled, setCenterCapability,
     createIntegrationClient, inspectIntegrationClient, listIntegrationClients, listIntegrationClientDirectory,

@@ -162,6 +162,7 @@
     const tabs = Array.from(doc.querySelectorAll('[data-care-ops-tab]')).slice(0, 10);
     let generation = 0;
     let detailGeneration = 0;
+    let residentOptionsGeneration = 0;
     const oneTimeSecret = createOneTimeSecretState();
     const state = {
       activeTab:'capabilities', loading:false, error:null, organizations:[], centers:[],
@@ -169,6 +170,7 @@
       integrationSearch:'', integrationStatus:'', integrationPage:1,
       integrationPagination:{page:1,limit:20,total:0,totalPages:0}, detail:null, wizard:null,
       availableTabs:tabs.map((tab) => tab.dataset.careOpsTab), loadedTabs:new Set(),
+      foundationLoaded:false, foundationCapabilitiesLoaded:false, foundationBounded:null,
     };
     const send = (descriptor) => request(descriptor.path, descriptor.options);
     const element = (tag, className, text) => {
@@ -208,8 +210,9 @@
       }
       return dialog;
     }
-    function openDialog(dialog) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
-    function closeDialog(dialog) { if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open'); }
+    function restoreDialogFocus(dialog){const origin=dialog.__phimorFocusOrigin;dialog.__phimorFocusOrigin=null;if(origin?.isConnected)origin.focus();}
+    function openDialog(dialog) { dialog.__phimorFocusOrigin=doc.activeElement;if(!dialog.dataset.focusRestoreBound){dialog.addEventListener('close',()=>restoreDialogFocus(dialog));dialog.dataset.focusRestoreBound='true';}if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+    function closeDialog(dialog) { if (typeof dialog.close === 'function') dialog.close(); else {dialog.removeAttribute('open');restoreDialogFocus(dialog);} }
     function dialogParts(dialog) { return { live:dialog.querySelector('.care-ops__dialog-live'), body:dialog.querySelector('.care-ops__dialog-body') }; }
     function setBusy(container, busy) { container.querySelectorAll('button,input,select').forEach((node) => { node.disabled = Boolean(busy); }); }
     function showDialogError(dialog, message) { const { live } = dialogParts(dialog); live.textContent = message; live.className = 'care-ops__dialog-live care-ops__feedback--error'; }
@@ -388,6 +391,7 @@
       renderIntegrationDetail();
     }
     async function openIntegrationDetail(integrationClientId) {
+      residentOptionsGeneration += 1;
       const dialog = ensureDialog('integrationClientDetailDialog', 'จัดการระบบเชื่อมต่อ');
       state.detail = { integrationClientId, loading:true, centerPage:1, subjectPage:1,
         centerSearch:'', subjectSearch:'', residentOptions:[], residentCenterId:null };
@@ -414,12 +418,15 @@
       actions.append(previous, element('span', 'care-ops__meta', `หน้า ${pagination.page} / ${Math.max(1, pagination.totalPages)} · ${pagination.total} รายการ`), next); return actions;
     }
     async function loadResidentOptions(externalCenterId) {
+      const token=++residentOptionsGeneration;
+      const detailClientId=state.detail?.integrationClientId;
       const mapping = state.detail?.centerMappings.find((item) => item.externalCenterId === externalCenterId && item.status === 'active');
       if (!mapping) { if (state.detail) state.detail.residentOptions = []; renderIntegrationDetail(); return; }
       try {
         const result = await send(buildResidentOptionsRequest(mapping.centerId));
-        if (state.detail) { state.detail.residentOptions = safeArray(result.residents); state.detail.residentCenterId = mapping.centerId; renderIntegrationDetail(); }
-      } catch (error) { const dialog = doc.getElementById('integrationClientDetailDialog'); showDialogError(dialog, errorMessage(error)); }
+        if(token!==residentOptionsGeneration||state.detail?.integrationClientId!==detailClientId)return;
+        state.detail.residentOptions = safeArray(result.residents); state.detail.residentCenterId = mapping.centerId; renderIntegrationDetail();
+      } catch (error) { if(token!==residentOptionsGeneration||state.detail?.integrationClientId!==detailClientId)return;const dialog = doc.getElementById('integrationClientDetailDialog'); showDialogError(dialog, errorMessage(error)); }
     }
     function renderIntegrationDetail() {
       const dialog = doc.getElementById('integrationClientDetailDialog'); if (!dialog || !state.detail) return;
@@ -615,7 +622,9 @@
       state.organizations.forEach((organization) => {
         const centers = state.centers.filter((center) => center.organizationId === organization.organizationId);
         list.append(itemCard(organization.displayName, `${organization.organizationType || '-'} · ${organization.status || '-'} · ${centers.map((center) => center.name).join(', ') || 'ยังไม่มีศูนย์'}`));
-      }); content.replaceChildren(summary, list);
+      });
+      if(state.foundationBounded?.organizationsTruncated||state.foundationBounded?.centersTruncated)list.prepend(element('div','care-ops__notice','แสดงรายการตั้งค่าแบบจำกัดจำนวน กรุณาใช้หน้าค้นหาเฉพาะงานเพื่อดูรายการเพิ่มเติม'));
+      content.replaceChildren(summary, list);
     }
     function render() {
       tabs.forEach((tab) => {
@@ -633,7 +642,7 @@
         feedback.setAttribute('role', 'status'); content.prepend(feedback);
       }
     }
-    async function load({ tabs:requestedTabs } = {}) {
+    async function load({ tabs:requestedTabs, force=false } = {}) {
       const requested = safeArray(requestedTabs?.length ? requestedTabs : state.availableTabs)
         .filter((tab) => state.availableTabs.includes(tab));
       const needsFoundation = requested.some((tab) => ['overview','capabilities','integrations','pending','groups','alerts'].includes(tab));
@@ -642,29 +651,29 @@
       const needsPending = requested.includes('pending');
       const needsOperational = requested.includes('groups');
       const needsAlerts = requested.includes('alerts');
+      const fetchFoundation = needsFoundation && (force || !state.foundationLoaded
+        || (needsCapabilities && !state.foundationCapabilitiesLoaded));
       const token = ++generation; state.loading = true; state.error = null; render();
       try {
         const directoryLimit=requested.includes('integrations')?20:100;
-        const [organizationsResult, pendingResult, operationalResult, alertResult, integrationResult] = await Promise.all([
-          needsFoundation ? request('/api/admin/platform/organizations', { method:'GET' }) : Promise.resolve(null),
+        const [foundationResult, pendingResult, operationalResult, alertResult, integrationResult] = await Promise.all([
+          fetchFoundation ? request(`/api/admin/platform/operations-foundation?includeCapabilities=${needsCapabilities?'1':'0'}&limit=200&centerLimit=500`, { method:'GET' }) : Promise.resolve(null),
           needsPending ? request('/api/admin/platform/pending-subjects?limit=100', { method:'GET' }) : Promise.resolve(null),
           needsOperational ? request('/api/admin/platform/integration-events/status?limit=100', { method:'GET' }) : Promise.resolve(null),
           needsAlerts ? request('/api/admin/platform/integration-identity-alerts?limit=100', { method:'GET' }) : Promise.resolve(null),
           needsIntegrations ? send(buildIntegrationDirectoryRequest({search:requested.includes('integrations')?state.integrationSearch:'',status:requested.includes('integrations')?state.integrationStatus:'',page:requested.includes('integrations')?state.integrationPage:1,limit:directoryLimit})) : Promise.resolve(null),
         ]);
-        const organizations = needsFoundation ? safeArray(organizationsResult?.organizations) : state.organizations;
-        const centerGroups = needsFoundation ? await Promise.all(organizations.map(async (organization) => {
-          const result = await request(`/api/admin/platform/organizations/${encodeURIComponent(organization.organizationId)}/centers`, { method:'GET' });
-          return safeArray(result?.centers).map((center) => ({ ...center, organizationId:organization.organizationId, organizationName:organization.displayName }));
-        })) : [];
-        const centers = needsFoundation ? centerGroups.flat() : state.centers;
-        const capabilityGroups = needsCapabilities ? await Promise.all(centers.map(async (center) => {
-          const result = await request(`/api/admin/platform/centers/${encodeURIComponent(center.centerId)}/capabilities`, { method:'GET' });
-          return [center.centerId, safeArray(result?.capabilities)];
-        })) : null;
+        const organizations = fetchFoundation ? safeArray(foundationResult?.organizations) : state.organizations;
+        const organizationNames=new Map(organizations.map((item)=>[item.organizationId,item.displayName]));
+        const centers = fetchFoundation ? safeArray(foundationResult?.centers).map((center)=>({
+          ...center,organizationName:organizationNames.get(center.organizationId)||'ไม่ระบุ Organization',
+        })) : state.centers;
+        const capabilityGroups = fetchFoundation&&needsCapabilities
+          ? centers.map((center)=>[center.centerId,safeArray(center.capabilities)]) : null;
         const integrations = needsIntegrations ? safeArray(integrationResult?.items) : state.integrations;
         if (token !== generation) return { ignored:true, stale:true };
         Object.assign(state, { organizations, centers, integrations, loading:false, error:null });
+        if(fetchFoundation){state.foundationLoaded=true;state.foundationBounded=foundationResult?.bounded||null;if(needsCapabilities)state.foundationCapabilitiesLoaded=true;}
         if(needsIntegrations&&integrationResult?.pagination)state.integrationPagination=integrationResult.pagination;
         if (capabilityGroups) state.capabilities = new Map(capabilityGroups);
         if (needsPending) state.pending = safeArray(pendingResult?.items);

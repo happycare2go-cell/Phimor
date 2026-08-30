@@ -20,6 +20,16 @@ function createMemoryPlatformRepository() {
     async findOrganization(id) { return clone(state.organizations.find((row) => row.organization_id === id)); },
     async findOrganizationByCode(code) { return clone(state.organizations.find((row) => row.organization_code === code)); },
     async listOrganizations() { return state.organizations.map(clone); },
+    async listOperationsFoundation({limit=200,centerLimit=500,includeCapabilities=false}) {
+      const organizations=state.organizations.slice().sort((a,b)=>String(a.display_name).localeCompare(String(b.display_name))).slice(0,limit);
+      const allowed=new Set(organizations.map((row)=>row.organization_id));
+      const centers=state.organizationCenters.filter((row)=>allowed.has(row.organization_id)).slice(0,centerLimit).map((row)=>({
+        organization_id:row.organization_id,center_id:row.center_id,linked_at:row.linked_at,
+        center_name:row.center_name||row.center_id,center_status:row.center_status||'active',
+        capabilities:includeCapabilities?state.capabilities.filter((item)=>item.center_id===row.center_id).map(clone):[],
+      }));
+      return{organizations:organizations.map(clone),centers,organizationTotal:state.organizations.length,centerTotal:state.organizationCenters.length};
+    },
     async linkCenter(record) {
       if (state.organizationCenters.some((row) => row.center_id === record.centerId)) return null;
       const row={center_id:record.centerId,organization_id:record.organizationId,linked_by_admin_id:record.actorReference,linked_at:stamp(),updated_at:stamp()};
