@@ -63,6 +63,22 @@ test('missing reply token is handled without crashing or alternate disclosure', 
   assert.deepEqual(lineClient.getSentLog(), []);
 });
 
+test('group user_id is consumed without exposing the participant LINE ID', async () => {
+  const handled = await webhook.handleUserIdCommand(textEvent('user_id', {
+    source: { type:'group', groupId:'G-PRIVATE', userId:'U-GROUP-MEMBER' },
+  }));
+  assert.equal(handled, true);
+  assert.deepEqual(lineClient.getSentLog(), []);
+});
+
+test('room user_id is consumed without exposing the participant LINE ID', async () => {
+  const handled = await webhook.processEvent(textEvent('USER_ID', {
+    source: { type:'room', roomId:'R-PRIVATE', userId:'U-ROOM-MEMBER' },
+  }));
+  assert.equal(handled, undefined);
+  assert.deepEqual(lineClient.getSentLog(), []);
+});
+
 test('command exits before AI, staff capture, and all business database writes', async () => {
   let aiCalls = 0;
   aiProvider.setProviderForTests({ generateStructured: async () => { aiCalls += 1; return {}; } });

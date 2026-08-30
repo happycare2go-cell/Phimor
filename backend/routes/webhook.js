@@ -34,6 +34,10 @@ async function safeReply(replyToken, messages) {
   return lineClient.replyMessage(replyToken, Array.isArray(messages) ? messages : [messages]);
 }
 
+function isGroupOrRoomSource(event) {
+  return event?.source?.type === 'group' || event?.source?.type === 'room';
+}
+
 function isUserIdCommand(event) {
   return event?.type === 'message'
     && event.message?.type === 'text'
@@ -42,6 +46,9 @@ function isUserIdCommand(event) {
 
 async function handleUserIdCommand(event) {
   if (!isUserIdCommand(event)) return false;
+  // A participant's LINE identity is private operational information.  The
+  // command is deliberately consumed without a reply in groups and rooms.
+  if (isGroupOrRoomSource(event)) return true;
   const lineUserId = typeof event.source?.userId === 'string' && event.source.userId
     ? event.source.userId
     : null;
@@ -143,10 +150,11 @@ async function handleGroupBindingCode(event) {
 }
 
 async function handleImageMessage(event, imageBuffer) {
-  const groupId = event.source.groupId;
   const lineUserId = event.source.userId;
 
-  if (groupId) return safeReply(event.replyToken, { type: 'text', text: 'เพื่อรักษาความเป็นส่วนตัว กรุณาส่งรูปเอกสารในแชทส่วนตัวกับพี่หมอค่ะ' });
+  // Defense in depth: processEvent short-circuits before downloading media,
+  // but direct callers must remain unable to process group or room images.
+  if (isGroupOrRoomSource(event)) return;
   if (!lineUserId) return;
 
   const center = await centerService.findCenterByStaffUser(lineUserId);
@@ -292,7 +300,9 @@ async function handlePostback(event) {
     }
 }
 
-async function processEvent(event) {
+async function processEvent(event, overrides = {}) {
+      const messageContentClient = overrides.blobClient || blobClient;
+      const imageMessageHandler = overrides.handleImageMessage || handleImageMessage;
       if (await handleOpenCenterCommand(event)) {
         return;
       } else if (await handleUserIdCommand(event)) {
@@ -314,21 +324,28 @@ async function processEvent(event) {
           await centerService.recordStaffFromGroup(groupId, member.userId);
         }
       } else if (event.type === 'message' && event.message.type === 'image') {
+        // Ordinary group/room media is intentionally silent.  This guard must
+        // run before decoding mock content or asking LINE for binary content.
+        if (isGroupOrRoomSource(event)) return;
         let imageBuffer;
         if (event.message.mockBase64) {
             imageBuffer = Buffer.from(event.message.mockBase64, 'base64');
         } else {
-            const stream = await blobClient.getMessageContent(event.message.id);
+            const stream = await messageContentClient.getMessageContent(event.message.id);
             const chunks = [];
             for await (const chunk of stream) { chunks.push(chunk); }
             imageBuffer = Buffer.concat(chunks);
         }
-        await handleImageMessage(event, imageBuffer);
+        await imageMessageHandler(event, imageBuffer);
       } else if (event.type === 'postback') {
         await handlePostback(event);
-      } else if (event.type === 'message' && event.source?.groupId) {
-        const handledBinding = await handleGroupBindingCode(event);
-        if (!handledBinding) await captureStaffFromGroupEvent(event);
+      } else if (event.type === 'message' && isGroupOrRoomSource(event)) {
+        // Binding codes are supported only in LINE groups.  Rooms and all
+        // other ordinary message types are consumed without a visible reply.
+        if (event.source.type === 'group') {
+          const handledBinding = await handleGroupBindingCode(event);
+          if (!handledBinding) await captureStaffFromGroupEvent(event);
+        }
       }
 }
 
@@ -418,6 +435,7 @@ router.post('/webhook', requireMessagingCapability, webhookParser, async (req, r
 module.exports = router;
 module.exports.processPendingWebhookEvents = processPendingWebhookEvents;
 module.exports.requireMessagingCapability = requireMessagingCapability;
+module.exports.isGroupOrRoomSource = isGroupOrRoomSource;
 module.exports.isUserIdCommand = isUserIdCommand;
 module.exports.handleUserIdCommand = handleUserIdCommand;
 module.exports.normalizeTextCommand = normalizeTextCommand;

@@ -112,6 +112,185 @@ test('opencenter aliases are silently consumed in group and room sources', async
   }
 });
 
+test('source authority recognizes both LINE groups and LINE rooms only', () => {
+  const webhook = require('../backend/routes/webhook');
+  assert.equal(webhook.isGroupOrRoomSource({ source:{ type:'group', groupId:'G-1' } }), true);
+  assert.equal(webhook.isGroupOrRoomSource({ source:{ type:'room', roomId:'R-1' } }), true);
+  assert.equal(webhook.isGroupOrRoomSource({ source:{ type:'user', userId:'U-1' } }), false);
+  assert.equal(webhook.isGroupOrRoomSource({ source:{ groupId:'G-FORGED' } }), false);
+});
+
+test('group and room images short-circuit before LINE blob fetch, card processing, storage, or reply', async () => {
+  const webhook = require('../backend/routes/webhook');
+  let blobCalls = 0;
+  let imageHandlerCalls = 0;
+  const dependencies = {
+    blobClient:{ getMessageContent:async () => { blobCalls += 1; throw new Error('must not fetch group media'); } },
+    handleImageMessage:async () => { imageHandlerCalls += 1; },
+  };
+  for (const source of [
+    { type:'group', groupId:'G-FAMILY', userId:'U-MEMBER' },
+    { type:'room', roomId:'R-OPERATIONS', userId:'U-MEMBER' },
+  ]) {
+    await webhook.processEvent({
+      type:'message', replyToken:`RT-${source.type}`, message:{ type:'image', id:`IMG-${source.type}` }, source,
+    }, dependencies);
+  }
+  assert.equal(blobCalls, 0);
+  assert.equal(imageHandlerCalls, 0);
+  assert.equal((await db.PendingCards.findAll()).length, 0);
+  assert.deepEqual(lineClient.getSentLog(), []);
+});
+
+test('verified Family and Care2Go groups remain silent for ordinary conversation and media', async () => {
+  await db.CareProfiles.insert({ care_profile_id:'CP-SILENT', owner_line_id:'U-FAMILY', patient_name:'ผู้พักทดสอบ', status:'independent' });
+  await db.GroupBindings.insert({ binding_id:'GB-FAMILY-SILENT', kind:'family', care_profile_id:'CP-SILENT',
+    line_group_id:'G-FAMILY-SILENT', status:'active' });
+  await db.GroupBindings.insert({ binding_id:'GB-CARE2GO-SILENT', kind:'care2go_ops',
+    line_group_id:'G-CARE2GO-SILENT', status:'active' });
+  const webhook = require('../backend/routes/webhook');
+  for (const [groupId, userId] of [['G-FAMILY-SILENT', 'U-FAMILY'], ['G-CARE2GO-SILENT', 'U-OPS']]) {
+    await webhook.processEvent({ type:'message', replyToken:`RT-${groupId}-TEXT`, message:{ type:'text', text:'คุยกันตามปกติ' },
+      source:{ type:'group', groupId, userId } });
+    await webhook.processEvent({ type:'message', replyToken:`RT-${groupId}-IMAGE`, message:{ type:'image', mockBase64:'cHJpdmF0ZQ==' },
+      source:{ type:'group', groupId, userId } });
+  }
+  assert.deepEqual(lineClient.getSentLog().filter((item) => ['reply', 'push'].includes(item.type)), []);
+  assert.equal((await db.PendingCards.findAll()).length, 0);
+  assert.equal((await db.CenterStaff.findAll()).length, 0);
+});
+
+test('ordinary group and room media types are silent and retain no application records', async () => {
+  const webhook = require('../backend/routes/webhook');
+  for (const type of ['video', 'audio', 'file', 'location', 'sticker', 'unsupported']) {
+    await webhook.processEvent({
+      type:'message', replyToken:`RT-G-${type}`, message:{ type, id:`MSG-G-${type}` },
+      source:{ type:'group', groupId:'G-UNBOUND', userId:'U-GROUP' },
+    });
+    await webhook.processEvent({
+      type:'message', replyToken:`RT-R-${type}`, message:{ type, id:`MSG-R-${type}` },
+      source:{ type:'room', roomId:'R-UNBOUND', userId:'U-ROOM' },
+    });
+  }
+  assert.deepEqual(lineClient.getSentLog(), []);
+  assert.equal((await db.PendingCards.findAll()).length, 0);
+  assert.equal((await db.CenterStaff.findAll()).length, 0);
+  assert.equal((await db.AuditLog.findAll()).length, 0);
+});
+
+test('ordinary Center Staff group text and sticker discover staff without replying', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์เงียบ', ownerLineId:'U-OWNER' });
+  await centerService.bindGroupToCenter({ centerId:center.center_id, groupId:'G-STAFF-SILENT', requesterLineId:'U-OWNER' });
+  lineClient.clearSentLog();
+  const webhook = require('../backend/routes/webhook');
+  await webhook.processEvent({ type:'message', replyToken:'RT-TEXT', message:{ type:'text', text:'คุยงานกันตามปกติ' },
+    source:{ type:'group', groupId:'G-STAFF-SILENT', userId:'U-TEXT-STAFF' } });
+  await webhook.processEvent({ type:'message', replyToken:'RT-STICKER', message:{ type:'sticker', packageId:'1', stickerId:'1' },
+    source:{ type:'group', groupId:'G-STAFF-SILENT', userId:'U-STICKER-STAFF' } });
+  assert.equal((await db.CenterStaff.findOne((row) => row.line_user_id === 'U-TEXT-STAFF'))?.role, 'staff');
+  assert.equal((await db.CenterStaff.findOne((row) => row.line_user_id === 'U-STICKER-STAFF'))?.role, 'staff');
+  assert.deepEqual(lineClient.getSentLog().filter((item) => ['reply', 'push'].includes(item.type)), []);
+});
+
+test('private image still fetches content and reaches the existing image handler', async () => {
+  const webhook = require('../backend/routes/webhook');
+  let blobCalls = 0;
+  let handledBuffer = null;
+  await webhook.processEvent({
+    type:'message', replyToken:'RT-PRIVATE', message:{ type:'image', id:'IMG-PRIVATE' },
+    source:{ type:'user', userId:'U-PRIVATE' },
+  }, {
+    blobClient:{ getMessageContent:async () => {
+      blobCalls += 1;
+      return (async function* stream() { yield Buffer.from('private-image'); }());
+    } },
+    handleImageMessage:async (_event, buffer) => { handledBuffer = buffer; },
+  });
+  assert.equal(blobCalls, 1);
+  assert.equal(handledBuffer.toString(), 'private-image');
+});
+
+test('malformed binding-like and random uppercase group text stay silent', async () => {
+  const webhook = require('../backend/routes/webhook');
+  for (const text of ['FAMILY-123', 'STAFF-ABC', 'CGROUP-invalid', 'RANDOM-UPPERCASE', 'คุยกันตามปกติ']) {
+    await webhook.processEvent({ type:'message', replyToken:`RT-${text}`, message:{ type:'text', text },
+      source:{ type:'group', groupId:'G-UNBOUND', userId:'U-RANDOM' } });
+  }
+  assert.deepEqual(lineClient.getSentLog(), []);
+  assert.equal((await db.CenterStaff.findAll()).length, 0);
+});
+
+test('supported FAMILY and STAFF binding codes retain their authoritative replies', async () => {
+  const groupBindingService = require('../backend/services/groupBindingService');
+  const center = await centerService.createCenter({ name:'ศูนย์ผูกกลุ่ม', ownerLineId:'U-OWNER' });
+  const staffToken = await groupBindingService.createStaffBindingToken(center.center_id, 'U-OWNER');
+  await require('../backend/routes/webhook').processEvent({ type:'message', replyToken:'RT-STAFF',
+    message:{ type:'text', text:staffToken.code }, source:{ type:'group', groupId:'G-STAFF-CODE', userId:'U-OWNER' } });
+  assert.match(lineClient.getSentLog().find((item) => item.replyToken === 'RT-STAFF').messages[0].text, /ผูกเป็นกลุ่มพนักงาน/);
+
+  db.resetAll();
+  lineClient.clearSentLog();
+  await db.CareProfiles.insert({ care_profile_id:'CP-FAMILY-CODE', owner_line_id:'U-FAMILY', patient_name:'ผู้พักทดสอบ', status:'independent' });
+  const familyToken = await groupBindingService.createFamilyBindingToken('CP-FAMILY-CODE', 'U-FAMILY');
+  await require('../backend/routes/webhook').processEvent({ type:'message', replyToken:'RT-FAMILY',
+    message:{ type:'text', text:familyToken.code }, source:{ type:'group', groupId:'G-FAMILY-CODE', userId:'U-FAMILY' } });
+  assert.match(lineClient.getSentLog().find((item) => item.replyToken === 'RT-FAMILY').messages[0].text, /ผูกเป็นกลุ่มครอบครัว/);
+});
+
+test('configured Care2Go binding code and valid binding failure still reply safely', async () => {
+  const previousCode = process.env.CARE2GO_GROUP_BIND_CODE;
+  const originalBind = require('../backend/services/transportService').bindCare2goOperationsGroup;
+  process.env.CARE2GO_GROUP_BIND_CODE = 'CARE2GO-TEST-EXACT';
+  require('../backend/services/transportService').bindCare2goOperationsGroup = async () => ({ ok:true });
+  try {
+    const webhook = require('../backend/routes/webhook');
+    await webhook.processEvent({ type:'message', replyToken:'RT-CARE2GO', message:{ type:'text', text:'CARE2GO-TEST-EXACT' },
+      source:{ type:'group', groupId:'G-CARE2GO', userId:'U-OPS' } });
+    await webhook.processEvent({ type:'message', replyToken:'RT-INVALID-FAMILY', message:{ type:'text', text:'FAMILY-ABC123' },
+      source:{ type:'group', groupId:'G-FAMILY', userId:'U-FAMILY' } });
+    const replies = lineClient.getSentLog().filter((item) => item.type === 'reply');
+    assert.equal(replies.length, 2);
+    assert.match(replies[0].messages[0].text, /Care2Go/);
+    assert.match(replies[1].messages[0].text, /ผูกกลุ่มไม่สำเร็จ/);
+  } finally {
+    require('../backend/services/transportService').bindCare2goOperationsGroup = originalBind;
+    if (previousCode === undefined) delete process.env.CARE2GO_GROUP_BIND_CODE;
+    else process.env.CARE2GO_GROUP_BIND_CODE = previousCode;
+  }
+});
+
+test('authorized postback remains an explicit interaction even when sourced from a group', async () => {
+  await require('../backend/routes/webhook').processEvent({
+    type:'postback', replyToken:'RT-POSTBACK', postback:{ data:'action=care2go_ack' },
+    source:{ type:'group', groupId:'G-OPERATIONS', userId:'U-OPS' },
+  });
+  const reply = lineClient.getSentLog().find((item) => item.replyToken === 'RT-POSTBACK');
+  assert.match(reply.messages[0].text, /ปุ่มจากการ์ดรุ่นเก่า/);
+});
+
+test('ignored group media is marked processed, does not retry, and duplicate delivery is deduped', async () => {
+  const webhook = require('../backend/routes/webhook');
+  const event = { webhookEventId:'EVT-SILENT-GROUP-IMAGE', type:'message', replyToken:'RT-SILENT',
+    message:{ type:'image', id:'IMG-SILENT' }, source:{ type:'group', groupId:'G-SILENT', userId:'U-MEMBER' } };
+  await Promise.all([webhook.enqueueWebhookEvent(event), webhook.enqueueWebhookEvent({ ...event, deliveryContext:{ isRedelivery:true } })]);
+  await webhook.enqueueWebhookEvent({ webhookEventId:'EVT-SILENT-GROUP-TEXT', type:'message', replyToken:'RT-TEXT',
+    message:{ type:'text', text:'ordinary private conversation' },
+    source:{ type:'group', groupId:'G-SILENT', userId:'U-MEMBER' } });
+  const result = await webhook.processPendingWebhookEvents();
+  const rows = await db.WebhookInbox.findWhere((row) => row.event_key === event.webhookEventId);
+  const textRow = await db.WebhookInbox.findOne((row) => row.event_key === 'EVT-SILENT-GROUP-TEXT');
+  assert.equal(result.processed, 2);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'processed');
+  assert.equal(rows[0].attempts, 1);
+  assert.equal(rows[0].last_error, undefined);
+  assert.equal(textRow.status, 'processed');
+  assert.equal(textRow.attempts, 1);
+  assert.equal(textRow.last_error, undefined);
+  assert.deepEqual(lineClient.getSentLog(), []);
+  assert.equal((await db.PendingCards.findAll()).length, 0);
+});
+
 test('missing LIFF_ID_REGISTER returns a safe private reply without a broken URI', async () => {
   const previous = process.env.LIFF_ID_REGISTER;
   delete process.env.LIFF_ID_REGISTER;
@@ -355,7 +534,7 @@ test('crafted LINE confirm_card postback cannot bypass Center Lab review', async
   assert.match(reply.messages[0].text, /หน้าตรวจสอบผล Lab/);
 });
 
-test('ส่งรูปในกลุ่มงานศูนย์ ต้องไม่ประมวลผล และแนะนำให้ส่งส่วนตัวแทน', async () => {
+test('ส่งรูปในกลุ่มงานศูนย์ ต้องไม่ประมวลผลและไม่ตอบกลับ', async () => {
   const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
   await centerService.bindGroupToCenter({ centerId: center.center_id, groupId: 'G_CENTER', requesterLineId: 'U_OWNER' });
 
@@ -366,8 +545,7 @@ test('ส่งรูปในกลุ่มงานศูนย์ ต้อ�
 
   const cards = await db.PendingCards.findAll();
   assert.strictEqual(cards.length, 0, 'รูปในกลุ่มต้องไม่ถูกประมวลผลเลย');
-  const reply = lineClient.getSentLog().find((x) => x.type === 'reply');
-  assert.ok(reply.messages[0].text.includes('แชทส่วนตัว'));
+  assert.deepStrictEqual(lineClient.getSentLog().filter((item) => ['reply', 'push'].includes(item.type)), []);
 });
 
 test('พนักงานที่ระบบยังไม่รู้จัก ส่งรูปส่วนตัว ต้องได้คำแนะนำให้ทักในกลุ่มก่อน', async () => {
