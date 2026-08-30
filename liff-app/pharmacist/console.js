@@ -202,6 +202,12 @@
         return {detail,messages};
       }catch(error){if(current(requestRevision))patch({error:apiErrorCode(error),statusMessage:'อัปเดตข้อความไม่สำเร็จ'});return {error:apiErrorCode(error)};}
     }
+    async function refreshCaseContext(){
+      const caseId=state.selectedCase?.caseId;if(!caseId||state.caseContextLoading||effectiveClosed(state.selectedCase))return {ignored:true};
+      const requestRevision=token();patch({caseContextLoading:true,statusMessage:'กำลังโหลดข้อมูลล่าสุด…'});
+      try{const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/context`);if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return{ignored:true,stale:true};patch({caseContext:result,caseContextLoading:false,statusMessage:'อัปเดตข้อมูลเคสแล้ว'});return result}
+      catch(error){if(current(requestRevision))patch({caseContextLoading:false,statusMessage:'อัปเดตข้อมูลเคสไม่สำเร็จ'});return{error:apiErrorCode(error)}}
+    }
     async function loadOlderMessages(){
       const caseId=state.selectedCase?.caseId;if(!caseId||!state.hasMoreOlder)return {ignored:true};
       const requestRevision=token();
@@ -275,7 +281,7 @@
     function clearSelection(){revision+=1;stopPolling();realtime?.stop?.();realtime=null;patch({selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,caseContext:null,caseContextLoading:false,assistant:null,statusMessage:'',connectionStatus:'idle',activePanel:null});}
     function setPanel(activePanel){patch({activePanel:activePanel||null});}
     function handleVisibilityChange(){const visible=!documentHidden();realtime?.setVisible?.(visible);if(!visible)stopPolling();else{pollOnce();schedulePoll();}}
-    return {snapshot,initialize,loadCollection,switchTab,selectCase,acceptCase,pollOnce,loadOlderMessages,sendMessage,retryMessage,markRead,resolveCase,generateAssistant,clearSelection,setPanel,stopPolling,schedulePoll,handleVisibilityChange};
+    return {snapshot,initialize,loadCollection,switchTab,selectCase,acceptCase,refreshCaseContext,pollOnce,loadOlderMessages,sendMessage,retryMessage,markRead,resolveCase,generateAssistant,clearSelection,setPanel,stopPolling,schedulePoll,handleVisibilityChange};
   }
 
   function clearNode(node){while(node?.firstChild)node.removeChild(node.firstChild);}
@@ -304,7 +310,11 @@
     const grid=doc.createElement('dl');grid.className='case-context__grid';fields.forEach(([label,value])=>{const item=doc.createElement('div');textElement(doc,item,'dt','',label);textElement(doc,item,'dd','',contextValue(value));grid.appendChild(item);});profileSection.appendChild(grid);container.appendChild(profileSection);
 
     const medicationSection=doc.createElement('section');medicationSection.className='case-context__medications';textElement(doc,medicationSection,'h3','','ยาปัจจุบันที่บันทึกไว้');
-    const medications=safeArray(context.currentMedications);if(!medications.length)textElement(doc,medicationSection,'p','case-context__hint','ยังไม่มีรายการยาปัจจุบัน');else{const list=doc.createElement('ul');medications.forEach((item)=>{const details=[item.dose,item.instruction,item.condition].filter(Boolean).join(' · ');textElement(doc,list,'li','',`${contextValue(item.name)}${details?` — ${details}`:''}`);});medicationSection.appendChild(list);}container.appendChild(medicationSection);
+    const medications=safeArray(context.currentMedications);if(!medications.length)textElement(doc,medicationSection,'p','case-context__hint','ยังไม่มีรายการยาปัจจุบัน');else{const list=doc.createElement('ul');medications.forEach((item)=>{const details=[item.strength,item.dose,item.instruction,item.amount&&item.unit?`${item.amount} ${item.unit}`:null,item.frequency,item.timing,item.route,item.condition].filter(Boolean).join(' · ');textElement(doc,list,'li','',`${contextValue(item.name)}${details?` — ${details}`:''}`);});medicationSection.appendChild(list);}container.appendChild(medicationSection);
+
+    const changeSection=doc.createElement('section');changeSection.className='case-context__medication-changes';textElement(doc,changeSection,'h3','','การเปลี่ยนแปลงยาล่าสุด');const changes=safeArray(context.recentMedicationChanges);if(!changes.length)textElement(doc,changeSection,'p','case-context__hint','ยังไม่มีประวัติการเปลี่ยนแปลงที่ยืนยันได้');else{const list=doc.createElement('ul');changes.forEach((entry)=>{const when=entry.snapshot?.recordedAt?new Date(entry.snapshot.recordedAt).toLocaleString('th-TH'):'ไม่ทราบเวลา';textElement(doc,list,'li','',`${when} · ${contextValue(entry.sourceLabel,'ข้อมูลในระบบ')}`)});changeSection.appendChild(list)}container.appendChild(changeSection);
+
+    const vitalSection=doc.createElement('section');vitalSection.className='case-context__vitals';textElement(doc,vitalSection,'h3','','สัญญาณชีพ 7 วันล่าสุด');const vitalSets=safeArray(context.recentVitals);if(!vitalSets.length)textElement(doc,vitalSection,'p','case-context__hint','ยังไม่มีค่าสัญญาณชีพที่ผ่านเงื่อนไข');else{const labels={temperature:'อุณหภูมิ',blood_pressure_systolic:'ความดันตัวบน',blood_pressure_diastolic:'ความดันตัวล่าง',pulse:'ชีพจร',spo2:'ออกซิเจน'};const list=doc.createElement('ul');vitalSets.forEach((set)=>{const facts=safeArray(set.observations).map(item=>`${labels[item.measurementType]||item.measurementType} ${item.numericValue} ${item.canonicalUnit||''}`).join(' · ');textElement(doc,list,'li','',`${new Date(set.occurredAt).toLocaleString('th-TH')} — ${facts}`)});vitalSection.appendChild(list)}container.appendChild(vitalSection);
 
     const appointmentSection=doc.createElement('section');appointmentSection.className='case-context__appointments';textElement(doc,appointmentSection,'h3','','นัดหมายที่กำลังจะมาถึง');
     const appointments=safeArray(context.upcomingAppointments);if(!appointments.length)textElement(doc,appointmentSection,'p','case-context__hint','ยังไม่มีนัดหมายที่กำลังจะมาถึง');else{const list=doc.createElement('ul');appointments.forEach((item)=>{const when=item.datetime?new Date(item.datetime).toLocaleString('th-TH'):'ไม่ระบุเวลา';textElement(doc,list,'li','',`${contextValue(item.hospital)} · ${when}${item.reasonForVisit?` · ${item.reasonForVisit}`:''}`);});appointmentSection.appendChild(list);}container.appendChild(appointmentSection);
@@ -391,7 +401,7 @@
       assistantRefresh:doc.getElementById('refreshAssistantButton'),
       closeChat:doc.getElementById('closeChatButton'),connection:doc.getElementById('chatConnectionState'),roomActions:doc.getElementById('chatRoomActions'),
       initial:doc.getElementById('chatInitialQuestion'),loadOlder:doc.getElementById('loadOlderMessagesButton'),newMessages:doc.getElementById('newMessagesButton'),closed:doc.getElementById('chatClosedState'),
-      contextPanel:doc.getElementById('caseContextPanel'),assistantPanel:doc.getElementById('assistantPanel'),showContext:doc.getElementById('showCaseContextButton'),showAssistant:doc.getElementById('showAssistantButton'),closeContext:doc.getElementById('closeCaseContextButton'),closeAssistant:doc.getElementById('closeAssistantButton'),
+      contextPanel:doc.getElementById('caseContextPanel'),assistantPanel:doc.getElementById('assistantPanel'),showContext:doc.getElementById('showCaseContextButton'),showAssistant:doc.getElementById('showAssistantButton'),refreshContext:doc.getElementById('refreshCaseContextButton'),closeContext:doc.getElementById('closeCaseContextButton'),closeAssistant:doc.getElementById('closeAssistantButton'),
     };
     let lastCaseId=null,lastRenderedSequence=0,observer=null;
     const isNearBottom=()=>!elements.messages||elements.messages.scrollHeight-elements.messages.scrollTop-elements.messages.clientHeight<90;
@@ -448,6 +458,7 @@
     elements.messages.addEventListener('scroll',()=>{if(isNearBottom()){elements.newMessages.hidden=true;markVisible(session.snapshot());}});
     elements.newMessages.addEventListener('click',()=>{elements.messages.scrollTop=elements.messages.scrollHeight;elements.newMessages.hidden=true;markVisible(session.snapshot());});
     elements.showContext.addEventListener('click',()=>session.setPanel('context'));
+    elements.refreshContext.addEventListener('click',()=>session.refreshCaseContext());
     elements.showAssistant.addEventListener('click',()=>session.setPanel('assistant'));
     elements.closeContext.addEventListener('click',()=>session.setPanel(null));
     elements.closeAssistant.addEventListener('click',()=>session.setPanel(null));

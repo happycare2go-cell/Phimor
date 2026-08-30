@@ -38,6 +38,10 @@ const FAMILY_LAB_RESULTS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 
 const FAMILY_CARE_HISTORY_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'care-history-ui.js'), 'utf8');
 const FAMILY_HOME_V2_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'family-home-v2.js'), 'utf8');
 const FAMILY_MEDICATION_OPERATION_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'family', 'medication-operation.js'), 'utf8');
+const MEDICATION_EDITOR_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'medication-editor.js'), 'utf8');
+const MEDICATION_EDITOR_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'medication-editor.css'), 'utf8');
+const PHARMACIST_CONSOLE_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'pharmacist', 'console.js'), 'utf8');
+const PHARMACIST_CONSOLE_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'pharmacist', 'console.css'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
 const APP_SHELL_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.js'), 'utf8');
 const APP_SHELL_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.css'), 'utf8');
@@ -62,10 +66,14 @@ function localHtml(name) {
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
     .replace('<script src="../shared/app-shell.js"></script>', `<script>${APP_SHELL_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
+    .replace('<script src="../shared/medication-editor.js"></script>', `<script>${MEDICATION_EDITOR_SOURCE}</script>`)
     .replace('<script src="./medication-operation.js"></script>', `<script>${FAMILY_MEDICATION_OPERATION_SOURCE}</script>`)
+    .replace('<script src="./console.js"></script>', `<script>${PHARMACIST_CONSOLE_SOURCE}</script>`)
     .replace('<script src="../shared/clinical-action-dialog.js"></script>', `<script>${CLINICAL_ACTION_DIALOG_SOURCE}</script>`)
     .replace('<link rel="stylesheet" href="../shared/clinical-action-dialog.css">', `<style>${CLINICAL_ACTION_DIALOG_CSS}</style>`)
     .replace('<link rel="stylesheet" href="../shared/app-shell.css">', `<style>${APP_SHELL_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="../shared/medication-editor.css">', `<style>${MEDICATION_EDITOR_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./console.css">', `<style>${PHARMACIST_CONSOLE_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./lab-results-ui.css">', `<style>${FAMILY_LAB_RESULTS_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`);
 }
@@ -135,7 +143,7 @@ async function familyHealthProfileSwitchJourney(browser) {
   assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณยายทองดี');
   assert.strictEqual(await page.locator('#bloodType').inputValue(), 'A+');
   assert.strictEqual(await page.locator('#drugAllergies').inputValue(), 'เพนิซิลลิน');
-  await page.locator('#profileSelector').selectOption('CP2');
+  await page.evaluate(()=>selectProfile('CP2'));
   await page.waitForFunction(() => document.querySelector('#healthProfileHeading').textContent.includes('คุณตาสมชาย'));
   assert.strictEqual(await page.locator('#healthProfileHeading').textContent(), 'ข้อมูลสุขภาพปัจจุบันของ คุณตาสมชาย');
   assert.strictEqual(await page.locator('#bloodType').inputValue(), 'O+');
@@ -219,6 +227,8 @@ async function familyConsultationJourney(browser) {
   await page.locator('#consultationEntry').click();
   await page.locator('#consultationQuestion').fill('ควรหยุดยานี้ไหม');
   await page.locator('#consultationCheckButton').click();
+  await page.waitForFunction(()=>!document.querySelector('#consultationEligible').hidden);
+  await page.locator('#consultationEligibleContinueButton').click();
   await page.waitForFunction(()=>!document.querySelector('#consultationTerms').hidden);
   assert.match(await page.locator('#consultationTerms').textContent(),/100 บาท/);
   assert.strictEqual(await page.locator('#consultationContinueButton').isDisabled(),true);
@@ -284,6 +294,124 @@ async function familyLabResultsJourney(browser) {
   await page.close();
 }
 
+async function medicationManagementV2Journey(browser) {
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZB4sAAAAASUVORK5CYII=','base64');
+  const profiles=[
+    {profile:{care_profile_id:'CP-MED-OWNER',patient_name:'คุณแม่รายการยา',chronic_conditions:['ความดันโลหิตสูง']},familyRole:'owner',familyPermissions:['*'],canUseAi:false,upcomingAppointments:[]},
+    {profile:{care_profile_id:'CP-MED-CARE',patient_name:'คุณพ่อผู้ดูแล',chronic_conditions:[]},familyRole:'caregiver',familyPermissions:['view','manage_medications'],canUseAi:false,upcomingAppointments:[]},
+    {profile:{care_profile_id:'CP-MED-READ',patient_name:'คุณยายอ่านอย่างเดียว',chronic_conditions:[]},familyRole:'caregiver',familyPermissions:['view'],canUseAi:false,upcomingAppointments:[]},
+  ];
+  const state={snapshotId:'MS-1',versionNo:1,recordedAt:'2026-08-29T08:00:00Z',items:[
+    {medicationId:'MED-1',stableMedicationId:'RX-1',name:'Metformin',strength:'500 mg',dose:'1 เม็ด',instruction:'หลังอาหาร'},
+    {medicationId:'MED-2',stableMedicationId:'RX-2',name:'Losartan',strength:'50 mg',dose:'1 เม็ด',instruction:'ตอนเช้า'},
+  ],puts:[],stale:false,proposalCalls:0};
+  const page=await browser.newPage({viewport:{width:390,height:844}});
+  await mockBackend(page,async(url,request)=>{
+    if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,familyLiffId:'SIM_FAMILY'};
+    if(url.pathname==='/api/consent/check')return{hasConsent:true};
+    if(url.pathname==='/api/init-dashboard')return{profiles};
+    if(url.pathname==='/api/access-requests')return{requests:[]};
+    if(url.pathname==='/api/transport/family/pending')return{pending:[]};
+    if(/^\/api\/care-profile\/CP-MED-(OWNER|CARE|READ)\/caregivers$/.test(url.pathname))return{members:[]};
+    if(url.pathname==='/api/plus/entitlement')return{status:'basic',plus:false};
+    if(/^\/api\/care-profile\/CP-MED-(OWNER|CARE|READ)\/medications\/current$/.test(url.pathname)&&request.method()==='GET')return{
+      status:'CURRENT_SNAPSHOT',currentSnapshot:{snapshotId:state.snapshotId,versionNo:state.versionNo,recordedAt:state.recordedAt,sourceLabel:'ครอบครัวบันทึก'},medications:state.items};
+    if(url.pathname==='/api/care-profile/CP-MED-OWNER/medications/image-proposal'&&request.method()==='POST'){state.proposalCalls+=1;return{
+      baseSnapshotId:state.snapshotId,current:{medications:state.items},proposals:[
+        {classification:'CHANGED_STRENGTH',currentIndex:0,extractedIndex:0,current:state.items[0],extracted:{...state.items[0],strength:'850 mg'},ambiguous:false},
+        {classification:'NEW',currentIndex:null,extractedIndex:1,current:null,extracted:{name:'Aspirin',strength:'81 mg',instruction:'หลังอาหารเย็น'},ambiguous:false},
+      ]};}
+    if(url.pathname==='/api/care-profile/CP-MED-OWNER/medications/current'&&request.method()==='PUT'){
+      const body=request.postDataJSON();
+      if(state.stale){state.stale=false;state.snapshotId='MS-REMOTE';state.versionNo+=1;state.items=state.items.map((item,index)=>index===0?{...item,instruction:'รายการล่าสุดจากอุปกรณ์อื่น'}:item);return{status:409,body:{message:'รายการยามีการเปลี่ยนแปลงแล้ว กรุณาโหลดข้อมูลล่าสุด',errorCode:'MEDICATION_SNAPSHOT_STALE'}};}
+      state.puts.push(body);state.versionNo+=1;state.snapshotId=`MS-${state.versionNo}`;state.items=body.items;return{status:'CURRENT_SNAPSHOT',currentSnapshot:{snapshotId:state.snapshotId,versionNo:state.versionNo,recordedAt:new Date().toISOString(),sourceLabel:'ครอบครัวบันทึก'},medications:state.items};
+    }
+    if(url.pathname==='/api/care-profile/CP-MED-OWNER/medications/history')return{items:[{kind:'semantic_change',snapshot:{recordedAt:'2026-08-29T08:00:00Z'},sourceLabel:'ครอบครัวบันทึก',changes:[{category:'added',current:{name:'Metformin'}}]}]};
+    if(url.pathname==='/api/export/pdf-link'&&request.method()==='POST')return{previewUrl:'https://phimor.example/safe-preview',downloadUrl:'https://phimor.example/safe-download'};
+    return{status:404,body:{message:`unmocked ${url.pathname}`}};
+  });
+  await page.setContent(localHtml('family'),{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('#app')).display==='block');
+  await page.locator('[data-family-destination="medications"]').first().click();
+  await page.waitForFunction(()=>document.querySelectorAll('#familyMedicationRows .medication-editor__row').length===2);
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-field="name"]').nth(0).inputValue(),'Metformin');
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-field="name"]').nth(1).inputValue(),'Losartan');
+  assert.ok(await page.locator('#familyMedicationAdd').evaluate((button)=>button.getBoundingClientRect().height)>=44);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.locator('#familyMedicationAdd').click();
+  await page.locator('#familyMedicationRows [data-medication-field="name"]').nth(2).fill('Vitamin D');
+  await page.locator('#familyMedicationRows [data-medication-field="strength"]').nth(2).fill('1000 IU');
+  await page.locator('#familyMedicationSave').click();
+  await page.waitForFunction(()=>document.querySelectorAll('#familyMedicationRows .medication-editor__row').length===3);
+  assert.equal(state.puts.at(-1).items.length,3);
+  await page.locator('#familyMedicationRows .medication-editor__remove').nth(2).click();
+  await page.waitForFunction(()=>document.querySelector('#confirmActionModal').classList.contains('show'));
+  assert.equal(await page.locator('#familyMedicationRows .medication-editor__row').count(),3);
+  assert.match(await page.locator('#confirmActionMessage').textContent(),/ประวัติเดิมจะยังคงอยู่/);
+  await page.locator('#confirmActionCancelButton').click();
+  await page.waitForFunction(()=>!document.querySelector('#confirmActionModal').classList.contains('show'));
+  assert.equal(await page.locator('#familyMedicationRows .medication-editor__row').count(),3);
+
+  await page.locator('#medImage').setInputFiles({name:'medication.png',mimeType:'image/png',buffer:png});
+  await page.locator('#familyMedicationSave').click();
+  await page.waitForFunction(()=>document.querySelector('#medicationReviewModal').classList.contains('show'));
+  assert.match(await page.locator('#medicationReviewRows').textContent(),/ขนาดยาเปลี่ยน/);
+  await page.locator('#medicationReviewRows input[value="new"]').nth(0).check();
+  state.stale=true;const imageWritesBefore=state.puts.length;
+  await page.locator('#medicationReviewConfirm').click();
+  await page.waitForFunction(()=>document.querySelector('#medicationReviewLive').textContent.includes('รายการล่าสุดอีกครั้ง'));
+  assert.equal(state.puts.length,imageWritesBefore);assert.equal(state.proposalCalls,2);
+  assert.equal(await page.locator('#medicationReviewModal').evaluate((node)=>node.classList.contains('show')),true);
+  await page.locator('#medicationReviewRows input[value="new"]').nth(0).check();
+  await page.locator('#medicationReviewConfirm').click();
+  await page.waitForFunction(()=>!document.querySelector('#medicationReviewModal').classList.contains('show'));
+  const merged=state.puts.at(-1).items;assert.equal(merged.find((item)=>item.name==='Metformin').strength,'850 mg');assert.ok(merged.some((item)=>item.name==='Losartan'));assert.ok(merged.some((item)=>item.name==='Aspirin'));
+
+  state.stale=true;await page.locator('#familyMedicationRows [data-medication-field="instruction"]').nth(0).fill('แก้จากแท็บเก่า');
+  const writesBefore=state.puts.length;await page.locator('#familyMedicationSave').click();
+  await page.waitForFunction(()=>document.querySelector('#familyMedicationRows [data-medication-field="instruction"]')?.value==='รายการล่าสุดจากอุปกรณ์อื่น');
+  assert.equal(state.puts.length,writesBefore);
+  await page.evaluate(()=>selectProfile('CP-MED-CARE'));await page.locator('[data-family-destination="medications"]').first().click();
+  await page.waitForFunction(()=>!document.querySelector('#familyMedicationSave').hidden);assert.equal(await page.locator('#familyMedicationRows input').first().isEnabled(),true);
+  await page.evaluate(()=>selectProfile('CP-MED-READ'));await page.locator('[data-family-destination="medications"]').first().click();
+  await page.waitForFunction(()=>document.querySelector('#familyMedicationSave').hidden);assert.equal(await page.locator('#familyMedicationRows input').first().isEnabled(),false);
+  await page.setViewportSize({width:1280,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.evaluate(async()=>{await selectProfile('CP-MED-OWNER');await openFamilyDestination('history')});
+  await page.waitForFunction(()=>document.querySelector('#historyList').textContent.includes('Metformin'));
+  await page.getByRole('button',{name:'ส่งออกเป็น PDF'}).click();await page.waitForFunction(()=>document.querySelector('#pdfDownloadPanel').style.display==='block');
+  assert.equal(await page.locator('#pdfDownloadPanel').isVisible(),true);await page.close();
+
+  async function openCenter(role){
+    const centerPage=await browser.newPage({viewport:{width:390,height:844}});let centerItems=[{medicationId:'CM-1',name:'Amlodipine',strength:'5 mg'}],centerSnapshot='CMS-1',proposalCalls=0,centerStale=false;
+    await mockBackend(centerPage,async(url,request)=>{
+      if(url.pathname==='/config/liff')return{publicBackendUrl:SIMULATED_BACKEND_URL,centerAdminLiffId:'SIM_CENTER'};
+      if(url.pathname==='/api/center/me')return{actorContext:{activeCenterId:'CTR-MED-A'},centers:[{center_id:'CTR-MED-A',name:'ศูนย์ A',myRole:role,status:'active',subscription:{allowed:true,state:'active'}},{center_id:'CTR-MED-B',name:'ศูนย์ B',myRole:role,status:'active',subscription:{allowed:true,state:'active'}}]};
+      if(url.pathname==='/api/center/active-center'&&request.method()==='POST')return{center:{center_id:request.postDataJSON().centerId,name:'ศูนย์ B',myRole:role,status:'active',subscription:{allowed:true,state:'active'}}};
+      if(url.pathname==='/api/residents')return{residents:[{resident_id:'RES-MED',center_id:url.searchParams.get('centerId')||'CTR-MED-A',care_profile_id:'CP-CENTER-MED',full_name:'คุณตาศูนย์',room:'A-1',status:'active'}]};
+      if(/^\/api\/center\/CTR-MED-[AB]\/capabilities$/.test(url.pathname))return{capabilities:{vital_signs_v1:true,daily_care_v1:true}};
+      if(url.pathname==='/api/transport/pending')return{pending:[]};
+      if(url.pathname==='/api/residents/RES-MED/care-profile')return{profile:{patient_name:'คุณตาศูนย์',chronic_conditions:['ความดันโลหิตสูง']},currentMedication:{medications:centerItems},medicationHistory:[]};
+      if(url.pathname==='/api/residents/RES-MED/clinical-summary')return{summary:{patientName:'คุณตาศูนย์',room:'A-1',currentMedications:centerItems,upcomingAppointments:[]}};
+      if(url.pathname==='/api/residents/RES-MED/medications/current'&&request.method()==='GET')return{status:'CURRENT_SNAPSHOT',careProfileId:'CP-CENTER-MED',currentSnapshot:{snapshotId:centerSnapshot,versionNo:1,recordedAt:'2026-08-29T08:00:00Z',sourceLabel:'ศูนย์บันทึก'},medications:centerItems};
+      if(url.pathname==='/api/residents/RES-MED/medications/image-proposal'){proposalCalls+=1;return{baseSnapshotId:centerSnapshot,current:{medications:centerItems},proposals:[{classification:'NEW',currentIndex:null,extractedIndex:0,current:null,extracted:{name:'Calcium',strength:'600 mg'},ambiguous:false}]};}
+      if(url.pathname==='/api/residents/RES-MED/medications/current'&&request.method()==='PUT'){if(centerStale){centerStale=false;centerSnapshot='CMS-REMOTE';return{status:409,body:{message:'รายการยามีการเปลี่ยนแปลงแล้ว',errorCode:'MEDICATION_SNAPSHOT_STALE'}};}centerItems=request.postDataJSON().items;centerSnapshot='CMS-2';return{currentSnapshot:{snapshotId:centerSnapshot},medications:centerItems};}
+      return{status:404,body:{message:`unmocked ${url.pathname}`}};
+    });
+    await centerPage.setContent(localHtml('center-admin'),{waitUntil:'domcontentloaded'});await centerPage.waitForFunction(()=>document.querySelector('[data-shell-destination="home"]').getAttribute('aria-current')==='page');
+    return{page:centerPage,get proposalCalls(){return proposalCalls},makeStale(){centerStale=true}};
+  }
+  for(const role of ['owner','manager']){
+    const context=await openCenter(role),centerPage=context.page;await centerPage.evaluate(()=>viewCareProfile('RES-MED'));await centerPage.waitForFunction(()=>document.querySelector('#careProfileModal').classList.contains('show'));
+    await centerPage.getByRole('button',{name:'จัดการรายการยาปัจจุบัน'}).click();await centerPage.waitForFunction(()=>document.querySelectorAll('#centerMedicationRows .medication-editor__row').length===1);
+    assert.ok(await centerPage.locator('#centerMedicationSubmit').evaluate((button)=>button.getBoundingClientRect().height)>=44);
+    if(role==='manager'){await centerPage.locator('#centerMedicationImage').setInputFiles({name:'center-medication.png',mimeType:'image/png',buffer:png});await centerPage.locator('#centerMedicationSubmit').click();await centerPage.waitForFunction(()=>document.querySelector('#centerMedicationSubmit').textContent.includes('ใช้รายการ'));assert.equal(context.proposalCalls,1);context.makeStale();await centerPage.locator('#centerMedicationSubmit').click();await centerPage.waitForFunction(()=>document.querySelector('#centerMedicationHelp').textContent.includes('รายการล่าสุดอีกครั้ง'));assert.equal(context.proposalCalls,2);assert.equal(await centerPage.locator('#centerMedicationModal').evaluate((node)=>node.classList.contains('show')),true);await centerPage.locator('#centerMedicationSubmit').click();await centerPage.waitForFunction(()=>!document.querySelector('#centerMedicationModal').classList.contains('show'));}
+    await centerPage.locator('#centerSelector').selectOption('CTR-MED-B');await centerPage.waitForFunction(()=>!document.querySelector('#centerMedicationModal').classList.contains('show'));assert.equal(await centerPage.locator('#centerSelector').inputValue(),'CTR-MED-B');
+    assert.equal(await centerPage.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);await centerPage.close();
+  }
+  const staff=await openCenter('staff'),staffPage=staff.page;await staffPage.evaluate(()=>viewCareProfile('RES-MED'));await staffPage.waitForFunction(()=>document.querySelector('#careProfileModal').classList.contains('show'));
+  assert.equal(await staffPage.getByRole('button',{name:'จัดการรายการยาปัจจุบัน'}).count(),0);assert.match(await staffPage.locator('#careProfileDetails').textContent(),/Amlodipine/);await staffPage.close();
+}
+
 async function centerFamilyLinkingJourney(browser) {
   const centerPage=await browser.newPage({viewport:{width:390,height:844}});
   let centerLinkCreates=0;let activeCenterId='CTR1';let healthReportBody=null;
@@ -347,6 +475,7 @@ async function centerFamilyLinkingJourney(browser) {
   await centerPage.locator('#centerDailyForm textarea[name="symptomNote"]').fill('ข้อมูลของศูนย์หนึ่งที่ต้องถูกล้าง');
   await centerPage.locator('#centerSelector').selectOption('CTR2');
   await centerPage.waitForFunction(()=>document.querySelector('#centerNameLabel').textContent.includes('พนักงาน · ศูนย์สาขาพนักงาน'));
+  await centerPage.waitForFunction(()=>document.querySelector('#centerDailyForm select[name="residentId"]')?.options.length===2);
   assert.equal(await centerPage.locator('#centerDailyForm select[name="residentId"]').inputValue(),'');
   assert.equal(await centerPage.locator('#centerDailyForm textarea[name="symptomNote"]').inputValue(),'');
   assert.deepEqual(await centerPage.locator('#centerDailyForm select[name="residentId"] option').allTextContents(),['เลือกผู้รับการดูแล','คุณตาสาขาสอง · ห้อง B-2']);
@@ -840,7 +969,7 @@ async function roleBasedShellJourney(browser) {
 }
 
 async function pharmacistConsoleJourney(browser) {
-  const page=await browser.newPage({viewport:{width:1440,height:900}});
+  const page=await browser.newPage({viewport:{width:390,height:844}});let contextCalls=0;
   await mockBackend(page,async(url,request)=>{
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
     if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
@@ -848,18 +977,29 @@ async function pharmacistConsoleJourney(browser) {
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages')return {items:[],nextSequence:0,hasMore:false};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/context'){contextCalls+=1;return {status:'available',generatedAt:contextCalls>1?'2026-08-25T02:00:00Z':'2026-08-25T01:00:00Z',contact:{displayName:'ญาติตัวอย่าง'},careProfile:{patientName:'ผู้รับการดูแลตัวอย่าง'},currentMedications:[{name:'Metformin',strength:contextCalls>1?'850 mg':'500 mg',instruction:'หลังอาหาร'}],medicationSnapshot:{snapshotId:contextCalls>1?'S-2':'S-1',versionNo:contextCalls>1?2:1},contextVersion:{medicationSnapshotId:contextCalls>1?'S-2':'S-1',medicationVersionNo:contextCalls>1?2:1},recentMedicationChanges:[{snapshot:{recordedAt:'2026-08-24T01:00:00Z'},sourceLabel:'ครอบครัวบันทึก'}],recentVitals:[{occurredAt:'2026-08-24T08:00:00Z',observations:[{measurementType:'blood_pressure_systolic',numericValue:120,canonicalUnit:'mmHg'},{measurementType:'blood_pressure_diastolic',numericValue:75,canonicalUnit:'mmHg'}]}],upcomingAppointments:[]};}
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await page.setContent(localHtml('pharmacist'),{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!document.querySelector('#consoleApp').hidden);
   assert.strictEqual(await page.locator('.case-column').isVisible(),true);
   assert.strictEqual(await page.locator('.chat-column').isVisible(),true);
-  assert.strictEqual(await page.locator('.assistant-column').isVisible(),true);
+  assert.strictEqual(await page.locator('.assistant-column').count(),1);
+  assert.strictEqual(await page.locator('.assistant-column').isHidden(),true);
+  await page.getByRole('button',{name:'คิว',exact:true}).click();
+  await page.getByRole('button',{name:'รับเคส'}).waitFor({state:'visible'});
   await page.getByRole('button',{name:'รับเคส'}).click();
-  await page.waitForFunction(()=>document.querySelector('#caseHeader').textContent.includes('CASE-Q'));
+  await page.waitForFunction(()=>document.querySelector('#caseHeader').textContent.includes('ผู้รับการดูแลตัวอย่าง'));
   assert.match(await page.locator('#caseHeader').textContent(),/เหลือเวลา/);
   assert.strictEqual(await page.locator('#messageComposer').isEnabled(),true);
   assert.match(await page.locator('.ai-boundary').textContent(),/เภสัชกรเป็นผู้ตัดสินใจ/);
+  await page.getByRole('button',{name:/ข้อมูลเคส/}).click();
+  assert.match(await page.locator('#caseContext').textContent(),/Metformin/);
+  assert.match(await page.locator('#caseContext').textContent(),/120 mmHg.*75 mmHg/);
+  assert.match(await page.locator('#caseContext').textContent(),/การเปลี่ยนแปลงยาล่าสุด/);
+  await page.locator('#refreshCaseContextButton').click();
+  await page.waitForFunction(()=>document.querySelector('#caseContext').textContent.includes('850 mg'));
+  assert.ok(contextCalls>=2);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
   await page.close();
 }
 
@@ -870,7 +1010,7 @@ async function pharmacistConsoleJourney(browser) {
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
   const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
-  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, unifiedHealthReportJourney, healthReportDeepLinkJourney, roleBasedShellJourney, pharmacistConsoleJourney };
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, medicationManagementV2Journey, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, unifiedHealthReportJourney, healthReportDeepLinkJourney, roleBasedShellJourney, pharmacistConsoleJourney };
   for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }

@@ -1,8 +1,7 @@
-const { MedicationSnapshots } = require('../db');
 const { buildCareProfileContext } = require('./careProfileContextBuilder');
 const { getUpcomingAppointmentSummary } = require('./appointmentSummaryService');
 const {
-  getCurrentMedicationSnapshot, isEligibleCurrentSnapshot,
+  getCurrentMedicationSnapshot, listEligibleSnapshots,
 } = require('./medicationRetrievalService');
 const { compareMedicationSnapshots } = require('./medicationDiffService');
 
@@ -13,11 +12,6 @@ class DoctorVisitPreparationError extends Error {
     this.code = code;
     this.status = code === 'APPOINTMENT_NOT_FOUND' ? 404 : 400;
   }
-}
-
-function snapshotTime(snapshot) {
-  const value = new Date(snapshot.recorded_at || snapshot._createdAt || 0).getTime();
-  return Number.isFinite(value) ? value : 0;
 }
 
 function clarificationItems(appointment, medicationStatus) {
@@ -43,10 +37,7 @@ async function buildDoctorVisitPreparation({ careProfileId, appointmentId, reque
   const current = await getCurrentMedicationSnapshot({ careProfileId, requester });
   let medicationChanges = { status: 'NOT_AVAILABLE' };
   if (current.status === 'CURRENT_SNAPSHOT') {
-    const snapshots = await MedicationSnapshots.findWhere((item) =>
-      item.care_profile_id === careProfileId && isEligibleCurrentSnapshot(item)
-    );
-    const ordered = snapshots.sort((left, right) => snapshotTime(right) - snapshotTime(left));
+    const ordered = await listEligibleSnapshots(careProfileId, 3);
     const currentIndex = ordered.findIndex((item) => item.snapshot_id === current.currentSnapshot.snapshotId);
     const previous = currentIndex >= 0 ? ordered[currentIndex + 1] : null;
     if (previous) {

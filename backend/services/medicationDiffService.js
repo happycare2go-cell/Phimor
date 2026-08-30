@@ -1,7 +1,7 @@
 const { MedicationSnapshots } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 const {
-  isEligibleCurrentSnapshot, loadSnapshotMedications, snapshotMetadata,
+  isEligibleCurrentSnapshot, loadSnapshotMedications, snapshotMetadata, listEligibleSnapshots,
 } = require('./medicationRetrievalService');
 
 class MedicationDiffError extends Error {
@@ -95,7 +95,7 @@ function matchNormalized(previous, current) {
   const pairs = [];
   const warnings = [];
 
-  function matchUnique(strategy, keyFn, { pairDuplicates = false } = {}) {
+  function matchUnique(strategy, keyFn, { pairDuplicates = false, compatible = null } = {}) {
     const previousGroups = groupIndexes(previous, unmatchedPrevious, keyFn);
     const currentGroups = groupIndexes(current, unmatchedCurrent, keyFn);
     for (const [key, previousIndexes] of previousGroups) {
@@ -103,6 +103,12 @@ function matchNormalized(previous, current) {
       if (currentIndexes.length === 0) continue;
       if (!pairDuplicates && (previousIndexes.length !== 1 || currentIndexes.length !== 1)) {
         warnings.push({ code: 'AMBIGUOUS_MEDICATION_MATCH', strategy, key, previousCount: previousIndexes.length, currentCount: currentIndexes.length });
+        continue;
+      }
+      if (!pairDuplicates && compatible
+        && !compatible(previous[previousIndexes[0]], current[currentIndexes[0]])) {
+        warnings.push({ code: 'AMBIGUOUS_TRUSTED_IDENTIFIER', strategy, key,
+          previousCount: previousIndexes.length, currentCount: currentIndexes.length });
         continue;
       }
       if (pairDuplicates && (previousIndexes.length > 1 || currentIndexes.length > 1)) {
@@ -120,8 +126,12 @@ function matchNormalized(previous, current) {
   }
 
   matchUnique('stable_identifier', (item) => item.normalized.stableMedicationId, { pairDuplicates: false });
-  matchUnique('name_and_strength', (item) => item.normalized.strength ? `${item.normalized.name}|${item.normalized.strength}` : '', { pairDuplicates: false });
-  matchUnique('exact_name', (item) => item.normalized.name, { pairDuplicates: false });
+  matchUnique('exact_name', (item) => item.normalized.name, {
+    pairDuplicates: false,
+    compatible: (before, after) => !before.normalized.stableMedicationId
+      || !after.normalized.stableMedicationId
+      || before.normalized.stableMedicationId === after.normalized.stableMedicationId,
+  });
 
   return { pairs, unmatchedPrevious, unmatchedCurrent, warnings };
 }
@@ -153,19 +163,24 @@ async function compareMedicationSnapshots({ previousSnapshotId, currentSnapshotI
   const output = {
     added: [...matched.unmatchedCurrent].map((index) => current[index]),
     removed: [...matched.unmatchedPrevious].map((index) => previous[index]),
-    doseChanged: [], instructionChanged: [], unchanged: [], warnings: matched.warnings,
+    strengthChanged: [], doseChanged: [], instructionChanged: [], multipleFieldsChanged: [],
+    unchanged: [], warnings: matched.warnings,
     previousSnapshot: { ...snapshotMetadata(previousSnapshot), medicationSource: previousLoaded.medicationSource },
     currentSnapshot: { ...snapshotMetadata(currentSnapshot), medicationSource: currentLoaded.medicationSource },
   };
   for (const pair of matched.pairs) {
     const before = previous[pair.previousIndex];
     const after = current[pair.currentIndex];
-    const doseChanged = before.normalized.strength !== after.normalized.strength || before.normalized.dose !== after.normalized.dose;
+    const strengthChanged = before.normalized.strength !== after.normalized.strength;
+    const doseChanged = before.normalized.dose !== after.normalized.dose;
     const instructionChanged = before.normalized.instruction !== after.normalized.instruction;
     const entry = changeEntry(pair, before, after);
-    if (doseChanged) output.doseChanged.push(entry);
+    const count = [strengthChanged, doseChanged, instructionChanged].filter(Boolean).length;
+    if (strengthChanged) output.strengthChanged.push(entry);
+    if (doseChanged || strengthChanged) output.doseChanged.push(entry); // compatibility projection
     if (instructionChanged) output.instructionChanged.push(entry);
-    if (!doseChanged && !instructionChanged) output.unchanged.push(entry);
+    if (count > 1) output.multipleFieldsChanged.push(entry);
+    if (count === 0) output.unchanged.push(entry);
   }
   return output;
 }
@@ -181,10 +196,7 @@ async function compareLatestMedicationSnapshots({ requester, careProfileId } = {
     centerId: requester?.centerId || null,
     requireActiveCenter: requester?.requireActiveCenter !== false,
   });
-  const snapshots = await MedicationSnapshots.findWhere((snapshot) =>
-    snapshot.care_profile_id === careProfileId && isEligibleCurrentSnapshot(snapshot)
-  );
-  const ordered = snapshots.sort((left, right) => snapshotTime(right) - snapshotTime(left));
+  const ordered = await listEligibleSnapshots(careProfileId, 2);
   if (ordered.length < 2) {
     return { status: 'NOT_AVAILABLE', reasonCode: 'PREVIOUS_SNAPSHOT_NOT_FOUND' };
   }

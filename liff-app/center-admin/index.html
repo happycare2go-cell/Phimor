@@ -9,11 +9,13 @@
 <script src="../runtime-config.js"></script>
 <script src="../shared/app-shell.js"></script>
 <script src="../shared/clinical-action-dialog.js"></script>
+<script src="../shared/medication-editor.js"></script>
 <script src="./lab-review-runtime.js"></script>
 <script src="./care-recording-ui.js"></script>
 <link rel="stylesheet" href="../assets/mascot-ui.css">
 <link rel="stylesheet" href="../shared/app-shell.css">
 <link rel="stylesheet" href="../shared/clinical-action-dialog.css">
+<link rel="stylesheet" href="../shared/medication-editor.css">
 <link rel="stylesheet" href="./care-recording-ui.css">
 <style>
   :root{ --navy:#1C2B64; --gold:#DEB14E; --teal:#0F6E56; --bg:#F5F7FA; --ice:#E8ECF7; --red:#D64545; --gray:#5A6580; }
@@ -360,13 +362,15 @@
   <div style="margin-top:14px"><button class="btn btn-outline" style="width:100%" onclick="closeModal('careProfileModal')">ปิด</button></div>
 </div></div>
 
-<div class="modal-bg" id="centerMedicationModal"><div class="modal">
-  <h3>บันทึกรายการยา</h3>
-  <p id="centerMedicationHelp" style="font-size:12px;color:var(--gray)">กรอกข้อมูลเอง หรือถ่าย/เลือกรูปใบรายการยา หากใช้รูป AI จะสร้างฉบับรอตรวจและยังไม่บันทึกทันที</p>
+<div class="modal-bg" id="centerMedicationModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="centerMedicationTitle">
+  <h3 id="centerMedicationTitle">รายการยาปัจจุบัน</h3>
+  <p id="centerMedicationHelp" class="medication-editor__status" role="status" aria-live="polite">กำลังโหลดรายการยาปัจจุบัน...</p>
   <input type="hidden" id="centerMedicationResidentId">
-  <div id="centerMedicationRows"></div>
-  <button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="addCenterMedicationRow()">+ เพิ่มรายการยา</button>
-  <label>ถ่าย/อัปโหลดรูปใบรายการยา</label><input type="file" id="centerMedicationImage" accept="image/*" capture="environment">
+  <div id="centerMedicationRows" class="medication-editor__list"></div>
+  <button class="btn btn-outline" style="width:100%;margin-top:8px;min-height:44px" onclick="addCenterMedicationRow()">+ เพิ่มยา</button>
+  <label for="centerMedicationImage">ถ่าย/อัปโหลดรูปใบรายการยาเพื่อเสนอการเปลี่ยนแปลง</label><input type="file" id="centerMedicationImage" accept="image/*" capture="environment">
+  <p class="medication-editor__status">ยาที่ไม่อยู่ในรูปจะยังคงอยู่ การลบต้องกด “ลบรายการ” โดยผู้มีสิทธิ์</p>
+  <div id="centerMedicationProposal"></div>
   <div style="display:flex;gap:8px;margin-top:14px"><button class="btn btn-outline" onclick="closeModal('centerMedicationModal')">ยกเลิก</button><button class="btn btn-primary" id="centerMedicationSubmit" onclick="submitCenterMedication()">ตรวจและบันทึก</button></div>
 </div></div>
 
@@ -467,6 +471,7 @@ const CENTER_DESTINATIONS = Object.freeze(['home','residents','record','work','m
 const CENTER_GROUP_CODE_DISPLAY = new Map();
 let centerMedicationDraftImage = null;
 let centerMedicationAwaitingConfirmation = false;
+let centerMedicationState = { residentId:null,careProfileId:null,centerId:null,generation:0,baseSnapshotId:null,items:[],proposal:null,busy:false };
 let centerMedicationConditions = [];
 const STANDARD_CONDITIONS = ['เบาหวาน','ความดันโลหิตสูง','ไขมันในเลือดสูง','โรคหัวใจ','โรคไต','โรคตับ','โรคหลอดเลือดสมอง','อัลไซเมอร์/สมองเสื่อม','พาร์กินสัน','โรคปอด','มะเร็ง'];
 
@@ -516,7 +521,7 @@ async function api(path, opts={}) {
   if (!res.ok) {
     const message = data.message || data.error || `เกิดข้อผิดพลาด (HTTP ${res.status})`;
     toast(message);
-    const error = new Error(message); error.status = res.status; throw error;
+    const error = new Error(message); error.status = res.status; error.errorCode=data.errorCode||data.error||'REQUEST_FAILED';error.details=data;throw error;
   }
   if(contextGuard&&requestGeneration!==CENTER_CONTEXT_GENERATION){const error=new Error('บริบทศูนย์เปลี่ยนแล้ว');error.stale=true;throw error}
   return data;
@@ -637,6 +642,8 @@ async function viewCareProfile(residentId){
   const data = await api(`/api/residents/${residentId}/care-profile?centerId=${CENTER_ID}`);
   const p=data.profile, gender={female:'หญิง',male:'ชาย',other:'อื่น ๆ'}[p.gender]||'ไม่ระบุ';
   centerMedicationConditions=p.chronic_conditions||[];
+  const currentMeds=(data.currentMedication?.medications||[]).map(item=>`${esc(item.name)} ${esc(item.strength||'')} ${esc(item.dose||item.instruction||'')}`).join('<br>')||'ยังไม่มีรายการยาปัจจุบัน';
+  const medHistory=(data.medicationHistory||[]).map(entry=>`${entry.snapshot?.recordedAt?new Date(entry.snapshot.recordedAt).toLocaleString('th-TH'):'ไม่ทราบเวลา'} · ${esc(entry.sourceLabel||'ข้อมูลในระบบ')}`).join('<br>')||'ยังไม่มีประวัติ';
   document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8">
     <b>${esc(p.patient_name)}</b><br>เพศ: ${gender}<br>กรุ๊ปเลือด: ${esc(p.blood_type||'ไม่ทราบ')}<br>
     ส่วนสูง: ${p.height_cm||'-'} ซม. · น้ำหนัก: ${p.weight_kg||'-'} กก.<br>
@@ -644,8 +651,8 @@ async function viewCareProfile(residentId){
     แพ้ยา: ${esc(p.drug_allergies||'ไม่มีข้อมูล')}<br>แพ้อาหาร: ${esc(p.food_allergies||'ไม่มีข้อมูล')}<br>
     ข้อจำกัดการเคลื่อนไหว: ${esc(p.mobility_limitations||'ไม่มีข้อมูล')}<br>
     ผู้ติดต่อฉุกเฉิน: ${esc(p.emergency_contact_name||'-')} ${esc(p.emergency_contact_phone||'')}<hr>
-    <b>ประวัติรายการยา</b><br>${data.medicationHistory.length?data.medicationHistory.map(s=>`${new Date(s.recorded_at).toLocaleString('th-TH')}: ${s.items.map(i=>esc(i.name)+' '+esc(i.dose||'')).join(', ')}`).join('<br>'):'ยังไม่มีข้อมูล'}
-    <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="openCenterMedication('${residentId}')">เพิ่ม/ถ่ายรูปรายการยา</button></div>`;
+    <b>รายการยาปัจจุบัน</b><br>${currentMeds}<br><b>ประวัติการเปลี่ยนแปลง</b><br>${medHistory}
+    <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="openCenterMedication('${residentId}')">จัดการรายการยาปัจจุบัน</button></div>`;
   openModal('careProfileModal');
 }
 async function viewClinicalSummary(residentId){
@@ -676,36 +683,57 @@ async function dischargeResident() {
   await loadResidents();
 }
 
-function openCenterMedication(residentId){
+async function openCenterMedication(residentId){
   document.getElementById('centerMedicationResidentId').value=residentId;
-  document.getElementById('centerMedicationRows').innerHTML=''; addCenterMedicationRow();
+  const centerId=CENTER_ID,generation=CENTER_CONTEXT_GENERATION;
+  centerMedicationState={residentId,careProfileId:null,centerId,generation,baseSnapshotId:null,items:[],proposal:null,busy:true};
+  document.getElementById('centerMedicationRows').replaceChildren();
+  document.getElementById('centerMedicationProposal').replaceChildren();
   document.getElementById('centerMedicationImage').value=''; centerMedicationDraftImage=null; centerMedicationAwaitingConfirmation=false;
-  document.getElementById('centerMedicationSubmit').textContent='ตรวจและบันทึก';
-  document.getElementById('centerMedicationHelp').textContent='กรอกข้อมูลเอง หรือถ่าย/เลือกรูปใบรายการยา หากใช้รูป AI จะสร้างฉบับรอตรวจและยังไม่บันทึกทันที';
+  document.getElementById('centerMedicationSubmit').textContent='บันทึกรายการยาปัจจุบัน';
+  document.getElementById('centerMedicationSubmit').disabled=true;
+  document.getElementById('centerMedicationHelp').textContent='กำลังโหลดรายการยาปัจจุบัน...';
   closeModal('careProfileModal'); openModal('centerMedicationModal');
+  try{
+    const result=await api(`/api/residents/${residentId}/medications/current?centerId=${encodeURIComponent(centerId)}`);
+    if(generation!==CENTER_CONTEXT_GENERATION||centerId!==CENTER_ID||residentId!==centerMedicationState.residentId)return;
+    centerMedicationState={residentId,careProfileId:result.careProfileId||null,centerId,generation,baseSnapshotId:result.currentSnapshot?.snapshotId||null,items:result.medications||[],proposal:null,busy:false};
+    window.PhimorMedicationEditor.renderRows(document.getElementById('centerMedicationRows'),centerMedicationState.items,centerMedicationEditorOptions());
+    document.getElementById('centerMedicationHelp').textContent=result.currentSnapshot?`อัปเดตล่าสุด ${new Date(result.currentSnapshot.recordedAt).toLocaleString('th-TH')} · ${result.currentSnapshot.sourceLabel||'ข้อมูลในระบบ'}`:'ยังไม่มีรายการยาปัจจุบัน';
+    document.getElementById('centerMedicationSubmit').disabled=false;
+  }catch(error){if(!error.stale){document.getElementById('centerMedicationHelp').textContent='โหลดรายการยาไม่สำเร็จ กรุณาปิดแล้วลองใหม่'}}
 }
 function addCenterMedicationRow(item={}){
-  const row=document.createElement('div'); row.className='card center-med-row'; row.style.padding='10px';
-  row.innerHTML=`<label>ชื่อยา</label><input class="center-med-name" value="${esc(item.name||'')}"><label>วิธีใช้</label><input class="center-med-dose" value="${esc(item.dose||'')}"><label>โรค/ภาวะ</label><select class="center-med-condition">${centerConditionOptions(item.condition||'')}</select><button class="btn btn-outline" style="margin-top:8px" onclick="this.parentElement.remove()">ลบรายการ</button>`;
-  document.getElementById('centerMedicationRows').appendChild(row);
+  if(!window.PhimorMedicationEditor.addRow(document.getElementById('centerMedicationRows'),item,centerMedicationEditorOptions()))toast('บันทึกยาได้ไม่เกิน 30 รายการ');
 }
-function collectCenterMedications(){return Array.from(document.querySelectorAll('.center-med-row')).map(row=>({name:row.querySelector('.center-med-name').value.trim(),dose:row.querySelector('.center-med-dose').value.trim(),condition:row.querySelector('.center-med-condition').value.trim()})).filter(x=>x.name)}
+function centerMedicationEditorOptions(){return {editable:true,confirmRemove:()=>askConfirm('ลบรายการยา','ยืนยันนำรายการนี้ออกจากรายการยาปัจจุบัน ประวัติเดิมจะยังคงอยู่','ลบรายการ')}}
+function collectCenterMedications(){return window.PhimorMedicationEditor.collectRows(document.getElementById('centerMedicationRows'))}
+function renderCenterMedicationProposal(proposal){
+  const box=document.getElementById('centerMedicationProposal');box.replaceChildren();let ambiguous=false;
+  const labels={NEW:'ยาใหม่',CHANGED_STRENGTH:'ขนาดยาเปลี่ยน',CHANGED_INSTRUCTION:'วิธีใช้เปลี่ยน',CHANGED_MULTIPLE_FIELDS:'หลายช่องเปลี่ยน',UNCHANGED:'ข้อมูลตรงกับรายการปัจจุบัน',AMBIGUOUS:'ระบุตัวตนยาไม่ชัดเจน'};
+  (proposal.proposals||[]).forEach((item,index)=>{const card=document.createElement('section');card.className='medication-editor__proposal'+(item.ambiguous?' medication-editor__proposal--ambiguous':'');card.dataset.extractedIndex=item.extractedIndex==null?'':String(item.extractedIndex);const heading=document.createElement('h4');heading.textContent=labels[item.classification]||item.classification;card.appendChild(heading);if(item.current){const old=document.createElement('p');old.textContent=`เดิม: ${item.current.name} ${item.current.strength||''} ${item.current.dose||item.current.instruction||''}`.trim();card.appendChild(old)}if(item.extracted){const fresh=document.createElement('p');fresh.textContent=`จากรูป: ${item.extracted.name} ${item.extracted.strength||''} ${item.extracted.dose||item.extracted.instruction||''}`.trim();card.appendChild(fresh)}if(item.ambiguous){ambiguous=true;const warning=document.createElement('p');warning.textContent='กรุณาแก้ข้อมูลในเอกสารแล้วลองใหม่ ระบบจะไม่เดารายการยา';card.appendChild(warning)}else if(item.classification!=='UNCHANGED'){const choices=document.createElement('div');choices.className='medication-editor__proposal-options';const name=`center-med-choice-${index}`;choices.innerHTML=`<label><input type="radio" name="${name}" value="current" ${item.classification==='NEW'?'':'checked'}> ${item.classification==='NEW'?'ไม่เพิ่ม':'ใช้ข้อมูลเดิม'}</label><label><input type="radio" name="${name}" value="new" ${item.classification==='NEW'?'checked':''}> ${item.classification==='NEW'?'เพิ่มยา':'ใช้ข้อมูลจากรูป'}</label>`;card.appendChild(choices)}box.appendChild(card)});
+  centerMedicationAwaitingConfirmation=true;document.getElementById('centerMedicationSubmit').disabled=ambiguous;document.getElementById('centerMedicationSubmit').textContent='ใช้รายการที่เลือกและบันทึก';document.getElementById('centerMedicationHelp').textContent=ambiguous?'พบรายการที่ไม่ชัดเจน ยังไม่สามารถยืนยันได้':'ตรวจรายการจากรูป ยาที่ไม่อยู่ในรูปจะยังคงอยู่';
+}
 async function submitCenterMedication(){
+  const operation={...centerMedicationState};if(operation.busy)return;
   const residentId=document.getElementById('centerMedicationResidentId').value, file=document.getElementById('centerMedicationImage').files[0];
+  if(operation.centerId!==CENTER_ID||operation.generation!==CENTER_CONTEXT_GENERATION||operation.residentId!==residentId)return toast('บริบทศูนย์เปลี่ยนแล้ว กรุณาเปิดรายการใหม่');
   if(!centerMedicationAwaitingConfirmation && file){
+    centerMedicationState.busy=true;document.getElementById('centerMedicationSubmit').disabled=true;
     try { centerMedicationDraftImage=await normalizeCenterImageFile(file); }
-    catch(e){ return toast(e.message||'ไม่สามารถเตรียมรูปได้'); }
-    const draft=await api(`/api/residents/${residentId}/medication-snapshots?centerId=${CENTER_ID}`,{method:'POST',body:JSON.stringify({items:[],...centerMedicationDraftImage})});
-    if(draft.status==='draft_requires_confirmation'){
-      document.getElementById('centerMedicationRows').innerHTML=''; (draft.items||[]).forEach(addCenterMedicationRow); if(!(draft.items||[]).length)addCenterMedicationRow();
-      centerMedicationAwaitingConfirmation=true; document.getElementById('centerMedicationSubmit').textContent='ยืนยันและบันทึก';
-      document.getElementById('centerMedicationHelp').textContent='AI อ่านรูปแล้ว กรุณาตรวจทุกช่อง แก้ไขหรือเพิ่มรายการให้ถูกต้องก่อนกดยืนยัน';
-      return toast('AI อ่านรูปแล้ว กรุณาตรวจสอบก่อนบันทึก');
-    }
+    catch(e){centerMedicationState.busy=false;document.getElementById('centerMedicationSubmit').disabled=false;return toast(e.message||'ไม่สามารถเตรียมรูปได้'); }
+    try{const proposal=await api(`/api/residents/${residentId}/medications/image-proposal?centerId=${CENTER_ID}`,{method:'POST',body:JSON.stringify(centerMedicationDraftImage)});if(operation.generation!==CENTER_CONTEXT_GENERATION||operation.centerId!==CENTER_ID)return;centerMedicationState.proposal=proposal;renderCenterMedicationProposal(proposal);return toast('AI อ่านรูปแล้ว กรุณาตรวจสอบก่อนบันทึก')}finally{centerMedicationState.busy=false;if(!centerMedicationState.proposal)document.getElementById('centerMedicationSubmit').disabled=false}
   }
-  const items=collectCenterMedications(); if(!items.length)return toast('กรุณากรอกชื่อยาอย่างน้อย 1 รายการ');
-  await api(`/api/residents/${residentId}/medication-snapshots?centerId=${CENTER_ID}`,{method:'POST',body:JSON.stringify({items,confirmAi:centerMedicationAwaitingConfirmation,imageBase64:centerMedicationDraftImage?.imageBase64||null,imageMimeType:centerMedicationDraftImage?.imageMimeType||null})});
-  closeModal('centerMedicationModal'); toast('บันทึกรายการยาแล้ว'); await viewCareProfile(residentId);
+  let items=collectCenterMedications();
+  if(centerMedicationAwaitingConfirmation&&centerMedicationState.proposal){const decisions={};document.querySelectorAll('#centerMedicationProposal .medication-editor__proposal').forEach(card=>{if(card.dataset.extractedIndex!=='')decisions[card.dataset.extractedIndex]=card.querySelector('input[type=radio]:checked')?.value||'current'});items=window.PhimorMedicationEditor.proposedCompleteSet(centerMedicationState.proposal,decisions)}
+  let confirmRemoveAll=false;if(!items.length){confirmRemoveAll=await askConfirm('ลบยาทั้งหมด','ประวัติเดิมจะยังคงอยู่ ยืนยันนำยาทั้งหมดออกจากรายการปัจจุบัน','ลบยาทั้งหมด');if(!confirmRemoveAll)return}
+  centerMedicationState.busy=true;document.getElementById('centerMedicationSubmit').disabled=true;document.getElementById('centerSelector').disabled=true;
+  try{const result=await api(`/api/residents/${residentId}/medications/current?centerId=${CENTER_ID}`,{method:'PUT',body:JSON.stringify({items,baseSnapshotId:operation.baseSnapshotId,confirmRemoveAll,source:centerMedicationAwaitingConfirmation?'center_image_ai':'center_manual',imageBase64:centerMedicationDraftImage?.imageBase64||null,mutationId:`center-medication-${Date.now()}-${Math.random().toString(36).slice(2)}`})});closeModal('centerMedicationModal');toast(result.noChange?'รายการยาตรงกับข้อมูลปัจจุบัน ไม่มีการเปลี่ยนแปลง':'บันทึกรายการยาปัจจุบันแล้ว');await viewCareProfile(residentId)}catch(error){if(error.errorCode==='MEDICATION_SNAPSHOT_STALE'){
+    const staleImage=centerMedicationAwaitingConfirmation?centerMedicationDraftImage:null;
+    await openCenterMedication(residentId);
+    if(staleImage&&operation.generation===CENTER_CONTEXT_GENERATION&&operation.centerId===CENTER_ID){centerMedicationDraftImage=staleImage;const refreshed=await api(`/api/residents/${residentId}/medications/image-proposal?centerId=${CENTER_ID}`,{method:'POST',body:JSON.stringify(staleImage)});if(operation.generation===CENTER_CONTEXT_GENERATION&&operation.centerId===CENTER_ID){centerMedicationState.proposal=refreshed;renderCenterMedicationProposal(refreshed);document.getElementById('centerMedicationHelp').textContent='รายการยามีการเปลี่ยนแปลงแล้ว กรุณาตรวจข้อเสนอจากรูปกับรายการล่าสุดอีกครั้ง'}}
+    else document.getElementById('centerMedicationHelp').textContent='โหลดรายการยาล่าสุดแล้ว กรุณาตรวจสอบก่อนบันทึกใหม่'
+  }if(error.errorCode==='DUPLICATE_MEDICATION_IDENTITY')window.PhimorMedicationEditor.showRowConflicts(document.getElementById('centerMedicationRows'),error.details?.conflicts||[])}finally{centerMedicationState.busy=false;document.getElementById('centerMedicationSubmit').disabled=Boolean(centerMedicationState.proposal?.proposals?.some(item=>item.ambiguous));document.getElementById('centerSelector').disabled=false}
 }
 async function normalizeCenterImageFile(file){
   if(file.type && !file.type.startsWith('image/'))throw new Error('กรุณาเลือกไฟล์รูปภาพ'); if(file.size>20*1024*1024)throw new Error('รูปต้นฉบับใหญ่เกิน 20 MB');
@@ -878,6 +906,7 @@ function invalidateCenterState(){
   CENTER_CONTEXT_GENERATION+=1;RESIDENTS_LOADED_GENERATION=-1;CARE_CONTEXT_READY_GENERATION=-1;
   residentsCache=[];CENTER_RECORD_CAPABILITIES={};CENTER_GROUP_CODE_DISPLAY.clear();centerCareUi.clear();editCardRequestGuard.invalidate();
   currentCard=null;currentCardOriginal=null;currentLabCorrectionContext=null;MORE_SURFACE=null;
+  centerMedicationState={residentId:null,careProfileId:null,centerId:null,generation:CENTER_CONTEXT_GENERATION,baseSnapshotId:null,items:[],proposal:null,busy:false};centerMedicationDraftImage=null;centerMedicationAwaitingConfirmation=false;
   closeCenterModals();['residentList','centerApptList','transportList','staffList'].forEach((id)=>{const node=document.getElementById(id);if(node)node.replaceChildren()});
   document.getElementById('moreDetailHost').replaceChildren();document.getElementById('centerGroupOperations').hidden=true;
   document.getElementById('staffBindingCode').replaceChildren();

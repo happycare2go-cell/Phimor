@@ -7,7 +7,9 @@
 //                                      │                            │
 //                                      └──────── (เกิน 24 ชม.) ──→ expired
 
-const { PendingCards, Residents, CareProfiles, Appointments, Medications, MedicationSnapshots, audit, id, now } = require('../db');
+const { PendingCards, Residents, CareProfiles, Appointments, audit, id, now } = require('../db');
+const { loadCurrentSnapshot } = require('./medicationRetrievalService');
+const medicationCurrentSetService = require('./medicationCurrentSetService');
 const { findActiveFamilyBinding } = require('./groupBindingRepository');
 const aiProvider = require('../providers/aiProvider');
 const lineClient = require('../providers/lineClient');
@@ -65,6 +67,8 @@ async function handleIncomingPhoto({ centerId, imageBuffer, imageMimeType = 'ima
 
   // ข้อ E4: ต้องแสดงรูปต้นฉบับค้างไว้ในหน้าแก้ไขให้เทียบได้ — จึงต้องเก็บรูปไว้ ไม่ใช่ทิ้งหลัง AI อ่านเสร็จ
   const imageBase64 = imageBuffer && imageBuffer.length > 0 ? imageBuffer.toString('base64') : null;
+  const medicationBase = matched?.care_profile_id && (aiResult.medications || []).length
+    ? await loadCurrentSnapshot(matched.care_profile_id) : null;
 
   const card = await PendingCards.insert({
     card_id: id('CARD'),
@@ -82,6 +86,7 @@ async function handleIncomingPhoto({ centerId, imageBuffer, imageMimeType = 'ima
       ? (labExtractionErrorCode ? 'extraction_failed' : 'extracted') : null,
     lab_extraction_error_code: labExtractionErrorCode,
     lab_report_id: null,
+    medication_base_snapshot_id: medicationBase?.currentSnapshot?.snapshotId || null,
     submitted_by: submittedBy || null, // ใครเป็นคนถ่ายรูปส่งมา (ใช้แจ้งกลับเมื่อผู้จัดการยืนยันแล้ว)
     status: needsSelection ? 'awaiting_selection' : 'pending',
     created_at: now(),
@@ -122,7 +127,12 @@ async function selectResidentForCard(cardId, residentId, selectedByLineUserId = 
   const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === card.center_id && r.status === 'active');
   if (!resident) return { ok: false, reason: 'ผู้พักไม่ได้อยู่ในสาขาของเอกสารนี้' };
 
-  await PendingCards.update((c) => c.card_id === cardId && c.status === 'awaiting_selection', { resident_id: residentId, status: 'pending' });
+  const medicationBase = resident.care_profile_id && (card.ai_result?.medications || []).length
+    ? await loadCurrentSnapshot(resident.care_profile_id) : null;
+  await PendingCards.update((c) => c.card_id === cardId && c.status === 'awaiting_selection', {
+    resident_id: residentId, status: 'pending',
+    medication_base_snapshot_id:medicationBase?.currentSnapshot?.snapshotId || null,
+  });
   if ((card.document_subtype || card.ai_result?.documentSubtype) === 'lab_report') {
     if (!selectedByLineUserId) return { ok: false, reason: 'ไม่พบตัวตนผู้ตรวจสอบผล Lab' };
     const draft = await getLabDocumentIngestionService().ensureDraftForPendingCard({
@@ -196,7 +206,22 @@ async function patchCard(cardId, { residentId, appointment, medications, doctorN
   };
 
   const patch = { edited_result: editedResult, edited_fields: [...new Set([...card.edited_fields, ...editedFields])] };
-  if (residentId) patch.resident_id = residentId; // ข้อ E6: เปลี่ยนตัวผู้พักได้จากหน้าแก้ไข
+  if (residentId) {
+    patch.resident_id = residentId; // ข้อ E6: เปลี่ยนตัวผู้พักได้จากหน้าแก้ไข
+    const resident = await Residents.findOne((item) => item.resident_id === residentId
+      && item.center_id === card.center_id && item.status === 'active');
+    if (!resident) return { ok:false, reason:'ผู้พักไม่ได้อยู่ในสาขาของเอกสารนี้' };
+    if ((medications !== undefined || (editedResult.medications || []).length) && resident.care_profile_id) {
+      const medicationBase = await loadCurrentSnapshot(resident.care_profile_id);
+      patch.medication_base_snapshot_id = medicationBase.currentSnapshot?.snapshotId || null;
+    }
+  } else if (medications !== undefined && card.medication_base_snapshot_id === undefined) {
+    const resident = card.resident_id ? await Residents.findOne((item) => item.resident_id === card.resident_id) : null;
+    if (resident?.care_profile_id) {
+      const medicationBase = await loadCurrentSnapshot(resident.care_profile_id);
+      patch.medication_base_snapshot_id = medicationBase.currentSnapshot?.snapshotId || null;
+    }
+  }
   if (card.status === 'awaiting_selection' && residentId) patch.status = 'pending';
 
   const updated = await PendingCards.update((c) => c.card_id === cardId, patch);
@@ -290,18 +315,54 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
     return { ok: false, reason: 'วันที่นัดเป็นเวลาที่ผ่านมาแล้ว ไม่สามารถบันทึกได้' };
   }
 
-  // บันทึกยืนยัน
-  await PendingCards.update((c) => c.card_id === cardId, {
-    status: 'confirmed', confirmed_by: confirmedByLineId, confirmed_at: now(),
-  });
-  await audit('card.confirmed', confirmedByLineId, { cardId, residentId: card.resident_id, editedFields: card.edited_fields });
-
   // บันทึกลง Care Profile ถ้าผูกแล้ว
   let careProfile = null;
   let transportPlan = null;
   let createdAppointment = null;
   if (resident.care_profile_id) {
     careProfile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id);
+    if ((data.medications || []).length > 0) {
+      let proposal;
+      try {
+        proposal = await medicationCurrentSetService.proposeImageMerge({
+          careProfileId:resident.care_profile_id, extractedItems:data.medications,
+          requester:{ lineUserId:confirmedByLineId, centerId:card.center_id },
+        });
+      } catch (error) {
+        return { ok:false, reason:error?.message || 'ไม่สามารถตรวจสอบรายการยาได้',
+          errorCode:error?.code || 'MEDICATION_REVIEW_REQUIRED' };
+      }
+      if ((card.medication_base_snapshot_id || null) !== (proposal.baseSnapshotId || null)) {
+        return { ok:false, reason:'รายการยามีการเปลี่ยนแปลงแล้ว กรุณาเปิดการ์ดและตรวจสอบใหม่',
+          errorCode:'MEDICATION_SNAPSHOT_STALE', stale:true };
+      }
+      if (proposal.proposals.some((item) => item.ambiguous)) {
+        return { ok:false, reason:'พบรายการยาที่ระบุตัวตนไม่ชัดเจน กรุณาแก้ไขก่อนยืนยัน',
+          errorCode:'AMBIGUOUS_MEDICATION_IDENTITY', requiresReview:true };
+      }
+      const complete = proposal.current.medications.map((item) => ({ ...item }));
+      for (const item of proposal.proposals) {
+        if (item.classification === 'NEW') complete.push(item.extracted);
+        else if (item.currentIndex !== null && item.extracted) {
+          complete[item.currentIndex] = {
+            ...complete[item.currentIndex], ...item.extracted,
+            medicationId:complete[item.currentIndex].medicationId,
+            stableMedicationId:item.extracted.stableMedicationId || complete[item.currentIndex].stableMedicationId,
+          };
+        }
+      }
+      try {
+        await medicationCurrentSetService.saveCompleteSet({
+          careProfileId:resident.care_profile_id, items:complete,
+          baseSnapshotId:proposal.baseSnapshotId,
+          requester:{ lineUserId:confirmedByLineId, centerId:card.center_id },
+          source:'center_photo', mutationId:`card-medication:${cardId}`,
+        });
+      } catch (error) {
+        return { ok:false, reason:error?.message || 'ไม่สามารถบันทึกรายการยาได้',
+          errorCode:error?.code || 'MEDICATION_SAVE_FAILED', stale:error?.code === 'MEDICATION_SNAPSHOT_STALE' };
+      }
+    }
     if (data.appointment) {
       createdAppointment = await Appointments.insert({
         appointment_id: id('APT'), care_profile_id: resident.care_profile_id,
@@ -317,23 +378,13 @@ async function confirmCard(cardId, confirmedByLineId, confirmedByName) {
       const transportService = require('./transportService');
       transportPlan = await transportService.launchTransportChoice({ appointment:createdAppointment, careProfileId:resident.care_profile_id, centerId:card.center_id, notifyFamily:false });
     }
-    let medicationSnapshotId = null;
-    if ((data.medications || []).length > 0) {
-      const snapshot = await MedicationSnapshots.insert({
-        snapshot_id: id('MEDS'), care_profile_id: resident.care_profile_id,
-        items: data.medications, source: 'center_photo', source_card_id: cardId,
-        recorded_by: confirmedByLineId, recorded_at: now(),
-      });
-      medicationSnapshotId = snapshot.snapshot_id;
-    }
-    for (const med of (data.medications || [])) {
-      await Medications.insert({
-        medication_id: id('MED'), care_profile_id: resident.care_profile_id,
-        name: med.name, dose: med.dose, condition: med.condition || '', snapshot_id: medicationSnapshotId,
-        source: 'center_photo', source_center_id: card.center_id, created_at: now(),
-      });
-    }
   }
+
+  // Mark the card only after every canonical clinical write has succeeded.
+  await PendingCards.update((c) => c.card_id === cardId, {
+    status: 'confirmed', confirmed_by: confirmedByLineId, confirmed_at: now(),
+  });
+  await audit('card.confirmed', confirmedByLineId, { cardId, residentId: card.resident_id, editedFields: card.edited_fields });
 
   // ── FR-F: ส่งเข้ากลุ่มครอบครัว ──
   let sentToFamily = false, queuedForLater = false, postCommitFamilyDelivery = null;

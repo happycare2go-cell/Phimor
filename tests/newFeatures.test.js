@@ -98,7 +98,8 @@ test('Care Profile เก็บข้อมูลสุขภาพครบแ�
     items: [{ name: 'Metformin', dose: 'หลังอาหาร', condition: 'เบาหวาน' }], recordedBy: 'U_FAMILY' });
   const history = await familyService.getMedicationHistory(profile.care_profile_id);
   assert.strictEqual(history.length, 1);
-  assert.strictEqual(history[0].items[0].condition, 'เบาหวาน');
+  assert.strictEqual(history[0].changes[0].current.condition, 'เบาหวาน');
+  assert.doesNotMatch(JSON.stringify(history), /recorded_by|source_image_base64|U_FAMILY/);
 });
 
 test('อนุมัติ Care Profile เดิมแล้วผูกกลับ Resident ที่ร้องขอจริง', async () => {

@@ -30,7 +30,8 @@ function formatThaiDate(iso) {
  * @param {string} [params.toDate]
  * @returns {Promise<Buffer>}
  */
-function generateHistoryPdf({ profile, appointments, medications, fromDate, toDate }) {
+function generateHistoryPdf({ profile, appointments = [], currentMedications = null, currentMedicationSnapshot = null,
+  medicationHistory = [], healthReports = [], standaloneVitals = [], medications = [], fromDate, toDate }) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(FONT_REGULAR) || !fs.existsSync(FONT_BOLD)) {
       return reject(new Error('ไม่พบไฟล์ฟอนต์ภาษาไทย กรุณาตรวจสอบ backend/assets/fonts/'));
@@ -94,20 +95,71 @@ function generateHistoryPdf({ profile, appointments, medications, fromDate, toDa
         doc.moveDown(0.45);
       });
     }
-    // ── รายการยา ──
-    sectionTitle('รายการยา');
-    if (medications.length === 0) {
-      doc.font('regular').fontSize(11).fillColor(GRAY).text('ไม่มีข้อมูลยาในช่วงที่เลือก');
+    // ── รายการยาปัจจุบัน (ไม่ถูกตัดตามช่วงประวัติ) ──
+    const authoritativeMedications = currentMedications || medications;
+    sectionTitle('รายการยาปัจจุบัน');
+    if (authoritativeMedications.length === 0) {
+      doc.font('regular').fontSize(11).fillColor(GRAY).text('ยังไม่มีรายการยาปัจจุบัน');
     } else {
-      medications.forEach((m, i) => {
-        const date = m.created_at || m.recorded_at;
-        const detail = [m.dose || 'ไม่ระบุวิธีใช้', m.condition ? `สำหรับ ${m.condition}` : '', date ? `บันทึก ${formatThaiDate(date)}` : '']
+      authoritativeMedications.forEach((m, i) => {
+        const detail = [m.strength, m.dose, m.instruction, m.amount && m.unit ? `${m.amount} ${m.unit}` : '',
+          m.frequency, m.timing, m.route, m.condition ? `หมายเหตุ ${m.condition}` : '',
+          currentMedicationSnapshot?.recordedAt ? `อัปเดต ${formatThaiDate(currentMedicationSnapshot.recordedAt)}` : '']
           .filter(Boolean).join(' | ');
         doc.font('bold').fontSize(11).fillColor('#000').text(`${i + 1}. ${m.name}`, { lineGap: 4 });
-        doc.font('regular').fontSize(9.5).fillColor(GRAY).text(`   ${detail}`, { lineGap: 4 });
+        doc.font('regular').fontSize(9.5).fillColor(GRAY).text(`   ${detail || 'ไม่มีรายละเอียดเพิ่มเติม'}`, { lineGap: 4 });
         doc.moveDown(0.45);
       });
     }
+
+    sectionTitle('ประวัติการเปลี่ยนยา');
+    if (!medicationHistory.length) doc.font('regular').fontSize(11).fillColor(GRAY).text('ไม่มีการเปลี่ยนแปลงยาในช่วงที่เลือก');
+    else medicationHistory.forEach((entry) => {
+      const when=entry.snapshot?.recordedAt ? formatThaiDate(entry.snapshot.recordedAt) : 'ไม่ทราบเวลา';
+      doc.font('bold').fontSize(10.5).fillColor('#000').text(`${when} · ${entry.sourceLabel || 'ข้อมูลในระบบ'}`);
+      if (entry.kind === 'legacy_snapshot') {
+        bodyText(`รายการยาที่บันทึกครั้งนั้น: ${(entry.medications || []).map((item) => `${item.name} ${item.strength || ''}`).join(', ') || '-'}`);
+      } else {
+        const labels={added:'เพิ่มยา',removed:'นำออกจากรายการยาปัจจุบัน',strength_changed:'ปรับขนาดยา',dose_changed:'ปรับปริมาณ',instruction_changed:'ปรับวิธีใช้',multiple_fields_changed:'ปรับข้อมูลหลายช่อง'};
+        const fieldLabels={strength:'ขนาดยา',dose:'ปริมาณที่ใช้',instruction:'วิธีใช้',amount:'จำนวน',unit:'หน่วย',frequency:'ความถี่',timing:'เวลา',route:'วิธีให้ยา',condition:'ข้อบ่งใช้ / หมายเหตุ'};
+        for (const change of entry.changes || []) {
+          const name=change.current?.name || change.previous?.name || 'ยา';
+          const changedFields=(change.changedFields || []).filter((field)=>fieldLabels[field]);
+          const details=changedFields.map((field)=>`${fieldLabels[field]}: ${change.previous?.[field] ?? '-'} → ${change.current?.[field] ?? '-'}`);
+          if(!details.length&&['added','removed'].includes(change.category)){
+            const factual=change.current || change.previous || {};
+            const values=[factual.strength,factual.dose,factual.instruction,
+              factual.amount&&factual.unit?`${factual.amount} ${factual.unit}`:null,
+              factual.frequency,factual.timing,factual.route,factual.condition].filter(Boolean);
+            if(values.length)details.push(values.join(' | '));
+          }
+          bodyText(`• ${name} — ${labels[change.category] || 'มีการเปลี่ยนแปลง'}${details.length ? ` (${details.join(' | ')})` : ''}`);
+        }
+      }
+      doc.moveDown(0.35);
+    });
+
+    const vitalText = (observations = []) => {
+      const labels={temperature:'อุณหภูมิ',blood_pressure_systolic:'ความดันตัวบน',blood_pressure_diastolic:'ความดันตัวล่าง',pulse:'ชีพจร',spo2:'ออกซิเจน'};
+      return observations.map((item) => `${labels[item.measurement_type || item.measurementType] || item.measurement_type || item.measurementType}: ${item.numeric_value ?? item.numericValue} ${item.canonical_unit || item.canonicalUnit || ''}`).join(' | ');
+    };
+
+    sectionTitle('รายงานสุขภาพ');
+    if (!healthReports.length) doc.font('regular').fontSize(11).fillColor(GRAY).text('ไม่มีรายงานสุขภาพที่ยืนยันแล้วในช่วงที่เลือก');
+    else healthReports.forEach((report) => {
+      doc.font('bold').fontSize(10.5).fillColor('#000').text(formatThaiDate(report.occurred_at || report.finalized_at));
+      const notes=(report.items || []).map((item) => item.source_value_text || item.text_value || item.value_text || '').filter(Boolean);
+      if(notes.length)bodyText(notes.join(' / '));
+      for(const set of report.vital_signs || []){const text=vitalText(set.observations || []);if(text)bodyText(text)}
+      doc.moveDown(0.35);
+    });
+
+    sectionTitle('ประวัติสัญญาณชีพเดิม');
+    if (!standaloneVitals.length) doc.font('regular').fontSize(11).fillColor(GRAY).text('ไม่มีสัญญาณชีพแบบเดี่ยวในช่วงที่เลือก');
+    else standaloneVitals.forEach((set) => {
+      doc.font('bold').fontSize(10.5).fillColor('#000').text(formatThaiDate(set.occurred_at));
+      bodyText(vitalText(set.observations || []));doc.moveDown(0.35);
+    });
 
     // ── ท้ายเอกสาร ──
     doc.moveDown(1.2);

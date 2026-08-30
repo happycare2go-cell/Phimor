@@ -100,12 +100,16 @@ test('FR-H4: ส่งออก PDF จริง — ได้ไฟล์ PDF �
 
   await db.Appointments.insert({ appointment_id: 'A1', care_profile_id: profile.care_profile_id, hospital: 'รพ.ในช่วง', datetime: '2050-06-15T09:00:00+07:00' });
   await db.Appointments.insert({ appointment_id: 'A2', care_profile_id: profile.care_profile_id, hospital: 'รพ.นอกช่วง', datetime: '2060-01-01T09:00:00+07:00' });
-  await db.Medications.insert({ medication_id: 'M1', care_profile_id: profile.care_profile_id, name: 'Paracetamol', dose: '500mg' });
+  await db.MedicationSnapshots.insert({ snapshot_id:'MS1', care_profile_id:profile.care_profile_id,
+    schema_version:2, version_no:1, status:'active', source:'family_manual', recorded_at:'2050-06-01T09:00:00+07:00' });
+  await db.Medications.insert({ medication_id: 'M1', snapshot_id:'MS1', care_profile_id: profile.care_profile_id,
+    name: 'Paracetamol', dose: '500mg' });
 
   const result = await familyService.exportHistoryToPdf(profile.care_profile_id, { fromDate: '2050-01-01', toDate: '2050-12-31' });
   assert.strictEqual(result.ok, true);
   assert.ok(Buffer.isBuffer(result.pdfBuffer), 'ต้องได้ Buffer ของไฟล์ PDF จริง');
   assert.ok(result.pdfBuffer.length > 1000, 'ไฟล์ PDF ต้องมีเนื้อหาจริง ไม่ใช่ไฟล์ว่าง');
   assert.strictEqual(result.pdfBuffer.slice(0, 4).toString(), '%PDF', 'ต้องขึ้นต้นด้วย PDF Header ที่ถูกต้อง');
-  assert.strictEqual(result.recordCount, 2, 'ต้องกรองนัดนอกช่วงวันที่ออก เหลือแค่ 1 นัด + 1 ยา');
+  assert.doesNotMatch(result.asciiFilename, /CP-|care.?profile/i, 'ชื่อไฟล์ fallback ต้องไม่เปิดเผย Care Profile ID');
+  assert.strictEqual(result.recordCount, 3, 'ต้องกรองนัดนอกช่วงวันที่ออก และนับ 1 นัด + ยาปัจจุบัน + ประวัติการเพิ่มยา');
 });

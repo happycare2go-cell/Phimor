@@ -110,7 +110,11 @@ function requireFamilyAccess() {
     }
     req.careProfile = profile;
     req.familyRole = profile.owner_line_id === req.user.lineUserId ? 'owner' : member.role;
-    req.familyPermissions = req.familyRole === 'owner' ? ['*'] : (member.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport']);
+    // A legacy membership without an explicit permission array must never
+    // acquire medication mutation authority merely by being a member. Existing
+    // rows which explicitly contain manage_medications retain that permission.
+    req.familyPermissions = req.familyRole === 'owner' ? ['*']
+      : (member.permissions || ['view','edit_profile','manage_appointments','decide_transport']);
     next();
   });
 }

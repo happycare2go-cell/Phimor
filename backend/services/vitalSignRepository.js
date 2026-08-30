@@ -146,6 +146,35 @@ function createVitalSignRepository({ queryFn = databaseQuery } = {}) {
         params
       );
     },
+
+    async listStandaloneHistory({ careProfileId, from = null, to = null, limit }) {
+      const params = [careProfileId];
+      const conditions = ["v.status = 'recorded'", 'v.care_profile_id = $1', `NOT EXISTS (
+        SELECT 1 FROM daily_care_vital_links link WHERE link.vital_set_id = v.vital_set_id
+      )`];
+      if (from) { params.push(from); conditions.push(`v.occurred_at >= $${params.length}`); }
+      if (to) { params.push(to); conditions.push(`v.occurred_at <= $${params.length}`); }
+      params.push(limit + 1);
+      return many(
+        `SELECT v.*,
+          COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+              'vital_observation_id', o.vital_observation_id,
+              'source_ordinal', o.source_ordinal,
+              'measurement_type', o.measurement_type,
+              'numeric_value', o.numeric_value,
+              'canonical_unit', o.canonical_unit,
+              'measurement_context', o.measurement_context
+            ) ORDER BY o.source_ordinal, o.vital_observation_id)
+            FROM vital_sign_observations o WHERE o.vital_set_id = v.vital_set_id
+          ), '[]'::jsonb) AS observations
+         FROM vital_sign_sets v
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY v.occurred_at DESC, v.vital_set_id DESC
+         LIMIT $${params.length}`,
+        params
+      );
+    },
   };
 }
 

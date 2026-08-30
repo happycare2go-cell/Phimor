@@ -8,7 +8,7 @@ router.get('/', asyncHandler(async (req, res) => {
   if (!payload) return res.status(401).json({ error: 'invalid_or_expired_link', message: 'ลิงก์ดาวน์โหลดหมดอายุ กรุณาสร้างใหม่จาก Family LIFF' });
   if (!await familyService.canAccessProfile(payload.careProfileId, payload.lineUserId)) return res.status(403).json({ error: 'forbidden', message: 'ไม่มีสิทธิ์เข้าถึง Care Profile นี้' });
   const result = await familyService.exportHistoryToPdf(payload.careProfileId, { fromDate: payload.fromDate, toDate: payload.toDate });
-  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', errorCode:result.errorCode || 'EXPORT_FAILED', message: result.reason });
   const disposition = req.query.download === '1' ? 'attachment' : 'inline';
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');

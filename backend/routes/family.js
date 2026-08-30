@@ -7,6 +7,8 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const familyService = require('../services/familyService');
 const privacyService = require('../services/privacyService');
 const healthHistoryService = require('../services/careProfileHealthHistoryService');
+const medicationCurrentSetService = require('../services/medicationCurrentSetService');
+const medicationChangeHistoryService = require('../services/medicationChangeHistoryService');
 const { CareProfiles, CareProfileMembers } = require('../db');
 
 const PDF_LINK_TTL_MS = 5 * 60 * 1000;
@@ -19,6 +21,19 @@ function sendPdf(res, result, disposition = 'attachment') {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Disposition', disposition + '; filename="' + result.asciiFilename + '"; filename*=UTF-8' + "''" + encodeURIComponent(result.filename));
   res.send(result.pdfBuffer);
+}
+
+function medicationError(res, error) {
+  if (!(error instanceof medicationCurrentSetService.MedicationCurrentSetError)) throw error;
+  const body = { status:'rejected', errorCode:error.code, message:error.message };
+  if (error.code === 'DUPLICATE_MEDICATION_IDENTITY' && error.details?.conflicts) {
+    body.conflicts = error.details.conflicts;
+  }
+  return res.status(error.status).json(body);
+}
+
+function familyMedicationRequester(req) {
+  return { lineUserId:req.user.lineUserId };
 }
 
 router.use(requireAuth);
@@ -195,14 +210,18 @@ router.get('/init-dashboard', asyncHandler(async (req, res) => {
     .sort((a, b) => String(a.created_at || a._createdAt || '').localeCompare(String(b.created_at || b._createdAt || ''))
       || String(a.care_profile_id).localeCompare(String(b.care_profile_id)));
   const { findActiveFamilyBinding } = require('../services/groupBindingRepository');
-  const data = await Promise.all(profiles.map(async (p) => ({
+  const data = await Promise.all(profiles.map(async (p) => {
+    const membership = memberships.find((item) => item.care_profile_id === p.care_profile_id);
+    const isOwner = p.owner_line_id === req.user.lineUserId;
+    return ({
     profile: p,
-    familyRole: p.owner_line_id === req.user.lineUserId ? 'owner' : 'caregiver',
+    familyRole: isOwner ? 'owner' : 'caregiver',
+    familyPermissions:isOwner ? ['*'] : (membership?.permissions || ['view','edit_profile','manage_appointments','decide_transport']),
     familyGroup:await findActiveFamilyBinding(p.care_profile_id)
       ? { active:true, status:'active' } : { active:false, status:'unbound' },
     upcomingAppointments: await familyService.getUpcomingAppointments(p.care_profile_id),
     canUseAi: familyService.canUseAiFeatures(p),
-  })));
+  }); }));
   res.json({ profiles: data });
 }));
 
@@ -271,41 +290,83 @@ router.post('/care-profile/:careProfileId/appointments/:appointmentId/cancel', r
 
 // POST /api/medications
 router.post('/medications', asyncHandler(async (req, res) => {
-  const { careProfileId, name, dose } = req.body;
-  if (!await familyService.hasPermission(careProfileId, req.user.lineUserId, 'manage_medications')) return res.status(403).json({ error: 'forbidden' });
-  const result = await familyService.addMedicationByFamily({ careProfileId, name, dose, createdBy: req.user.lineUserId });
-  res.status(201).json(result.medication);
+  res.status(409).json({ status:'rejected', errorCode:'CURRENT_MEDICATION_SET_REQUIRED',
+    message:'กรุณาเปิดรายการยาปัจจุบันและบันทึกเป็นชุด เพื่อป้องกันข้อมูลยารายการอื่นสูญหาย' });
+}));
+
+router.get('/care-profile/:careProfileId/medications/current', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  try {
+    res.json(await medicationCurrentSetService.getCurrent({
+      careProfileId:req.params.careProfileId, requester:familyMedicationRequester(req),
+    }));
+  } catch (error) { return medicationError(res, error); }
+}));
+
+router.get('/care-profile/:careProfileId/medications/history', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  res.json(await medicationChangeHistoryService.getHistory({
+    careProfileId:req.params.careProfileId, requester:familyMedicationRequester(req), limit:req.query.limit,
+  }));
+}));
+
+router.put('/care-profile/:careProfileId/medications/current', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_medications')) return res.status(403).json({ error:'forbidden' });
+  try {
+    const result = await medicationCurrentSetService.saveCompleteSet({
+      careProfileId:req.params.careProfileId, items:req.body.items,
+      baseSnapshotId:req.body.baseSnapshotId || null,
+      requester:familyMedicationRequester(req), source:req.body.source === 'image_ai' ? 'image_ai' : 'manual',
+      sourceImageBase64:req.body.source === 'image_ai' ? req.body.imageBase64 || null : null,
+      confirmRemoveAll:req.body.confirmRemoveAll === true, mutationId:req.body.mutationId || null,
+    });
+    res.status(result.noChange ? 200 : 201).json(result);
+  } catch (error) { return medicationError(res, error); }
+}));
+
+router.post('/care-profile/:careProfileId/medications/image-proposal', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_medications')) return res.status(403).json({ error:'forbidden' });
+  const image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
+  if (!image.ok) return res.status(image.status).json({ error:image.error, message:image.message });
+  const parsed = await require('../providers/aiProvider').interpretDocument(image.buffer, image.mimeType);
+  try {
+    const proposal = await medicationCurrentSetService.proposeImageMerge({
+      careProfileId:req.params.careProfileId, extractedItems:parsed.medications || [],
+      requester:familyMedicationRequester(req),
+    });
+    res.status(202).json({ status:'draft_requires_confirmation', ...proposal,
+      message:proposal.extracted.length ? 'กรุณาตรวจสอบการเปลี่ยนแปลงก่อนบันทึก' : 'ไม่พบรายการยาที่นำมาเสนอ กรุณาตรวจภาพหรือกรอกข้อมูลเอง' });
+  } catch (error) { return medicationError(res, error); }
 }));
 
 // เก็บรายการยาเป็น snapshot เพื่อย้อนดูการเปลี่ยนแปลงแต่ละครั้งได้
 router.post('/care-profile/:careProfileId/medication-snapshots', requireFamilyAccess(), asyncHandler(async (req, res) => {
   if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_medications')) return res.status(403).json({ error:'forbidden' });
-  let items = req.body.items;
-  let source = 'manual';
-  let image = null;
-  if (req.body.imageBase64) {
-    image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
-    if (!image.ok) return res.status(image.status).json({ error: image.error, message: image.message });
+  if (req.body.imageBase64 && !req.body.confirmAi) {
+    const image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
+    if (!image.ok) return res.status(image.status).json({ error:image.error, message:image.message });
+    const parsed = await require('../providers/aiProvider').interpretDocument(image.buffer, image.mimeType);
+    try {
+      const proposal = await medicationCurrentSetService.proposeImageMerge({ careProfileId:req.params.careProfileId,
+        extractedItems:parsed.medications || [], requester:familyMedicationRequester(req) });
+      return res.status(202).json({ status:'draft_requires_confirmation', ...proposal });
+    } catch (error) { return medicationError(res, error); }
   }
-  if ((!Array.isArray(items) || items.length === 0) && req.body.imageBase64) {
-    const aiProvider = require('../providers/aiProvider');
-    const parsed = await aiProvider.interpretDocument(image.buffer, image.mimeType);
-    items = parsed.medications || [];
-    source = 'image_ai';
-    if (!req.body.confirmAi) return res.status(202).json({ status: 'draft_requires_confirmation', items, message: 'กรุณาตรวจสอบและยืนยันรายการยาที่ AI อ่านได้ก่อนบันทึก' });
-  }
-  if (image && req.body.confirmAi) source = 'image_ai';
-  const result = await familyService.recordMedicationSnapshot({
-    careProfileId: req.params.careProfileId, items, recordedBy: req.user.lineUserId,
-    source, sourceImageBase64: req.body.imageBase64 || null,
-  });
-  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.status(201).json(result.snapshot);
+  try {
+    const result = await medicationCurrentSetService.saveCompleteSet({
+      careProfileId:req.params.careProfileId, items:req.body.items,
+      baseSnapshotId:req.body.baseSnapshotId || null, requester:familyMedicationRequester(req),
+      source:req.body.confirmAi ? 'image_ai' : 'manual',
+      sourceImageBase64:req.body.confirmAi ? req.body.imageBase64 || null : null,
+      confirmRemoveAll:req.body.confirmRemoveAll === true, mutationId:req.body.mutationId || null,
+    });
+    res.status(result.noChange ? 200 : 201).json(result);
+  } catch (error) { return medicationError(res, error); }
 }));
 
 router.get('/care-profile/:careProfileId/medication-snapshots', requireFamilyAccess(), asyncHandler(async (req, res) => {
-  const snapshots = await familyService.getMedicationHistory(req.params.careProfileId);
-  res.json({ snapshots });
+  const history = await medicationChangeHistoryService.getHistory({
+    careProfileId:req.params.careProfileId, requester:familyMedicationRequester(req), limit:req.query.limit,
+  });
+  res.json({ snapshots:history.items, items:history.items, nextCursor:history.nextCursor });
 }));
 
 // POST /api/export/pdf — ส่งออกประวัติเป็นไฟล์ PDF จริง ตามช่วงวันที่ (ข้อ H4)
@@ -314,7 +375,7 @@ router.post('/export/pdf', asyncHandler(async (req, res) => {
   if (!await familyService.canAccessProfile(careProfileId, req.user.lineUserId)) return res.status(403).json({ error: 'forbidden' });
 
   const result = await familyService.exportHistoryToPdf(careProfileId, { fromDate, toDate });
-  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
+  if (!result.ok) return res.status(400).json({ error: 'bad_request', errorCode:result.errorCode || 'EXPORT_FAILED', message: result.reason });
 
   // ⚠️ HTTP Header ต้องเป็น ASCII เท่านั้น — ชื่อไฟล์ภาษาไทยใส่ตรงๆ ใน Header ไม่ได้ (ทำให้ setHeader Throw Error)
   // ใช้ RFC 5987 (filename*=UTF-8'') สำหรับชื่อจริงที่มี Unicode + fallback ASCII สำหรับ Browser เก่า

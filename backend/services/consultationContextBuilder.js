@@ -14,6 +14,7 @@ const {
 const { isUpcomingAppointment, projectAppointmentSummary } = require('./appointmentSummaryService');
 const { classifyConsultationSafety } = require('./consultationSafetyService');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
+const { createPharmacistClinicalContextService } = require('./pharmacistClinicalContextService');
 
 const DEFAULT_MESSAGE_WINDOW = 12;
 const MAX_CONVERSATION_CHARACTERS = 6000;
@@ -61,6 +62,7 @@ function medicationProjection(item, snapshot) {
     name:item.name || '', strength:item.strength || '', dose:item.dose || '',
     instruction:item.instruction || '', amount:item.amount ?? null, unit:item.unit ?? null,
     frequency:item.frequency ?? null, timing:item.timing ?? null, route:item.route ?? null,
+    condition:item.condition || '',
     source:source('medication_snapshot',snapshot.recorded_at || snapshot._createdAt,snapshot.snapshot_id),
   });
 }
@@ -93,8 +95,12 @@ function createConsultationContextBuilder({
   repository=createConsultationRepository(), pharmacistAccounts=null,
   careProfiles=CareProfiles, medicationSnapshots=MedicationSnapshots, appointments=Appointments,
   loadMedications=loadSnapshotMedications, authorize=authorizeCareProfileAccess,
+  clinicalContextService=null,
 }={}) {
   const accounts=pharmacistAccounts || createPharmacistAccountService({repository});
+  const clinicalService=clinicalContextService
+    || (medicationSnapshots===MedicationSnapshots && loadMedications===loadSnapshotMedications
+      ? createPharmacistClinicalContextService() : null);
   return async function buildConsultationContext({caseId,pharmacistLineUserId,now=new Date()}={}) {
     const pharmacist=await accounts.requireActive(pharmacistLineUserId);
     const consultationCase=await repository.findCaseForRead(caseId);
@@ -122,13 +128,27 @@ function createConsultationContextBuilder({
     const relevanceText=[consultationCase.initial_question,...messageRows.map((item)=>item.body)].join(' ');
     const triage=classifyConsultationSafety(consultationCase.initial_question || '');
     const medicationRelevant=MEDICATION_PATTERN.test(relevanceText);
-    const snapshots=medicationRelevant ? (await medicationSnapshots.findWhere((item)=>
+    const clinical=medicationRelevant&&clinicalService ? await clinicalService.getContext({
+      careProfileId:consultationCase.care_profile_id,
+      customerLineUserId:consultationCase.customer_line_user_id,
+      now:consultationCase.database_now || now,
+    }) : null;
+    const { compareSnapshotAuthority }=require('./medicationRetrievalService');
+    const snapshots=medicationRelevant&&!clinical ? (await medicationSnapshots.findWhere((item)=>
       item.care_profile_id===consultationCase.care_profile_id && isEligibleCurrentSnapshot(item)))
-      .sort((a,b)=>new Date(b.recorded_at||b._createdAt||0)-new Date(a.recorded_at||a._createdAt||0)) : [];
-    const currentSnapshot=snapshots[0] || null;
-    const currentLoaded=currentSnapshot ? await loadMedications(currentSnapshot) : {medications:[]};
+      .sort(compareSnapshotAuthority) : [];
+    const currentSnapshot=clinical?.medicationSnapshot?.snapshotId ? {
+      snapshot_id:clinical.medicationSnapshot.snapshotId,
+      version_no:clinical.medicationSnapshot.versionNo,
+      recorded_at:clinical.medicationSnapshot.recordedAt,
+    } : (snapshots[0] || null);
+    const currentLoaded=clinical ? {medications:clinical.currentMedications}
+      : (currentSnapshot ? await loadMedications(currentSnapshot) : {medications:[]});
     let medicationChanges=null;
-    if (medicationRelevant && snapshots[1] && currentSnapshot) {
+    if (clinical?.recentMedicationChanges?.length) {
+      medicationChanges=Object.freeze({items:clinical.recentMedicationChanges,
+        source:source('medication_diff',clinical.medicationSnapshot.recordedAt,clinical.medicationSnapshot.snapshotId)});
+    } else if (medicationRelevant && snapshots[1] && currentSnapshot) {
       const previousLoaded=await loadMedications(snapshots[1]);
       medicationChanges=conciseDiff(snapshots[1],currentSnapshot,previousLoaded.medications,currentLoaded.medications);
     }
@@ -154,7 +174,13 @@ function createConsultationContextBuilder({
       case:Object.freeze({caseId:consultationCase.case_id,state,topicCategory:triage.category,triageCategory:triage.action}),
       conversation, recordedFacts:Object.freeze(recordedFacts),
       currentMedications:Object.freeze(currentLoaded.medications.map((item)=>medicationProjection(item,currentSnapshot))),
-      medicationChanges, appointments:Object.freeze(relevantAppointments),
+      medicationChanges,
+      vitalFacts:Object.freeze((clinical?.recentVitals||[]).map((set)=>Object.freeze({
+        occurredAt:set.occurredAt, linkedHealthReport:set.linkedHealthReport,
+        observations:set.observations.map((item)=>Object.freeze({...item,source:source('vital_sign',set.occurredAt)})),
+      }))),
+      contextVersion:clinical?.contextVersion || null,
+      appointments:Object.freeze(relevantAppointments),
       missingInformation:Object.freeze(missingInformation),
     });
   };

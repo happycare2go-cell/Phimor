@@ -1,12 +1,16 @@
 // services/familyService.js — FR-H (ฝั่งครอบครัว) และ FR-N (Care Profile อิสระ)
 
 const { createHash } = require('crypto');
-const { CareProfiles, Residents, Invites, Appointments, Medications, MedicationSnapshots, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, AccessRequests, audit, id, now, withTransaction, withTransactionLocks } = require('../db');
-const { isPast } = require('./cardService');
+const { CareProfiles, Residents, Invites, Appointments, GroupBindings, Consents, CareProfileMembers, CareProfileShareInvites, AccessRequests, audit, id, now, withTransaction, withTransactionLocks } = require('../db');
 const pdfService = require('./pdfService');
 const { GROUP_BINDING_TRANSACTION_KEY, bindFamilyDestinationInCurrentTransaction } = require('./groupBindingRepository');
 
 const CONSENT_VERSION = '2569-08-1'; // ข้อ H6: ต้องบันทึกเวอร์ชันเอกสารที่ยอมรับ
+
+function isPast(value) {
+  const parsed = new Date(value || 0).getTime();
+  return Number.isFinite(parsed) && parsed <= Date.now();
+}
 
 // ── FR-H6: บันทึกยินยอม PDPA — ต้องผ่านก่อนเข้าหน้าหลักได้ ──
 async function recordConsent(lineUserId, accepted) {
@@ -56,7 +60,7 @@ async function acceptCaregiverInvite(token, lineUserId, identity = {}) {
   let member = await CareProfileMembers.findOne((m) => m.care_profile_id === found.invite.care_profile_id && m.line_user_id === lineUserId);
   const displayName = typeof identity.displayName === 'string' ? identity.displayName.trim().slice(0, 160) : null;
   if (member) member = await CareProfileMembers.update((m) => m.member_id === member.member_id, { status:'active', role:'caregiver', rejoined_at:now(), display_name:displayName || member.display_name || null });
-  else member = await CareProfileMembers.insert({ member_id:id('CPM'), care_profile_id:found.invite.care_profile_id, line_user_id:lineUserId, display_name:displayName, role:'caregiver', status:'active', permissions:['view','edit_profile','manage_appointments','manage_medications','decide_transport'], joined_at:now(), invited_by:found.invite.created_by });
+  else member = await CareProfileMembers.insert({ member_id:id('CPM'), care_profile_id:found.invite.care_profile_id, line_user_id:lineUserId, display_name:displayName, role:'caregiver', status:'active', permissions:['view','edit_profile','manage_appointments','decide_transport'], joined_at:now(), invited_by:found.invite.created_by });
   await CareProfileShareInvites.update((i) => i.invite_id === found.invite.invite_id, { used_at:now(), used_by:lineUserId, status:'used' });
   await audit('care_profile.caregiver_joined', lineUserId, { careProfileId:found.invite.care_profile_id, invitedBy:found.invite.created_by });
   return { ok:true, member };
@@ -75,7 +79,10 @@ async function hasPermission(careProfileId, lineUserId, permission) {
   if (profile.owner_line_id === lineUserId) return true;
   const member = await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === lineUserId && m.status === 'active');
   if (!member) return false;
-  const permissions = member.permissions || ['view','edit_profile','manage_appointments','manage_medications','decide_transport'];
+  // Medication mutation is never inferred from membership alone. Existing
+  // explicit grants remain valid; legacy rows without a permissions array keep
+  // the non-medication compatibility permissions only.
+  const permissions = member.permissions || ['view','edit_profile','manage_appointments','decide_transport'];
   return permissions.includes(permission);
 }
 
@@ -272,24 +279,28 @@ async function bindFamilyGroup(input) {
 }
 
 async function recordMedicationSnapshot({ careProfileId, items, recordedBy, source = 'manual', sourceImageBase64 = null }) {
-  const cleanItems = (Array.isArray(items) ? items : []).map((item) => ({
-    name: String(item.name || '').trim(), dose: String(item.dose || '').trim(),
-    condition: String(item.condition || '').trim(), note: String(item.note || '').trim(),
-  })).filter((item) => item.name);
-  if (cleanItems.length === 0) return { ok: false, reason: 'กรุณาระบุรายการยาอย่างน้อยหนึ่งรายการ' };
-  const snapshot = await MedicationSnapshots.insert({
-    snapshot_id: id('MEDS'), care_profile_id: careProfileId, items: cleanItems,
-    source, source_image_base64: sourceImageBase64, recorded_by: recordedBy, recorded_at: now(),
+  const medicationCurrentSetService = require('./medicationCurrentSetService');
+  const current = await medicationCurrentSetService.getCurrent({
+    careProfileId, requester:{ lineUserId:recordedBy },
   });
-  for (const item of cleanItems) {
-    await Medications.insert({ medication_id: id('MED'), care_profile_id: careProfileId, ...item,
-      snapshot_id: snapshot.snapshot_id, source, created_by: recordedBy, created_at: now() });
-  }
-  return { ok: true, snapshot };
+  const saved = await medicationCurrentSetService.saveCompleteSet({
+    careProfileId, items, baseSnapshotId:current.currentSnapshot?.snapshotId || null,
+    requester:{ lineUserId:recordedBy }, source, sourceImageBase64,
+  });
+  return { ok:true, snapshot:{
+    snapshot_id:saved.currentSnapshot?.snapshotId, care_profile_id:careProfileId,
+    items:saved.medications, source:saved.currentSnapshot?.source,
+    recorded_at:saved.currentSnapshot?.recordedAt,
+  }, result:saved };
 }
 
 async function getMedicationHistory(careProfileId) {
-  return MedicationSnapshots.findWhere((s) => s.care_profile_id === careProfileId);
+  const profile = await CareProfiles.findOne((item) => item.care_profile_id === careProfileId);
+  if (!profile?.owner_line_id) return [];
+  const history = await require('./medicationChangeHistoryService').getHistory({
+    careProfileId, requester:{ lineUserId:profile.owner_line_id },
+  });
+  return history.items;
 }
 
 // ── FR-H2: บันทึกนัด/ยาด้วยตนเอง (ใช้ร่วมกันได้ทั้ง linked และ independent) ──
@@ -341,13 +352,22 @@ async function addAppointmentByFamily({ careProfileId, hospital, datetime, note,
 }
 
 async function addMedicationByFamily({ careProfileId, name, dose, createdBy }) {
-  const med = await Medications.insert({
-    medication_id: id('MED'), care_profile_id: careProfileId, name, dose,
-    source: 'family_manual', source_center_id: null, created_at: now(),
+  // Compatibility writer: append to the complete authoritative set rather
+  // than creating an unsnapshotted medication row. New clients use the V2
+  // complete-set route directly.
+  const current = await require('./medicationRetrievalService').loadCurrentSnapshot(careProfileId);
+  const result = await require('./medicationCurrentSetService').saveCompleteSet({
+    careProfileId,
+    baseSnapshotId:current.currentSnapshot?.snapshotId || null,
+    items:[...(current.medications || []), { name, dose }],
+    requester:{ lineUserId:createdBy },
+    source:'family_manual',
+    mutationId:`family-medication-compat:${id('MUT')}`,
   });
+  const med = result.medications[result.medications.length - 1] || null;
   const resident = await Residents.findOne((r) => r.care_profile_id === careProfileId && r.status === 'active');
-  if (resident?.center_id) await notifyCenterChange(resident.center_id, `💊 ครอบครัวอัปเดตรายการยาของ ${resident.full_name}\n${name} ${dose || ''}`.trim(), `family-medication:${med.medication_id}`);
-  return { ok: true, medication: med };
+  if (resident?.center_id) await notifyCenterChange(resident.center_id, `💊 ครอบครัวอัปเดตรายการยาของ ${resident.full_name}\n${name} ${dose || ''}`.trim(), `family-medication:${result.currentSnapshot.snapshotId}`);
+  return { ok: true, medication: med, currentMedication:result };
 }
 
 async function notifyCenterChange(centerId, text, dedupeKey) {
@@ -423,8 +443,8 @@ async function getUpcomingAppointments(careProfileId) {
 
 async function getFullHistory(careProfileId) {
   const appts = await Appointments.findWhere((a) => a.care_profile_id === careProfileId);
-  const meds = await Medications.findWhere((m) => m.care_profile_id === careProfileId);
-  return { appointments: appts.sort((a, b) => new Date(b.datetime) - new Date(a.datetime)), medications: meds };
+  const current = await require('./medicationRetrievalService').loadCurrentSnapshot(careProfileId);
+  return { appointments: appts.sort((a, b) => new Date(b.datetime) - new Date(a.datetime)), medications: current.medications };
 }
 
 // ── FR-H4: ส่งออกประวัติเป็น PDF จริง (คืน Buffer ให้ Route ตัดสินใจว่าจะส่งแบบ Download หรืออัปโหลด Storage) ──
@@ -432,39 +452,23 @@ async function exportHistoryToPdf(careProfileId, { fromDate, toDate } = {}) {
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
   if (!profile) return { ok: false, reason: 'ไม่พบข้อมูล' };
 
-  const start = fromDate ? new Date(`${fromDate}T00:00:00.000+07:00`) : null;
-  const end = toDate ? new Date(`${toDate}T23:59:59.999+07:00`) : null;
-  if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) {
-    return { ok: false, reason: 'รูปแบบช่วงวันที่ไม่ถูกต้อง' };
+  let exportData;
+  try {
+    exportData = await require('./healthHistoryExportService').createHealthHistoryExportService()
+      .build({ careProfileId, fromDate, toDate });
+  } catch (error) {
+    if (error?.name === 'HealthHistoryExportError') return { ok:false, reason:error.message, errorCode:error.code };
+    throw error;
   }
-  if (start && end && start > end) return { ok: false, reason: 'วันที่เริ่มต้องไม่อยู่หลังวันที่สิ้นสุด' };
-
-  const { appointments, medications } = await getFullHistory(careProfileId);
-  const filteredAppointments = appointments.filter((a) => {
-    const at = new Date(a.datetime);
-    if (start && at < start) return false;
-    if (end && at > end) return false;
-    return true;
-  });
-  const filteredMedications = medications.filter((m) => {
-    const raw = m.created_at || m.recorded_at;
-    if (!raw) return true; // เก็บข้อมูล legacy ที่ไม่มีเวลาไว้เพื่อไม่ให้ยาสำคัญหายจากรายงาน
-    const at = new Date(raw);
-    if (start && at < start) return false;
-    if (end && at > end) return false;
-    return true;
-  }).sort((a, b) => new Date(b.created_at || b.recorded_at || 0) - new Date(a.created_at || a.recorded_at || 0));
-
-  const pdfBuffer = await pdfService.generateHistoryPdf({
-    profile, appointments: filteredAppointments, medications: filteredMedications, fromDate, toDate,
-  });
+  const pdfBuffer = await pdfService.generateHistoryPdf({ profile, ...exportData, fromDate, toDate });
 
   return {
     ok: true,
     pdfBuffer,
-    recordCount: filteredAppointments.length + filteredMedications.length,
+    recordCount: exportData.appointments.length + exportData.currentMedications.length
+      + exportData.medicationHistory.length + exportData.healthReports.length + exportData.standaloneVitals.length,
     filename: `พี่หมอ-${profile.patient_name || 'ประวัติสุขภาพ'}-${Date.now()}.pdf`, // ชื่อไฟล์จริงที่อยากให้ผู้ใช้เห็น (มีภาษาไทยได้)
-    asciiFilename: `phimor-history-${careProfileId}-${Date.now()}.pdf`,             // ★ ใช้ใส่ HTTP Header ตรงๆ ต้องเป็น ASCII ล้วนเท่านั้น
+    asciiFilename: `phimor-health-history-${Date.now()}.pdf`, // ASCII fallback must not expose a raw Care Profile ID.
   };
 }
 

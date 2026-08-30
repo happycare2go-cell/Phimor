@@ -3,6 +3,7 @@ const { authorizeCareProfileAccess } = require('./careProfileAuthorizationServic
 const { createConsultationRepository } = require('./consultationRepository');
 const { createPharmacistAccountService } = require('./pharmacistAccountService');
 const { loadCurrentSnapshot } = require('./medicationRetrievalService');
+const { createPharmacistClinicalContextService } = require('./pharmacistClinicalContextService');
 const {
   projectProfile, projectMedication, projectAppointment, isUpcomingActive,
 } = require('./careProfileContextBuilder');
@@ -40,10 +41,13 @@ function createConsultationCaseContextService({
   careProfiles = CareProfiles,
   appointments = Appointments,
   loadMedicationSnapshot = loadCurrentSnapshot,
+  clinicalContextService = null,
   getLineProfile = lineClient.getProfile,
   now = () => new Date(),
 } = {}) {
   const accounts = pharmacistAccounts || createPharmacistAccountService({ repository });
+  const clinicalService = clinicalContextService
+    || (loadMedicationSnapshot === loadCurrentSnapshot ? createPharmacistClinicalContextService() : null);
 
   async function getCaseContext({ caseId, pharmacistLineUserId } = {}) {
     if (!caseId || !pharmacistLineUserId) {
@@ -83,9 +87,19 @@ function createConsultationCaseContextService({
       throw new ConsultationDomainError('CARE_PROFILE_NOT_FOUND', 404);
     }
 
-    const [lineProfile, medication, upcoming] = await Promise.all([
+    const [lineProfile, clinical, upcoming] = await Promise.all([
       Promise.resolve(getLineProfile(consultationCase.customer_line_user_id)).catch(() => null),
-      loadMedicationSnapshot(consultationCase.care_profile_id),
+      clinicalService ? clinicalService.getContext({
+        careProfileId:consultationCase.care_profile_id,
+        customerLineUserId:consultationCase.customer_line_user_id,
+        now:consultationCase.database_now || now(),
+      }) : loadMedicationSnapshot(consultationCase.care_profile_id).then((medication) => ({
+        currentMedications:medication.medications,
+        medicationSnapshot:medication.currentSnapshot || {}, recentMedicationChanges:[],
+        recentVitals:[], latestVitals:{ temperature:null,bloodPressure:null,pulse:null,spo2:null },
+        contextVersion:{ medicationSnapshotId:medication.currentSnapshot?.snapshotId || null,
+          medicationVersionNo:medication.currentSnapshot?.versionNo || null, latestVitalOccurredAt:null },
+      })),
       appointments.findWhere((item) => item.care_profile_id === consultationCase.care_profile_id),
     ]);
     const referenceTime = new Date(consultationCase.database_now || now());
@@ -100,12 +114,17 @@ function createConsultationCaseContextService({
       generatedAt:new Date(now()).toISOString(),
       contact:projectLineContact(lineProfile),
       careProfile:Object.freeze(projectProfile(profile)),
-      currentMedications:Object.freeze(medication.medications.map(projectMedication)),
+      currentMedications:Object.freeze(clinical.currentMedications.map(projectMedication)),
+      recentMedicationChanges:clinical.recentMedicationChanges,
+      recentVitals:clinical.recentVitals,
+      latestVitals:clinical.latestVitals,
       upcomingAppointments:Object.freeze(upcomingAppointments),
       dataVersion:Object.freeze({
         profileUpdatedAt:profile._updatedAt || profile.updated_at || profile.created_at || null,
-        medicationSnapshotId:medication.currentSnapshot?.snapshotId || null,
-        medicationRecordedAt:medication.currentSnapshot?.recordedAt || null,
+        medicationSnapshotId:clinical.medicationSnapshot?.snapshotId || null,
+        medicationVersionNo:clinical.medicationSnapshot?.versionNo || null,
+        medicationRecordedAt:clinical.medicationSnapshot?.recordedAt || null,
+        latestVitalOccurredAt:clinical.contextVersion?.latestVitalOccurredAt || null,
       }),
     });
   }

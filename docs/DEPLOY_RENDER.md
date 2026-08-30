@@ -1,5 +1,9 @@
 # PHIMOR production release on Render
 
+Medication Current Set V2 adds no migration. Before a mixed-version rollout,
+follow the stop-write/preflight sequence in `docs/MEDICATION_CURRENT_SET_V2.md`;
+do not leave an old medication writer running beside V2 instances.
+
 For paid Plus V1, follow `docs/PLUS_PAYMENT_V1.md`: migrate through 0015 before
 deploying/enabling `PLUS_PAYMENT_ENABLED`. Plus is 59 THB for 30 days with
 manual renewal only; no automatic recurring charge is configured.

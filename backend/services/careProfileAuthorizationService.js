@@ -1,5 +1,4 @@
 const { CareProfiles, CareProfileMembers, Residents, CenterStaff, Centers } = require('../db');
-const familyService = require('./familyService');
 const subscriptionService = require('./subscriptionService');
 
 const FAMILY_PERMISSIONS = Object.freeze([
@@ -65,11 +64,10 @@ async function authorizeFamily({ lineUserId, careProfile, permission }) {
   if (!membership) return null;
   if (membership.status !== 'active') deny('MEMBERSHIP_REVOKED', { membershipStatus: membership.status });
 
-  // Reuse the established default-permission behavior from familyService.
-  if (!await familyService.hasPermission(careProfile.care_profile_id, lineUserId, permission)) {
+  const permissions = membership.permissions || ['view','edit_profile','manage_appointments','decide_transport'];
+  if (!permissions.includes(permission)) {
     deny('ACCESS_DENIED', { reason: 'missing_family_permission', permission });
   }
-  const permissions = membership.permissions || FAMILY_PERMISSIONS;
   return {
     principalType: 'family_caregiver', role: membership.role || 'caregiver',
     permissions: [...permissions], careProfile, resident: null, center: null,

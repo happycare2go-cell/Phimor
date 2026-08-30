@@ -14,6 +14,8 @@ const { platformService: defaultPlatformService } = require('../services/platfor
 const { displayIdentity } = require('../utils/safeIdentity');
 const accessService = require('../services/accessService');
 const groupBindingService = require('../services/groupBindingService');
+const medicationCurrentSetService = require('../services/medicationCurrentSetService');
+const medicationChangeHistoryService = require('../services/medicationChangeHistoryService');
 
 function platformServiceFor(req) {
   return req.app.locals.platformService || defaultPlatformService;
@@ -30,6 +32,27 @@ function staffProjection(row) {
 
 async function staffRecordInCenter(centerId, staffId) {
   return CenterStaff.findOne((row) => row.center_id === centerId && row.staff_id === staffId);
+}
+
+function medicationError(res, error) {
+  if (!(error instanceof medicationCurrentSetService.MedicationCurrentSetError)) throw error;
+  const body = { status:'rejected', errorCode:error.code, message:error.message };
+  if (error.code === 'DUPLICATE_MEDICATION_IDENTITY' && error.details?.conflicts) body.conflicts = error.details.conflicts;
+  return res.status(error.status).json(body);
+}
+
+async function medicationResidentContext(req) {
+  const { Residents, CareProfiles } = require('../db');
+  const resident = await Residents.findOne((row) => row.resident_id === req.params.residentId
+    && row.center_id === req.centerId && row.status === 'active');
+  if (!resident?.care_profile_id) return null;
+  const profile = await CareProfiles.findOne((row) => row.care_profile_id === resident.care_profile_id
+    && row.center_id === req.centerId && row.status === 'linked');
+  return profile ? { resident, profile } : null;
+}
+
+function centerMedicationRequester(req) {
+  return { lineUserId:req.user.lineUserId, centerId:req.centerId };
 }
 
 function safeCenterContext(center, role, subscription, staffGroupBound = false) {
@@ -224,9 +247,12 @@ router.get('/residents/:residentId/care-profile', requireCenterStaff(['owner', '
     (p) => p.care_profile_id === resident.care_profile_id && p.center_id === req.centerId && p.status === 'linked'
   );
   if (!profile) return res.status(403).json({ error: 'forbidden', message: 'ศูนย์ไม่มีสิทธิ์เข้าถึง Care Profile นี้' });
-  const medicationHistory = await familyService.getMedicationHistory(profile.care_profile_id);
+  const [currentMedication, medicationHistory] = await Promise.all([
+    medicationCurrentSetService.getCurrent({ careProfileId:profile.care_profile_id, requester:centerMedicationRequester(req) }),
+    medicationChangeHistoryService.getHistory({ careProfileId:profile.care_profile_id, requester:centerMedicationRequester(req) }),
+  ]);
   await audit('care_profile.viewed_by_center', req.user.lineUserId, { centerId: req.centerId, residentId: resident.resident_id, careProfileId: profile.care_profile_id });
-  res.json({ profile, medicationHistory });
+  res.json({ profile, currentMedication, medicationHistory:medicationHistory.items });
 }));
 
 router.get('/residents/:residentId/care-profile/health-history', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
@@ -254,13 +280,14 @@ router.get('/residents/:residentId/care-profile/health-history', requireCenterSt
 
 // ข้อมูลจำเป็นต่อการดูแลประจำวัน: staff เห็นเฉพาะ summary ไม่เห็นประวัติฉบับเต็ม
 router.get('/residents/:residentId/clinical-summary', requireCenterStaff(['owner', 'manager', 'staff']), asyncHandler(async (req, res) => {
-  const { Residents, CareProfiles, MedicationSnapshots, Appointments, Vitals, audit } = require('../db');
+  const { Residents, CareProfiles, Appointments, Vitals, audit } = require('../db');
   const resident = await Residents.findOne((r) => r.resident_id === req.params.residentId && r.center_id === req.centerId && r.status === 'active');
   if (!resident?.care_profile_id) return res.status(404).json({ error: 'not_linked', message: 'ผู้พักยังไม่ได้ผูก Care Profile' });
   const profile = await CareProfiles.findOne((p) => p.care_profile_id === resident.care_profile_id && p.center_id === req.centerId && p.status === 'linked');
   if (!profile) return res.status(403).json({ error: 'forbidden', message: 'ศูนย์ไม่มีสิทธิ์เข้าถึง Care Profile นี้' });
-  const snapshots = await MedicationSnapshots.findWhere((s) => s.care_profile_id === profile.care_profile_id);
-  const latestMedication = snapshots.sort((a,b) => new Date(b.recorded_at) - new Date(a.recorded_at))[0] || null;
+  const currentMedication = await medicationCurrentSetService.getCurrent({
+    careProfileId:profile.care_profile_id, requester:centerMedicationRequester(req),
+  });
   const appointments = await Appointments.findWhere((a) => a.care_profile_id === profile.care_profile_id && a.status !== 'cancelled' && new Date(a.datetime) > new Date());
   const vitals = await Vitals.findWhere((v) => v.care_profile_id === profile.care_profile_id);
   const latestVitals = vitals.sort((a,b) => new Date(b.recorded_at) - new Date(a.recorded_at))[0] || null;
@@ -270,12 +297,61 @@ router.get('/residents/:residentId/clinical-summary', requireCenterStaff(['owner
     chronicConditions: profile.chronic_conditions || [], drugAllergies: profile.drug_allergies || '',
     foodAllergies: profile.food_allergies || '', mobilityLimitations: profile.mobility_limitations || '',
     emergencyContactName: profile.emergency_contact_name || '', emergencyContactPhone: profile.emergency_contact_phone || resident.family_phone || '',
-    currentMedications: latestMedication?.items || [], medicationUpdatedAt: latestMedication?.recorded_at || null,
+    currentMedications:currentMedication.medications, medicationUpdatedAt:currentMedication.currentSnapshot?.recordedAt || null,
     upcomingAppointments: appointments.sort((a,b) => new Date(a.datetime)-new Date(b.datetime)).slice(0,3), latestVitals,
     profileUpdatedAt: profile._updatedAt || profile.updated_at || null,
   };
   await audit('clinical_summary.viewed', req.user.lineUserId, { centerId:req.centerId, residentId:resident.resident_id, role:req.staffRole });
   res.json({ summary });
+}));
+
+router.get('/residents/:residentId/medications/current', requireCenterStaff(['owner','manager','staff']), asyncHandler(async (req, res) => {
+  const context = await medicationResidentContext(req);
+  if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
+  try {
+    const current = await medicationCurrentSetService.getCurrent({
+      careProfileId:context.profile.care_profile_id, requester:centerMedicationRequester(req),
+    });
+    res.json({ ...current, careProfileId:context.profile.care_profile_id });
+  } catch (error) { return medicationError(res, error); }
+}));
+
+router.get('/residents/:residentId/medications/history', requireCenterStaff(['owner','manager']), asyncHandler(async (req, res) => {
+  const context = await medicationResidentContext(req);
+  if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
+  res.json(await medicationChangeHistoryService.getHistory({
+    careProfileId:context.profile.care_profile_id, requester:centerMedicationRequester(req), limit:req.query.limit,
+  }));
+}));
+
+router.put('/residents/:residentId/medications/current', requireCenterStaff(['owner','manager']), asyncHandler(async (req, res) => {
+  const context = await medicationResidentContext(req);
+  if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
+  try {
+    const result = await medicationCurrentSetService.saveCompleteSet({
+      careProfileId:context.profile.care_profile_id, items:req.body.items,
+      baseSnapshotId:req.body.baseSnapshotId || null, requester:centerMedicationRequester(req),
+      source:req.body.source === 'center_image_ai' ? 'center_image_ai' : 'center_manual',
+      sourceImageBase64:req.body.source === 'center_image_ai' ? req.body.imageBase64 || null : null,
+      confirmRemoveAll:req.body.confirmRemoveAll === true, mutationId:req.body.mutationId || null,
+    });
+    res.status(result.noChange ? 200 : 201).json(result);
+  } catch (error) { return medicationError(res, error); }
+}));
+
+router.post('/residents/:residentId/medications/image-proposal', requireCenterStaff(['owner','manager']), asyncHandler(async (req, res) => {
+  const context = await medicationResidentContext(req);
+  if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
+  const image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
+  if (!image.ok) return res.status(image.status).json({ error:image.error, message:image.message });
+  const parsed = await require('../providers/aiProvider').interpretDocument(image.buffer, image.mimeType);
+  try {
+    const proposal = await medicationCurrentSetService.proposeImageMerge({
+      careProfileId:context.profile.care_profile_id, extractedItems:parsed.medications || [],
+      requester:centerMedicationRequester(req),
+    });
+    res.status(202).json({ status:'draft_requires_confirmation', ...proposal });
+  } catch (error) { return medicationError(res, error); }
 }));
 
 router.patch('/center/appointments/:appointmentId', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
@@ -291,36 +367,28 @@ router.post('/center/appointments/:appointmentId/cancel', requireCenterStaff(['o
 }));
 
 router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['owner', 'manager']), asyncHandler(async (req, res) => {
-  const { Residents, CareProfiles } = require('../db');
-  const resident = await Residents.findOne(
-    (r) => r.resident_id === req.params.residentId && r.center_id === req.centerId && r.status === 'active'
-  );
-  if (!resident?.care_profile_id) return res.status(404).json({ error: 'not_linked', message: 'ผู้พักยังไม่ได้ผูก Care Profile' });
-  const profile = await CareProfiles.findOne(
-    (p) => p.care_profile_id === resident.care_profile_id && p.center_id === req.centerId && p.status === 'linked'
-  );
-  if (!profile) return res.status(403).json({ error: 'forbidden' });
-  let items = req.body.items;
-  let source = 'center_manual';
-  let image = null;
-  if (req.body.imageBase64) {
-    image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
-    if (!image.ok) return res.status(image.status).json({ error: image.error, message: image.message });
+  const context = await medicationResidentContext(req);
+  if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
+  if (req.body.imageBase64 && !req.body.confirmAi) {
+    const image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
+    if (!image.ok) return res.status(image.status).json({ error:image.error, message:image.message });
+    const parsed = await require('../providers/aiProvider').interpretDocument(image.buffer, image.mimeType);
+    try {
+      const proposal = await medicationCurrentSetService.proposeImageMerge({ careProfileId:context.profile.care_profile_id,
+        extractedItems:parsed.medications || [], requester:centerMedicationRequester(req) });
+      return res.status(202).json({ status:'draft_requires_confirmation', ...proposal });
+    } catch (error) { return medicationError(res, error); }
   }
-  if ((!Array.isArray(items) || items.length === 0) && req.body.imageBase64) {
-    const aiProvider = require('../providers/aiProvider');
-    const parsed = await aiProvider.interpretDocument(image.buffer, image.mimeType);
-    items = parsed.medications || [];
-    source = 'center_image_ai';
-    if (!req.body.confirmAi) return res.status(202).json({ status: 'draft_requires_confirmation', items, message: 'กรุณาตรวจสอบและยืนยันรายการยาที่ AI อ่านได้ก่อนบันทึก' });
-  }
-  if (image && req.body.confirmAi) source = 'center_image_ai';
-  const result = await familyService.recordMedicationSnapshot({
-    careProfileId: profile.care_profile_id, items, recordedBy: req.user.lineUserId,
-    source, sourceImageBase64: req.body.imageBase64 || null,
-  });
-  if (!result.ok) return res.status(400).json({ error: 'bad_request', message: result.reason });
-  res.status(201).json(result.snapshot);
+  try {
+    const result = await medicationCurrentSetService.saveCompleteSet({
+      careProfileId:context.profile.care_profile_id, items:req.body.items,
+      baseSnapshotId:req.body.baseSnapshotId || null, requester:centerMedicationRequester(req),
+      source:req.body.confirmAi ? 'center_image_ai' : 'center_manual',
+      sourceImageBase64:req.body.confirmAi ? req.body.imageBase64 || null : null,
+      confirmRemoveAll:req.body.confirmRemoveAll === true, mutationId:req.body.mutationId || null,
+    });
+    res.status(result.noChange ? 200 : 201).json(result);
+  } catch (error) { return medicationError(res, error); }
 }));
 
 // PATCH /api/residents/:id — แก้ไขข้อมูลผู้พัก (เจ้าของ/ผู้จัดการ)

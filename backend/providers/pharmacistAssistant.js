@@ -3,7 +3,7 @@ const { AI_VERSIONS } = require('../config/aiVersions');
 
 const SOURCE_CATEGORIES = Object.freeze([
   'care_profile', 'medication_snapshot', 'medication_diff',
-  'appointment', 'consultation_message', 'general_ai_knowledge',
+  'vital_sign', 'appointment', 'consultation_message', 'general_ai_knowledge',
 ]);
 
 const PHARMACIST_ASSISTANT_INSTRUCTIONS = `You are a private decision-support assistant for a licensed pharmacist.
@@ -17,7 +17,7 @@ Return JSON only with: caseSummary (string), recordedFacts, relevantMedicationCo
 medicationChanges, questionsToAsk, safetyConsiderations, responseGuidance, escalationConsiderations
 (each an array of { text, sourceCategory }), missingInformation (string array), and disclaimer (string).
 Recorded sourceCategory must identify care_profile, medication_snapshot, medication_diff,
-appointment, or consultation_message. General professional considerations must use general_ai_knowledge.`;
+vital_sign, appointment, or consultation_message. General professional considerations must use general_ai_knowledge.`;
 
 function cleanString(value, field, max = 1000) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -55,7 +55,7 @@ function validatePharmacistAssistantResponse(value) {
   }
   const output = { caseSummary:cleanString(value.caseSummary, 'caseSummary', 3000) };
   output.recordedFacts=validateAttributedItems(value.recordedFacts,'recordedFacts',{
-    allowedSources:['care_profile','medication_snapshot','medication_diff','appointment','consultation_message'],
+    allowedSources:['care_profile','medication_snapshot','medication_diff','vital_sign','appointment','consultation_message'],
   });
   output.relevantMedicationContext=validateAttributedItems(value.relevantMedicationContext,'relevantMedicationContext',{
     allowedSources:['medication_snapshot'],

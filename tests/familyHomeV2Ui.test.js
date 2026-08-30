@@ -211,15 +211,21 @@ test('profile switch clearing covers clinical module output and generated links 
 
 test('medication extraction and confirmation are pinned to immutable profile context', () => {
   const save = functionSource('saveMedication', 'isMedicationOperationCurrent');
-  assert.match(save, /careProfileId:currentProfile\.profile\.care_profile_id/);
+  assert.match(save, /const profileId=currentProfile\.profile\.care_profile_id/);
+  assert.match(save, /careProfileId:profileId/);
   assert.match(save, /generation:DASHBOARD_GENERATION/);
+  assert.match(save, /baseSnapshotId:familyMedicationState\.baseSnapshotId/);
   assert.match(save, /isMedicationOperationCurrent\(operation\)/);
-  assert.match(save, /`\/api\/care-profile\/\$\{operation\.careProfileId\}\/medication-snapshots`/);
-  const confirm = functionSource('confirmMedicationReview', 'clearMedicationForm');
+  assert.match(save, /`\/api\/care-profile\/\$\{operation\.careProfileId\}\/medications\/image-proposal`/);
+  const confirm = functionSource('confirmMedicationReview', 'persistFamilyMedicationItems');
   assert.match(confirm, /const operation=medicationOperation/);
   assert.match(confirm, /if\(!isMedicationOperationCurrent\(operation\)\)/);
-  assert.match(confirm, /operation\.careProfileId/);
+  assert.match(confirm, /persistFamilyMedicationItems\(operation/);
   assert.doesNotMatch(confirm, /currentProfile\.profile\.care_profile_id/);
+  const persist = functionSource('persistFamilyMedicationItems', 'clearMedicationForm');
+  assert.match(persist, /operation\.careProfileId/);
+  assert.match(persist, /baseSnapshotId:operation\.baseSnapshotId/);
+  assert.match(persist, /MEDICATION_SNAPSHOT_STALE/);
   const clear = functionSource('clearProfileScopedUi', 'renderProfileAnchor');
   assert.match(clear, /closeMedicationReview\(\)/);
 });

@@ -87,6 +87,16 @@ test('legacy embedded snapshot items are an explicit compatibility source', asyn
   assert.equal(result.medications[0].dose, 'เดิมทุกคำ');
 });
 
+test('partial linked rows cannot hide the complete embedded V2 current set', async () => {
+  await profile();
+  await snapshot('V2-PARTIAL', '2026-08-30T00:00:00.000Z', { schema_version:2, version_no:1,
+    items:[{ medication_id:'M-1', name:'Metformin' }, { medication_id:'M-2', name:'Aspirin' }] });
+  await medication('V2-PARTIAL', 'M-1', { name:'Metformin' });
+  const result=await getCurrentMedicationSnapshot({ careProfileId:'CP-1', requester });
+  assert.equal(result.medicationSource,'snapshot_embedded_items_partial_link_recovery');
+  assert.deepEqual(result.medications.map((item)=>item.name),['Metformin','Aspirin']);
+});
+
 test('revoked caregiver cannot retrieve current medication', async () => {
   await profile();
   await db.CareProfileMembers.insert({ member_id: 'MEM-1', care_profile_id: 'CP-1', line_user_id: 'U-CARE', status: 'revoked', permissions: ['view'] });
@@ -162,14 +172,15 @@ test('unit spelling, Unicode, case and whitespace normalization produce unchange
   assert.equal(result.removed.length, 0);
 });
 
-test('same medication name with different strengths remains separately matched', async () => {
+test('legacy duplicate exact names remain ambiguous instead of using strength as identity', async () => {
   const result = await compare(
     [{ name: 'Drug A', strength: '5 mg' }, { name: 'Drug A', strength: '10 mg' }],
     [{ name: 'Drug A', strength: '10 มก.' }, { name: 'Drug A', strength: '5 มก.' }]
   );
-  assert.equal(result.unchanged.length, 2);
-  assert.equal(result.added.length, 0);
-  assert.equal(result.removed.length, 0);
+  assert.equal(result.unchanged.length, 0);
+  assert.equal(result.warnings.some((item) => item.code === 'AMBIGUOUS_MEDICATION_MATCH'), true);
+  assert.equal(result.added.length, 2);
+  assert.equal(result.removed.length, 2);
 });
 
 test('similar medication names are not fuzzy merged', async () => {

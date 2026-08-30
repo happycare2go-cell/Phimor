@@ -1,4 +1,4 @@
-const { MedicationSnapshots, Medications } = require('../db');
+const { MedicationSnapshots, Medications, databaseQuery } = require('../db');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
 
 const EXCLUDED_CURRENT_STATUSES = new Set([
@@ -27,7 +27,8 @@ function projectMedication(record = {}) {
   const structured = record.instruction && typeof record.instruction === 'object' ? record.instruction : {};
   return {
     medicationId: record.medication_id || record.medicationId || null,
-    stableMedicationId: record.stable_medication_id || record.catalog_medication_id || record.rx_norm_id || null,
+    stableMedicationId: record.stable_medication_id || record.stableMedicationId
+      || record.catalog_medication_id || record.rx_norm_id || null,
     name: typeof record.name === 'string' ? record.name : '',
     strength: typeof record.strength === 'string' ? record.strength : '',
     dose: typeof record.dose === 'string' ? record.dose : '',
@@ -44,33 +45,93 @@ function projectMedication(record = {}) {
 function snapshotMetadata(snapshot) {
   return {
     snapshotId: snapshot.snapshot_id,
+    schemaVersion: Number.isSafeInteger(Number(snapshot.schema_version)) ? Number(snapshot.schema_version) : null,
+    versionNo: Number.isSafeInteger(Number(snapshot.version_no)) ? Number(snapshot.version_no) : null,
     recordedAt: snapshot.recorded_at || snapshot._createdAt || null,
     source: snapshot.source || null,
+    sourceActorType: snapshot.source_actor_type || null,
   };
+}
+
+function snapshotVersion(snapshot) {
+  const value = Number(snapshot?.version_no);
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function compareSnapshotAuthority(left, right) {
+  const version = snapshotVersion(right) - snapshotVersion(left);
+  if (version) return version;
+  const time = (timestamp(right?.recorded_at) || timestamp(right?._createdAt))
+    - (timestamp(left?.recorded_at) || timestamp(left?._createdAt));
+  if (time) return time;
+  return String(right?.snapshot_id || '').localeCompare(String(left?.snapshot_id || ''), 'en');
 }
 
 async function loadSnapshotMedications(snapshot) {
   const linked = await Medications.findWhere((record) =>
     record.snapshot_id === snapshot.snapshot_id && record.care_profile_id === snapshot.care_profile_id
   );
+  const embedded = Array.isArray(snapshot.items) ? snapshot.items : [];
   if (linked.length > 0) {
+    // V2 snapshots persist the same complete set both in the immutable
+    // snapshot and in linked rows. If legacy/manual corruption left only a
+    // subset of linked rows, never let that subset hide the complete snapshot.
+    // The read-only production preflight still reports the mismatch for
+    // controlled operator review.
+    if (Number(snapshot.schema_version || 0) >= 2 && embedded.length > linked.length) {
+      return { medicationSource:'snapshot_embedded_items_partial_link_recovery',
+        medications:embedded.map(projectMedication).filter((item) => item.name) };
+    }
     return { medicationSource: 'linked_records', medications: linked.map(projectMedication).filter((item) => item.name) };
   }
   // Explicit compatibility path for legacy snapshots which embedded items
   // before linked medication rows were consistently created.
-  const embedded = Array.isArray(snapshot.items) ? snapshot.items : [];
   return {
     medicationSource: embedded.length > 0 ? 'snapshot_embedded_items' : 'snapshot_without_medications',
     medications: embedded.map(projectMedication).filter((item) => item.name),
   };
 }
 
+async function findAuthoritativeSnapshot(careProfileId) {
+  if (process.env.NODE_ENV !== 'test') {
+    // Numbered V2 snapshots always outrank versionless legacy rows. This query
+    // keeps ordinary current-list reads bounded after a profile enters V2.
+    const result = await databaseQuery(`SELECT data FROM "medicationSnapshots"
+      WHERE data->>'care_profile_id'=$1
+        AND lower(COALESCE(data->>'status','active')) <> ALL($2::text[])
+        AND COALESCE(data->>'version_no','') ~ '^[1-9][0-9]*$'
+      ORDER BY (data->>'version_no')::bigint DESC,
+        NULLIF(data->>'recorded_at','')::timestamptz DESC NULLS LAST,
+        data->>'snapshot_id' DESC
+      LIMIT 1`, [careProfileId, [...EXCLUDED_CURRENT_STATUSES]]);
+    if (result.rows[0]?.data) return result.rows[0].data;
+  }
+  const candidates = MedicationSnapshots.findWhereByField
+    ? await MedicationSnapshots.findWhereByField('care_profile_id', careProfileId)
+    : await MedicationSnapshots.findWhere((snapshot) => snapshot.care_profile_id === careProfileId);
+  return candidates.filter(isEligibleCurrentSnapshot).sort(compareSnapshotAuthority)[0] || null;
+}
+
+async function listEligibleSnapshots(careProfileId, limit = 50) {
+  const bounded = Math.min(Math.max(Number(limit) || 50, 1), 502);
+  if (process.env.NODE_ENV !== 'test') {
+    const result = await databaseQuery(`SELECT data FROM "medicationSnapshots"
+      WHERE data->>'care_profile_id'=$1
+        AND lower(COALESCE(data->>'status','active')) <> ALL($2::text[])
+      ORDER BY CASE WHEN COALESCE(data->>'version_no','') ~ '^[1-9][0-9]*$'
+        THEN (data->>'version_no')::bigint ELSE 0 END DESC,
+        created_at DESC, data->>'snapshot_id' DESC
+      LIMIT $3`, [careProfileId, [...EXCLUDED_CURRENT_STATUSES], bounded]);
+    return result.rows.map((row) => row.data).sort(compareSnapshotAuthority);
+  }
+  const candidates = MedicationSnapshots.findWhereByField
+    ? await MedicationSnapshots.findWhereByField('care_profile_id', careProfileId)
+    : await MedicationSnapshots.findWhere((snapshot) => snapshot.care_profile_id === careProfileId);
+  return candidates.filter(isEligibleCurrentSnapshot).sort(compareSnapshotAuthority).slice(0, bounded);
+}
+
 async function loadCurrentSnapshot(careProfileId) {
-  const snapshots = await MedicationSnapshots.findWhere(
-    (snapshot) => snapshot.care_profile_id === careProfileId && isEligibleCurrentSnapshot(snapshot)
-  );
-  const snapshotTime = (snapshot) => timestamp(snapshot.recorded_at) || timestamp(snapshot._createdAt);
-  const latest = [...snapshots].sort((a, b) => snapshotTime(b) - snapshotTime(a))[0] || null;
+  const latest = await findAuthoritativeSnapshot(careProfileId);
   if (!latest) {
     return { status: 'NO_CURRENT_SNAPSHOT', currentSnapshot: null, medicationSource: 'none', medications: [] };
   }
@@ -117,6 +178,7 @@ async function getMedicationInstructions({ careProfileId, requester, medicationI
 module.exports = {
   EXCLUDED_CURRENT_STATUSES, MedicationRetrievalError,
   isEligibleCurrentSnapshot, projectMedication, snapshotMetadata,
-  loadSnapshotMedications, loadCurrentSnapshot,
+  snapshotVersion, compareSnapshotAuthority,
+  loadSnapshotMedications, findAuthoritativeSnapshot, listEligibleSnapshots, loadCurrentSnapshot,
   getCurrentMedicationSnapshot, getMedicationInstructions,
 };
