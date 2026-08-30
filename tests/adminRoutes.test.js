@@ -157,6 +157,18 @@ test('dashboard projection is Admin-only, bounded and contains aggregate values 
   delete app.locals.adminDashboardService;
 });
 
+test('unified exception queue is Admin-only, bounded and forwards safe server filters', async () => {
+  const seen=[];
+  app.locals.adminExceptionService={async listExceptions(input){seen.push(input);return{items:[{category:'pending_mapping',status:'pending',title:'ระบบเอ',summary:'รอจับคู่',safeReference:'งาน ••••0001',action:{kind:'open_pending_mapping',label:'จับคู่ผู้พัก'}}],pagination:{page:2,pageSize:10,total:12,totalPages:2}}}};
+  let response=await callAdmin('/api/admin/exceptions?category=pending_mapping&status=pending&search=safe&page=2&pageSize=10');
+  assert.equal(response.status,401);
+  response=await callAdmin('/api/admin/exceptions?category=pending_mapping&status=pending&search=safe&page=2&pageSize=10',{headers:{'X-Admin-Key':REAL_ADMIN_KEY}});
+  assert.equal(response.status,200);const body=await response.json();assert.equal(body.items[0].category,'pending_mapping');
+  assert.deepStrictEqual(seen[0],{category:'pending_mapping',status:'pending',search:'safe',page:'2',pageSize:'10'});
+  assert.doesNotMatch(JSON.stringify(body),/clinical|payload|line_user|group_id|credential/i);
+  delete app.locals.adminExceptionService;
+});
+
 test('Admin Center directory searches names server-side, filters authoritative states and returns search-scoped counts', async () => {
   const seed = async (center) => {
     await db.Centers.insert(center);

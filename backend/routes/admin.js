@@ -20,6 +20,7 @@ const { displayIdentity } = require('../utils/safeIdentity');
 const { createPlusPaymentSupportService } = require('../services/plusPaymentSupportService');
 const adminCenterDirectoryService = require('../services/adminCenterDirectoryService');
 const { createAdminDashboardService } = require('../services/adminDashboardService');
+const { createAdminExceptionService } = require('../services/adminExceptionService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
 const plusPaymentSupport = createPlusPaymentSupportService();
@@ -50,6 +51,17 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
     schedulerHealth:req.app.locals.schedulerHealth || (() => ({ configuredJobs:0, jobs:{} })),
   });
   res.json(await dashboardService.getDashboard());
+}));
+
+router.get('/exceptions', asyncHandler(async (req, res) => {
+  const exceptionService = req.app.locals.adminExceptionService || createAdminExceptionService({
+    notificationService:req.app.locals.notificationService || require('../services/notificationService'),
+    schedulerHealth:req.app.locals.schedulerHealth || (() => ({ configuredJobs:0, jobs:{} })),
+  });
+  res.json(await exceptionService.listExceptions({
+    category:req.query.category, status:req.query.status, search:req.query.search,
+    page:req.query.page, pageSize:req.query.pageSize,
+  }));
 }));
 
 // Minimal reliability projection for operators. It exposes only counts and
