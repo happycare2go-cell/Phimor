@@ -83,7 +83,9 @@ test('System Admin has five semantic destinations and lazy-loads selected operat
   }
   assert.match(adminHtml, /const ADMIN_DESTINATIONS=Object\.freeze\(\['overview','centers','integrations','review','more'\]\)/);
   assert.match(adminHtml, /controller\.load\(\{tabs:\['integrations'\]\}\)/);
-  assert.match(adminHtml, /controller\.load\(\{tabs:\['pending','groups','alerts'\]\}\)/);
+  assert.match(adminHtml, /ensureExceptionQueueUI\(\)/);
+  assert.match(adminHtml, /controller\.setFilters\(\{category:pendingExceptionCategory,page:1\}\)/);
+  assert.match(adminHtml, /open_pending_mapping:'pending',open_group_reconciliation:'groups',open_identity_review:'alerts'/);
   assert.match(adminHtml, /controller\.load\(\{tabs:\['overview','capabilities'\]\}\)/);
   assert.doesNotMatch(adminHtml.slice(adminHtml.indexOf('async function enterAdmin'), adminHtml.indexOf('function logout')), /Promise\.all\(\[ensureCareOperationsUI/);
   assert.doesNotMatch(adminHtml, /blood_group|chronic_conditions|drug_allergies|raw payload/i);
