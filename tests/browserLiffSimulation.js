@@ -43,6 +43,7 @@ const MEDICATION_EDITOR_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'lif
 const PHARMACIST_CONSOLE_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'pharmacist', 'console.js'), 'utf8');
 const PHARMACIST_CONSOLE_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'pharmacist', 'console.css'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
+const ADMIN_EXCEPTION_QUEUE_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'exception-queue-ui.js'), 'utf8');
 const APP_SHELL_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.js'), 'utf8');
 const APP_SHELL_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.css'), 'utf8');
 const CLINICAL_ACTION_DIALOG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.js'), 'utf8');
@@ -64,6 +65,7 @@ function localHtml(name) {
     .replace('<script src="./lab-results-ui.js"></script>', `<script>${FAMILY_LAB_RESULTS_SOURCE}</script>`)
     .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
+    .replace('<script src="./exception-queue-ui.js"></script>', `<script>${ADMIN_EXCEPTION_QUEUE_SOURCE}</script>`)
     .replace('<script src="../shared/app-shell.js"></script>', `<script>${APP_SHELL_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
     .replace('<script src="../shared/medication-editor.js"></script>', `<script>${MEDICATION_EDITOR_SOURCE}</script>`)
@@ -236,8 +238,10 @@ async function familyConsultationJourney(browser) {
   await page.locator('#consultationContinueButton').click();
   await page.waitForFunction(()=>!document.querySelector('#consultationPayment').hidden);
   assert.match(await page.locator('#consultationPayment').textContent(),/สแกน QR.*100 บาท/);
-  assert.strictEqual(await page.locator('#consultationPaymentQr').isVisible(),true);
-  assert.match(await page.locator('#consultationPaymentQr').getAttribute('src'),/^https:\/\//);
+  await page.waitForFunction(()=>document.querySelector('#consultationPaymentQr')?.src.startsWith('https://'));
+  const qrState=await page.locator('#consultationPaymentQr').evaluate((image)=>({hidden:image.hidden,src:image.getAttribute('src'),paymentText:document.querySelector('#consultationPaymentText')?.textContent}));
+  assert.equal(qrState.hidden,false,JSON.stringify(qrState));
+  assert.match(qrState.src,/^https:\/\//);
   await page.close();
 }
 
@@ -617,6 +621,7 @@ async function adminSubscriptionJourney(browser) {
   const center = { centerId:'CTR1',name:'ศูนย์จำลอง',ownerIdentity:'บัญชี LINE ••••0001',status:'active',operationalStatus:'active',directoryStatus:'trial',address:'กรุงเทพฯ',activeResidentCount:1,subscriptionStartAt:'2026-08-29T03:00:00.000Z',subscriptionEndAt:'2026-09-29T03:00:00.000Z',packageType:'trial',subscription:{allowed:true,state:'trial',expiresAt:'2026-09-29T03:00:00.000Z',remainingDays:31} };
   await mockBackend(page, async (url, request) => {
     if (url.pathname === '/config/liff') return { systemAdminLiffId:'SIM_ADMIN' };
+    if (url.pathname === '/api/admin/dashboard') return {centers:{total:1,active:0,trial:1,expired:0,suspended:0,notConfigured:0,nearExpiry:0},integrations:{total:0,ready:0,notReady:0,suspended:0,revoked:0},exceptions:{},platform:{state:'healthy',warningCount:0,configuredSchedulerJobs:0}};
     if (url.pathname === '/api/admin/centers' && request.method()==='GET') return { centers:[center],items:[center],counts:{all:1,active:0,trial:1,expired:0,notConfigured:0,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:1,totalPages:1} };
     if (url.pathname === '/api/admin/centers/CTR1/subscription/monthly-renewal-preview') { const units=Number(url.searchParams.get('renewalUnits'));return {ok:true,packageType:'monthly',renewalUnits:units,renewalDays:units*30,previousExpiresAt:'2026-09-29T03:00:00.000Z',startsAt:'2026-08-29T03:00:00.000Z',expiresAt:units===1?'2026-10-29T03:00:00.000Z':'2026-11-28T03:00:00.000Z',preservesCurrentPeriod:true}; }
     if (url.pathname === '/api/admin/centers/CTR1/subscription/monthly-renew' && request.method()==='POST') { savedBody=request.postDataJSON();center.subscriptionStartAt='2026-08-29T03:00:00.000Z';center.subscriptionEndAt='2026-11-28T03:00:00.000Z';center.packageType='monthly';center.directoryStatus='active';center.subscription={allowed:true,state:'active',expiresAt:center.subscriptionEndAt,remainingDays:90};return {ok:true,renewal:{renewalUnits:2,renewalDays:60,expiresAt:center.subscriptionEndAt},entitlement:center.subscription}; }
@@ -770,7 +775,15 @@ async function adminCareOperationsJourney(browser) {
   await page.on('dialog', (dialog) => dialog.accept());
   await mockBackend(page, async (url, request) => {
     if (url.pathname === '/config/liff') return {systemAdminLiffId:'SIM_ADMIN'};
+    if (url.pathname === '/api/admin/dashboard') return {centers:{total:0,active:0,trial:0,expired:0,suspended:0,notConfigured:0,nearExpiry:0},integrations:{total:1,ready:1,notReady:0,suspended:0,revoked:0},exceptions:{pendingSubjectMapping:mapped?0:1,groupBindingMismatch:mapped&&!reconciled?1:0},platform:{state:'healthy',warningCount:0,configuredSchedulerJobs:0}};
     if (url.pathname === '/api/admin/centers') return {centers:[]};
+    if (url.pathname === '/api/admin/exceptions') {
+      const items=!mapped?[{category:'pending_mapping',status:'pending',title:'ผู้พักรอเชื่อม',summary:'มีข้อมูลจากระบบเชื่อมต่อที่ต้องจับคู่',centerName:'ศูนย์ตัวอย่าง',safeReference:'เหตุการณ์ตัวอย่าง',occurredAt:'2026-08-27T08:00:00Z',action:{kind:'open_pending_mapping',label:'เชื่อมผู้พัก'}}]
+        :!reconciled?[{category:'group_mismatch',status:'open',title:'กลุ่ม LINE ไม่ตรงกัน',summary:'ตรวจสอบ GroupBinding ก่อนส่งแจ้งเตือน',centerName:'ศูนย์ตัวอย่าง',safeReference:'เหตุการณ์ตัวอย่าง',occurredAt:'2026-08-27T08:00:00Z',action:{kind:'open_group_reconciliation',label:'ตรวจสอบกลุ่ม'}}]:[];
+      return {items,pagination:{page:1,pageSize:20,total:items.length,totalPages:items.length?1:0}};
+    }
+    if (url.pathname === '/api/admin/platform/operations-foundation') return {organizations:[{organizationId:'ORG-A',displayName:'องค์กรตัวอย่าง',organizationType:'external_care_center',status:'active'}],centers:[{centerId:'CTR-A',organizationId:'ORG-A',name:'ศูนย์ตัวอย่าง',status:'active'}],bounded:{organizationLimit:200,centerLimit:500,organizationsTruncated:false,centersTruncated:false}};
+    if (url.pathname === '/api/admin/platform/integration-clients') return {items:[{integrationClientId:'INT-A',organizationId:'ORG-A',displayName:'Vendor ตัวอย่าง',sourceSystem:'vendor_demo',status:'active',organizationName:'องค์กรตัวอย่าง',allowedCenterCount:1,allowedEventCount:1,activeCredentialCount:1,warningCount:0,readiness:{state:'ready',configurationComplete:true}}],pagination:{page:1,limit:100,total:1,totalPages:1}};
     if (url.pathname === '/api/admin/platform/organizations') return {organizations:[{organizationId:'ORG-A',displayName:'องค์กรตัวอย่าง',organizationType:'external_care_center',status:'active'}]};
     if (url.pathname === '/api/admin/platform/organizations/ORG-A/centers') return {centers:[{centerId:'CTR-A',name:'ศูนย์ตัวอย่าง',status:'active'}]};
     if (url.pathname === '/api/admin/platform/centers/CTR-A/capabilities') return {capabilities:[{centerId:'CTR-A',capabilityKey:'vital_signs_v1',enabled:true},{centerId:'CTR-A',capabilityKey:'daily_care_v1',enabled:false}]};
@@ -788,11 +801,14 @@ async function adminCareOperationsJourney(browser) {
   });
   await page.setContent(localHtml('system-admin'), {waitUntil:'domcontentloaded'}); await page.waitForSelector('#app:not([hidden])');
   await page.locator('[data-shell-destination="review"]').first().click();
+  await page.waitForFunction(() => document.querySelector('#exceptionQueueContent').textContent.includes('ผู้พักรอเชื่อม'));
+  await page.getByRole('button',{name:'เชื่อมผู้พัก'}).first().click();
   await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('เชื่อมผู้พัก'));
-  await page.getByRole('button',{name:'ผู้พักรอเชื่อม'}).click(); await page.getByRole('button',{name:'เชื่อมผู้พัก'}).click();
+  await page.getByRole('button',{name:'เชื่อมผู้พัก'}).last().click();
   await page.locator('select[aria-label="เลือกผู้พักที่ต้องการเชื่อม"]').selectOption('RES-A'); await page.getByRole('button',{name:'ยืนยันเชื่อมผู้พัก'}).click();
   await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('ไม่มีผู้พักรอเชื่อม')); assert.equal(mapped,1);
-  await page.getByRole('button',{name:'กลุ่ม LINE'}).click(); assert.match(await page.locator('#careOperationsContent').textContent(), /MISMATCH/);
+  await page.locator('#exceptionQueueRefresh').click();await page.waitForFunction(()=>document.querySelector('#exceptionQueueContent').textContent.includes('กลุ่ม LINE ไม่ตรงกัน'));
+  await page.getByRole('button',{name:'ตรวจสอบกลุ่ม'}).click();await page.waitForFunction(()=>document.querySelector('#careOperationsContent').textContent.includes('MISMATCH'));assert.match(await page.locator('#careOperationsContent').textContent(), /MISMATCH/);
   await page.getByRole('button',{name:'ตรวจสอบอีกครั้ง'}).click(); await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('VERIFIED')); assert.equal(reconciled,1);
   assert.doesNotMatch(await page.locator('#careOperationsPanel').textContent(), /send anyway|ส่งต่อไปเลย/i); await page.close();
 }
@@ -945,8 +961,11 @@ async function roleBasedShellJourney(browser) {
   const admin=await browser.newPage({viewport:{width:390,height:844}});
   await mockBackend(admin,async(url)=>{
     if(url.pathname==='/config/liff')return{systemAdminLiffId:'SIM_ADMIN'};
+    if(url.pathname==='/api/admin/dashboard')return{centers:{total:0,active:0,trial:0,expired:0,suspended:0,notConfigured:0,nearExpiry:0},integrations:{total:0,ready:0,notReady:0,suspended:0,revoked:0},exceptions:{},platform:{state:'healthy',warningCount:0,configuredSchedulerJobs:0}};
     if(url.pathname==='/api/admin/centers')return{items:[],centers:[],counts:{all:0,active:0,trial:0,expired:0,notConfigured:0,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:0,totalPages:0}};
-    if(url.pathname==='/api/admin/platform/organizations')return{organizations:[]};
+    if(url.pathname==='/api/admin/platform/operations-foundation')return{organizations:[],centers:[],bounded:{organizationLimit:200,centerLimit:500,organizationsTruncated:false,centersTruncated:false}};
+    if(url.pathname==='/api/admin/platform/integration-clients')return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0}};
+    if(url.pathname==='/api/admin/exceptions')return{items:[],pagination:{page:1,pageSize:20,total:0,totalPages:0}};
     if(url.pathname==='/api/admin/platform/pending-subjects')return{items:[]};
     if(url.pathname==='/api/admin/platform/integration-events/status')return{items:[]};
     if(url.pathname==='/api/admin/platform/integration-identity-alerts')return{items:[]};

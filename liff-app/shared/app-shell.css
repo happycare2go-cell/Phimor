@@ -41,7 +41,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   min-height: 100dvh;
 }
 
-.phimor-shell__content {
+.phimor-shell .phimor-shell__content {
   width: min(100%, var(--phimor-content-width));
   min-width: 0;
   margin-inline: auto;
@@ -176,7 +176,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   }
 
   .phimor-primary-nav__item::before { font-size: 17px; }
-  .phimor-shell__content { padding: 24px 28px 48px; scroll-padding-bottom: 48px; }
+  .phimor-shell .phimor-shell__content { padding: 24px 28px 48px; scroll-padding-bottom: 48px; }
   .phimor-launch-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
