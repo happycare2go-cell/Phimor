@@ -20,6 +20,7 @@ test.after(async () => { await new Promise((resolve) => server.close(resolve)); 
 
 test.beforeEach(async () => {
   db.resetAll(); sequence = 0;
+  delete app.locals.platformOperationalLogger;
   repository = createMemoryPlatformRepository();
   let randomSequence = 1;
   service = createPlatformService({
@@ -119,6 +120,32 @@ test('System Admin commissioning routes create suspended client, manage status, 
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'active'})});assert.equal(response.status,200);assert.equal((await response.json()).integrationClient.status,'active');
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'suspended',organizationId:'forged'})});assert.equal(response.status,400);assert.equal((await response.json()).errorCode,'UNKNOWN_REQUEST_FIELD');
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:{'X-Line-User-Id':'U-CENTER'},body:JSON.stringify({status:'active'})});assert.equal(response.status,401);
+});
+
+test('unexpected Platform database errors are logged safely while the client receives a generic 500', async()=>{
+  const events=[];
+  app.locals.platformOperationalLogger=(event)=>events.push(event);
+  app.locals.platformService={
+    async setIntegrationClientStatus(){
+      throw Object.assign(new Error('patient-name secret-token raw SQL parameter'),{
+        code:'42P08',routine:'variable_coerce_param_hook',constraint:'integration_clients_status_check',
+      });
+    },
+  };
+  const response=await call('/api/admin/platform/integration-clients/INT-SECRET/status',{
+    method:'PATCH',headers:{...admin,Authorization:'Bearer must-not-log'},body:JSON.stringify({status:'active'}),
+  });
+  assert.equal(response.status,500);
+  const body=await response.json();
+  assert.deepEqual(body,{error:'internal_error',errorCode:'PLATFORM_OPERATION_FAILED',message:'ดำเนินการ Platform ไม่สำเร็จ'});
+  assert.equal(events.length,1);
+  assert.equal(events[0].operation,'/integration-clients/:integrationClientId/status');
+  assert.equal(events[0].method,'PATCH');
+  assert.equal(events[0].postgresCode,'42P08');
+  assert.equal(events[0].classification,'postgres_parameter_type_error');
+  assert.equal(events[0].routine,'variable_coerce_param_hook');
+  assert.equal(events[0].constraint,'integration_clients_status_check');
+  assert.doesNotMatch(JSON.stringify(events),/patient-name|secret-token|must-not-log|INT-SECRET|Authorization|SELECT|UPDATE/i);
 });
 
 test('System Admin lists minimized Center and Resident mapping inventories with bounded pagination',async()=>{

@@ -247,8 +247,8 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
 
     updateIntegrationClientStatus(integrationClientId, status) {
       return one(
-        `UPDATE integration_clients SET status = $2,
-          revoked_at = CASE WHEN $2 = 'revoked' THEN CURRENT_TIMESTAMP ELSE NULL END,
+        `UPDATE integration_clients SET status = $2::varchar,
+          revoked_at = CASE WHEN $2::varchar = 'revoked' THEN CURRENT_TIMESTAMP ELSE NULL END,
           updated_at = CURRENT_TIMESTAMP
          WHERE integration_client_id = $1 RETURNING *`,
         [integrationClientId, status]

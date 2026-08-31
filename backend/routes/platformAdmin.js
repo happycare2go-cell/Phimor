@@ -16,13 +16,52 @@ function actorFor(req) {
   return req.admin?.admin?.admin_id || (req.admin?.authMethod === 'api_key' ? 'admin:key' : 'admin:unknown');
 }
 
+function safeTechnicalValue(value, fallback = null, maxLength = 128) {
+  const clean = String(value || '').trim();
+  if (!clean || clean.length > maxLength || !/^[A-Za-z0-9_.:/-]+$/.test(clean)) return fallback;
+  return clean;
+}
+
+function platformErrorStatus(error) {
+  const status = Number(error?.status);
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
+}
+
+function buildPlatformErrorEvent(req, error) {
+  const postgresCode = /^[0-9A-Z]{5}$/.test(String(error?.code || '')) ? String(error.code) : null;
+  return {
+    event: 'platform_operation_failed',
+    operation: safeTechnicalValue(req?.route?.path, 'platform_operation', 180),
+    method: safeTechnicalValue(req?.method, 'UNKNOWN', 12),
+    errorName: safeTechnicalValue(error?.name, 'Error', 80),
+    errorCode: safeTechnicalValue(error?.code, 'PLATFORM_OPERATION_FAILED', 80),
+    postgresCode,
+    routine: safeTechnicalValue(error?.routine),
+    constraint: safeTechnicalValue(error?.constraint),
+    classification: postgresCode === '42P08' ? 'postgres_parameter_type_error'
+      : postgresCode ? 'postgres_error' : 'unexpected_platform_error',
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function logUnexpectedPlatformError(req, error) {
+  const event = buildPlatformErrorEvent(req, error);
+  const logger = req?.app?.locals?.platformOperationalLogger;
+  try {
+    if (typeof logger === 'function') logger(event);
+    else console.error('[Platform Operation]', JSON.stringify(event));
+  } catch (_) {
+    // Diagnostics must never replace the bounded client error response.
+  }
+}
+
 function sendPlatformError(res, error) {
-  const status = Number(error?.status) || 500;
+  const status = platformErrorStatus(error);
   return res.status(status).json({
     error: status >= 500 ? 'internal_error' : status === 404 ? 'not_found'
       : status === 403 ? 'forbidden' : status === 401 ? 'unauthorized'
         : status === 409 ? 'conflict' : 'bad_request',
-    errorCode: error?.code || 'PLATFORM_OPERATION_FAILED',
+    errorCode: status >= 500 ? 'PLATFORM_OPERATION_FAILED' : error?.code || 'PLATFORM_OPERATION_FAILED',
     message: status >= 500 ? 'ดำเนินการ Platform ไม่สำเร็จ' : error.message,
   });
 }
@@ -30,7 +69,10 @@ function sendPlatformError(res, error) {
 function platformAction(handler) {
   return asyncHandler(async (req, res) => {
     try { return await handler(req, res, serviceFor(req), actorFor(req)); }
-    catch (error) { return sendPlatformError(res, error); }
+    catch (error) {
+      if (platformErrorStatus(error) >= 500) logUnexpectedPlatformError(req, error);
+      return sendPlatformError(res, error);
+    }
   });
 }
 
@@ -308,4 +350,7 @@ function createPlatformAdminRouter() {
   return router;
 }
 
-module.exports = { createPlatformAdminRouter, sendPlatformError, assertBodyKeys };
+module.exports = {
+  createPlatformAdminRouter, sendPlatformError, assertBodyKeys,
+  buildPlatformErrorEvent, logUnexpectedPlatformError,
+};

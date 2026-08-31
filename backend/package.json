@@ -12,6 +12,7 @@
     "test:ai-golden": "node scripts/run-ai-golden.js",
     "simulate:hhs-pilot": "node scripts/simulate-hhs-pilot.js",
     "preflight:medication-v2": "node scripts/preflight-medication-v2.js",
+    "preflight:postgres-parameter-types": "node scripts/preflight-postgres-parameter-types.js",
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate-status.js"
   },

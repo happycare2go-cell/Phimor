@@ -207,8 +207,8 @@ function createPlusPaymentRepository({ queryFn = databaseQuery } = {}) {
 
     async updatePaymentTransaction(paymentTransactionId, { status, failureCode = null }) {
       const result = await queryFn(
-        `UPDATE plus_payment_transactions SET processing_status = $2,
-          failure_code = $3, processed_at = CASE WHEN $2 IN ('processed','rejected')
+        `UPDATE plus_payment_transactions SET processing_status = $2::varchar,
+          failure_code = $3, processed_at = CASE WHEN $2::varchar IN ('processed','rejected')
             THEN CURRENT_TIMESTAMP ELSE NULL END, attempts = attempts + 1
          WHERE payment_transaction_id = $1 RETURNING *`,
         [paymentTransactionId, status, failureCode]
