@@ -99,6 +99,10 @@ app.use('/api', async (req, res, next) => {
   return next();
 });
 
+// Machine-to-machine Integration authentication must run before interactive
+// routers mounted at the broader /api boundary. The route remains behind the
+// shared security, CORS, JSON, and rate-limit middleware above.
+app.use('/api/integrations/v1', createIntegrationEventsRouter());
 app.use('/api/admin', adminRouter);
 app.use('/api/external', externalRouter);
 app.use('/api/plus', plusRouter);
@@ -110,7 +114,6 @@ app.use('/api/care-profile', doctorQuestionsRouter);
 app.use('/api/care-profile', doctorVisitsRouter);
 app.use('/api', createVitalSignsRouter());
 app.use('/api', createDailyCareRouter());
-app.use('/api/integrations/v1', createIntegrationEventsRouter());
 app.use('/api', centersRouter);
 app.use('/api', cardsRouter);
 app.use('/api', familyRouter);

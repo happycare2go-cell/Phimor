@@ -24,9 +24,8 @@ function action(handler) {
 
 function createVitalSignsRouter() {
   const router = express.Router();
-  router.use(requireAuth);
 
-  router.get('/care-profile/:careProfileId/vital-signs', action(async (req, res, service) => {
+  router.get('/care-profile/:careProfileId/vital-signs', requireAuth, action(async (req, res, service) => {
     res.json(await service.listHistory({
       lineUserId:req.user.lineUserId, careProfileId:req.params.careProfileId,
       centerId:req.query.centerId || null, from:req.query.from || null,
@@ -34,7 +33,7 @@ function createVitalSignsRouter() {
     }));
   }));
 
-  router.post('/center/:centerId/residents/:residentId/vital-signs', requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
+  router.post('/center/:centerId/residents/:residentId/vital-signs', requireAuth, requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
     void service;
     return res.status(409).json({
       error:'conflict', errorCode:'NATIVE_HEALTH_REPORT_REQUIRED',
@@ -42,12 +41,12 @@ function createVitalSignsRouter() {
     });
   }));
 
-  router.get('/center/:centerId/vital-signs/history', requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
+  router.get('/center/:centerId/vital-signs/history', requireAuth, requireCenterStaff(['owner','manager','staff']), action(async (req, res, service) => {
     res.json(await service.listCenterHistory({lineUserId:req.user.lineUserId,centerId:req.params.centerId,
       residentId:req.query.residentId || null,limit:req.query.limit}));
   }));
 
-  router.post('/center/:centerId/vital-signs/:vitalSetId/void', requireCenterStaff(['owner','manager']), action(async (req, res, service) => {
+  router.post('/center/:centerId/vital-signs/:vitalSetId/void', requireAuth, requireCenterStaff(['owner','manager']), action(async (req, res, service) => {
     res.json({ item:await service.voidVitalSet({
       lineUserId:req.user.lineUserId, centerId:req.params.centerId,
       vitalSetId:req.params.vitalSetId, reason:req.body.reason,
