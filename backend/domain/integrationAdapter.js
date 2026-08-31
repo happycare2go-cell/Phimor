@@ -61,7 +61,9 @@ function sanitizeSample(input){
     return clean;
   }
   const payload=walk(input);
-  return{payload,sizeBytes:bytes,structuralFingerprint:crypto.createHash('sha256').update(structuralShape(payload)).digest('hex')};
+  const sourceStructure=describeStructure(payload);
+  return{payload,sizeBytes:bytes,sourceStructure,
+    structuralFingerprint:fingerprintStructure(sourceStructure)};
 }
 function structuralShape(value){
   if(Array.isArray(value))return `[${value.map(structuralShape).sort().join(',')}]`;
@@ -82,7 +84,9 @@ function discoverFields(payload){
   function discoverArray(array,arrayPath,depth){
     if(!array.length)return;
     if(!array.every((item)=>item&&typeof item==='object'&&!Array.isArray(item))){add({locator:{kind:'unstable_array',arrayPath},sourcePath:pathLabel(arrayPath),valuePreview:'ตำแหน่งข้อมูลไม่คงที่ — ยังใช้ไม่ได้',valueType:'array',selectable:false,unstable:true});return;}
-    const candidates=['type','code','kind','name','measurement_type','measurementType'];
+    // `name` and generic `code` are intentionally excluded: they can contain a
+    // person name/external ID and are unsafe reusable-template discriminators.
+    const candidates=['type','kind','measurement_type','measurementType'];
     const discriminator=candidates.find((key)=>array.every((item)=>primitive(item[key])&&item[key]!==null)&&new Set(array.map((item)=>String(item[key]))).size===array.length);
     if(!discriminator){add({locator:{kind:'unstable_array',arrayPath},sourcePath:pathLabel(arrayPath),valuePreview:'ตำแหน่งข้อมูลไม่คงที่ — ยังใช้ไม่ได้',valueType:'array',selectable:false,unstable:true});return;}
     for(const item of array){
@@ -94,6 +98,22 @@ function discoverFields(payload){
     }
   }
   objectWalk(payload);return result;
+}
+function locatorIdentity(locator){return crypto.createHash('sha256').update(stableStringify(locator||{})).digest('hex');}
+function describeStructure(payload){return discoverFields(payload).map((field)=>({
+  fieldKey:locatorIdentity(field.locator),sourcePath:field.sourcePath,valueType:field.valueType,
+  selectable:Boolean(field.selectable),unstable:Boolean(field.unstable),secret:Boolean(field.secret),
+  locator:field.locator,
+})).sort((a,b)=>a.fieldKey.localeCompare(b.fieldKey));}
+function fingerprintStructure(sourceStructure){const safe=(sourceStructure||[]).map(({fieldKey,sourcePath,valueType,selectable,unstable,locator})=>({fieldKey,sourcePath,valueType,selectable,unstable,locator}));return crypto.createHash('sha256').update(stableStringify(safe)).digest('hex');}
+function mappingLocatorKeys(rules){return new Set((rules||[]).flatMap((rule)=>rule.locators||[]).map(locatorIdentity));}
+function compareStructure({baselineStructure=[],mappingRules=[],payload}){
+  const currentStructure=describeStructure(payload);const baselineByKey=new Map(baselineStructure.map((field)=>[field.fieldKey,field]));
+  const currentByKey=new Map(currentStructure.map((field)=>[field.fieldKey,field]));const mappedKeys=mappingLocatorKeys(mappingRules);
+  const breaking=[];for(const key of mappedKeys){const baseline=baselineByKey.get(key);const current=currentByKey.get(key);if(!current)breaking.push({fieldKey:key,sourcePath:baseline?.sourcePath||'mapped_source',reason:'mapped_locator_missing'});else if(!current.selectable)breaking.push({fieldKey:key,sourcePath:current.sourcePath,reason:'mapped_locator_incompatible'});}
+  const added=currentStructure.filter((field)=>field.selectable&&!baselineByKey.has(field.fieldKey)).map(({fieldKey,sourcePath,valueType})=>({fieldKey,sourcePath,valueType}));
+  return{currentStructure,currentFingerprint:fingerprintStructure(currentStructure),breaking,added,
+    exact:fingerprintStructure(currentStructure)===fingerprintStructure(baselineStructure)};
 }
 function getPath(value,path){let current=value;for(const key of path||[]){assertSafeKey(key);if(!current||typeof current!=='object'||!Object.prototype.hasOwnProperty.call(current,key))return undefined;current=current[key];}return current;}
 function extractLocator(payload,locator){
@@ -157,5 +177,6 @@ function transformPayload({integrationClientId,targetEventType=TARGET_EVENT_TYPE
 }
 
 module.exports={TARGET_EVENT_TYPE,TARGET_FIELDS,MAX_SAMPLE_BYTES,MAX_FIELDS,MAX_DEPTH,MAX_ARRAY_ITEMS,
-  IntegrationAdapterError,sanitizeSample,structuralShape,discoverFields,autoSuggest,keyForLocator,
+  IntegrationAdapterError,sanitizeSample,structuralShape,discoverFields,describeStructure,fingerprintStructure,
+  compareStructure,locatorIdentity,autoSuggest,keyForLocator,
   extractLocator,validateMappingRules,transformPayload,normalizeDate,normalizeDatetime,normalizeNumber,inferKnownUnit};

@@ -104,8 +104,9 @@ supported mechanism for migrations 0001–0017. Migration 0014 must precede the
 multi-instance backend deployment because rate limiting intentionally fails
 closed when its shared table is unavailable.
 
-Migration 0017 creates the Field Picker Adapter profile and temporary-sample
-tables. Before deploying a backend that imports the adapter service, hold
+Migration 0017 creates reusable Field Picker Adapter templates, immutable
+versions, Integration Client bindings, safe structural notices, and temporary
+sample tables. Before deploying a backend that imports the adapter service, hold
 Auto-Deploy, verify a current backup and migration status, run the SELECT-only
 `npm run preflight:integration-adapter-v1`, apply 0017, and verify final migration
 status. Deploy the backend and System Admin LIFF only after the schema is current.

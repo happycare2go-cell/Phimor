@@ -133,6 +133,17 @@ test('Field Picker capture is a purpose-built System Admin action with audited a
   assert.equal(response.status,400);assert.equal(calls.length,1);
 });
 
+test('System Admin reusable Adapter actions are bounded and preserve authenticated actor authority',async()=>{const calls=[];app.locals.integrationAdapterService={
+  async reuseAdapter(input){calls.push(['reuse',input]);return{adapter:{adapterTemplateId:'T-1',adapterVersionId:'V-1'}};},
+  async rollbackAdapter(input){calls.push(['rollback',input]);return{adapter:{adapterVersionId:input.adapterVersionId},futureEventsOnly:true};},
+  async updateNotice(input){calls.push(['notice',input]);return{notice:{noticeId:input.noticeId,status:input.status}};},
+};let response=await call('/api/admin/platform/integration-clients/INT-A/adapter-reuse',{method:'POST',headers:admin,body:JSON.stringify({sampleId:'S-1',adapterVersionId:'V-1'})});assert.equal(response.status,200);
+  response=await call('/api/admin/platform/integration-clients/INT-A/adapter-versions/V-0/rollback',{method:'POST',headers:admin,body:'{}'});assert.equal(response.status,200);assert.equal((await response.json()).futureEventsOnly,true);
+  response=await call('/api/admin/platform/integration-clients/INT-A/adapter-notices/N-1',{method:'PATCH',headers:admin,body:JSON.stringify({status:'ignored'})});assert.equal(response.status,200);
+  assert.deepEqual(calls.map(([name])=>name),['reuse','rollback','notice']);assert.equal(calls[0][1].actorReference,'admin:key');assert.equal(calls[1][1].adapterVersionId,'V-0');assert.equal(calls[2][1].status,'ignored');
+  response=await call('/api/admin/platform/integration-clients/INT-A/adapter-reuse',{method:'POST',body:JSON.stringify({sampleId:'S-1',adapterVersionId:'V-1'})});assert.equal(response.status,401);assert.equal(calls.length,3);
+});
+
 test('unexpected Platform database errors are logged safely while the client receives a generic 500', async()=>{
   const events=[];
   app.locals.platformOperationalLogger=(event)=>events.push(event);

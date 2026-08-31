@@ -369,3 +369,18 @@ Before a sandbox integration, agree on:
 
 Do not put integration credentials, LINE IDs, phone numbers, source audio, or
 unnecessary free-form health history in operational matching metadata.
+
+## Reusable Field Picker adapters
+
+Field transformations belong to a trusted `sourceSystem` and event/payload
+shape, not to a Center or branch. Commission the first compatible client once;
+later clients with the same authenticated source identity can bind the same
+active template version after a representative sample passes structural and
+canonical validation. Runtime values never influence the structural fingerprint.
+
+New unmapped fields are ignored while a deduplicated operational notice is made
+available. Missing mapped fields, incompatible types, or changed array
+discriminators fail closed without guessing. Admin edits always create a draft
+version, and activation or rollback affects future events only. Client-specific
+credentials, scopes, external IDs, mappings, inbox rows, and clinical access
+remain isolated behind each Integration Client binding.

@@ -13,10 +13,12 @@ Migration 0016 adds only expression/partial indexes to the legacy JSONB
 preflight checks and stops without changing evidence if token, link-request,
 or active Care Profile/Resident invariants are already violated.
 
-Migration 0017 adds only the versioned Integration Adapter profile and temporary
-commissioning-sample tables. Run `npm run preflight:integration-adapter-v1`
-before applying it. The preflight is SELECT-only and blocks a missing Integration
-foundation or a partial pre-existing Adapter schema instead of choosing a repair.
+Migration 0017 adds normalized reusable Integration Adapter templates, immutable
+versions, per-client bindings, structural-change notices, and temporary
+commissioning samples. Run `npm run preflight:integration-adapter-v1` before
+applying it. The SELECT-only preflight also blocks the earlier undeployed
+client-owned `integration_adapter_profiles` shape so incompatible 0017 schemas
+cannot be mistaken for one another.
 
 Migrations are explicit operations. The application does not run them during startup.
 

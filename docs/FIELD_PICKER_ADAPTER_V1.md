@@ -1,5 +1,11 @@
 # PHIMOR Field Picker Adapter V1
 
+The ownership rule is **one trusted source system + target event type + compatible
+payload shape = one reusable Adapter Template**. A template owns immutable
+versions and deterministic field rules. Each Integration Client has a separate
+binding to a selected template/version; Center scopes, credentials, external
+identities, Resident mappings, and tenant authorization are never shared.
+
 Field Picker Adapter V1 lets a commissioned Integration Client send one native
 sample for `care.daily_report.finalized`. The sample is captured only after the
 normal Integration credential and rate-limit gates. Capture returns
@@ -30,9 +36,18 @@ locator disappears, changes type, or has an unsupported unit, processing fails
 closed as `ADAPTER_SOURCE_CHANGED`; no alternative field is guessed and no
 clinical write occurs.
 
+The structural fingerprint contains field paths, container/value types, and
+stable array-discriminator locators—not patient values. Normal value changes do
+not create versions. Extra source fields do not block processing and are ignored
+until an Admin explicitly maps them; one deduplicated notice is retained, and an
+explicit “ไม่รับข้อมูล” decision prevents repeated actionable notices. Missing
+or incompatible mapped structure fails closed as `ADAPTER_SOURCE_CHANGED`.
+
 Active versions are immutable. Editing begins with a new sample and Draft V2;
-V1 remains active until V2 passes preview and activation. Activation supersedes
-the previous version atomically and never changes already processed clinical data.
+V1 remains active for every bound client until V2 passes preview and activation.
+Activation atomically advances active bindings and supersedes V1. Rollback may
+reactivate an earlier version for future events only; processed clinical history
+is never rewritten.
 
 ## Controlled rollout
 

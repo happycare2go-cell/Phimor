@@ -15,7 +15,7 @@ function rules(sample){const paths=new Map(sample.fields.map((field)=>[field.sou
 ].map(([targetField,path])=>({targetField,locatorKey:paths.get(path)}));}
 async function fixture(){
   const adapterRepository=createIntegrationAdapterMemoryRepository();let sequence=0;
-  const adapter=createIntegrationAdapterService({repository:adapterRepository,platformService:{async inspectIntegrationClient(){return{integrationClientId:identity.integrationClientId,eventScopes:[target]};}},idFactory:(prefix)=>`${prefix}-${++sequence}`,now:()=>new Date('2026-09-01T00:00:00Z'),withTransaction:async(_key,fn)=>fn(),audit:async()=>{}});
+  const adapter=createIntegrationAdapterService({repository:adapterRepository,platformService:{async inspectIntegrationClient(){return{integrationClientId:identity.integrationClientId,sourceSystem:identity.sourceSystem,eventScopes:[target]};}},idFactory:(prefix)=>`${prefix}-${++sequence}`,now:()=>new Date('2026-09-01T00:00:00Z'),withTransaction:async(_key,fn)=>fn(),audit:async()=>{}});
   await adapter.startCapture({integrationClientId:identity.integrationClientId,actorReference:'ADM-1'});
   await adapter.captureIfWaiting({identity,input:native()});const sample=(await adapter.getLatestSample({integrationClientId:identity.integrationClientId})).sample;
   const draft=await adapter.createDraft({integrationClientId:identity.integrationClientId,sampleId:sample.sampleId,mappingRules:rules(sample),actorReference:'ADM-1'});

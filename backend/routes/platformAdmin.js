@@ -383,6 +383,24 @@ function createPlatformAdminRouter() {
       sampleId:body.sampleId,adapterProfileId:body.adapterProfileId,actorReference}));
   }));
 
+  router.post('/integration-clients/:integrationClientId/adapter-reuse', platformAction(async (req, res, service, actorReference) => {
+    const body=req.body||{};assertBodyKeys(body,['sampleId','adapterVersionId']);
+    res.json(await adapterServiceFor(req).reuseAdapter({integrationClientId:req.params.integrationClientId,
+      sampleId:body.sampleId,adapterVersionId:body.adapterVersionId,actorReference}));
+  }));
+
+  router.post('/integration-clients/:integrationClientId/adapter-versions/:adapterVersionId/rollback', platformAction(async (req, res, service, actorReference) => {
+    assertBodyKeys(req.body||{},[]);res.json(await adapterServiceFor(req).rollbackAdapter({
+      integrationClientId:req.params.integrationClientId,adapterVersionId:req.params.adapterVersionId,actorReference,
+    }));
+  }));
+
+  router.patch('/integration-clients/:integrationClientId/adapter-notices/:noticeId', platformAction(async (req, res, service, actorReference) => {
+    const body=req.body||{};assertBodyKeys(body,['status']);res.json(await adapterServiceFor(req).updateNotice({
+      integrationClientId:req.params.integrationClientId,noticeId:req.params.noticeId,status:body.status,actorReference,
+    }));
+  }));
+
   router.get('/integration-clients/:integrationClientId/adapter-status', platformAction(async (req, res) => {
     res.json(await adapterServiceFor(req).getAdapterStatus({integrationClientId:req.params.integrationClientId,
       targetEventType:req.query.targetEventType}));

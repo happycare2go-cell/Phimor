@@ -794,7 +794,7 @@ async function adminCareOperationsJourney(browser) {
     if (url.pathname === '/api/admin/platform/organizations/ORG-A/integration-clients') return {integrationClients:[{integrationClientId:'INT-A',displayName:'Vendor ตัวอย่าง',status:'active'}]};
     if (url.pathname === '/api/admin/platform/integration-clients/INT-A') return {integrationClient:{integrationClientId:'INT-A',displayName:'Vendor ตัวอย่าง',status:'active',sourceSystem:'vendor_demo',organizationId:'ORG-A',centers:[{centerId:'CTR-A',center_id:'CTR-A',name:'ศูนย์ตัวอย่าง',status:'active'}],eventScopes:['care.daily_report.finalized'],credentials:[{status:'active',lastUsedAt:'2026-08-27T08:00:00Z'}],identityResolutionPolicy:{identityResolutionMode:'exact_name_learning',unresolvedEventPolicy:'ignore',familyGroupRequirement:'required_before_ingest'},operationalCounts:{processed:12,ignoredSubjectAmbiguous:2}}};
     if (url.pathname === '/api/admin/platform/integration-clients/INT-A/adapter-status') return {activeAdapter:null,versions:[]};
-    if (url.pathname === '/api/admin/platform/integration-clients/INT-A/adapter-samples/latest') return {sample:{sampleId:'IADS-1',integrationClientId:'INT-A',targetEventType:'care.daily_report.finalized',status:'captured',sampleExpiresAt:'2026-09-02T08:00:00Z',discoveredFieldCount:4,fields:[
+    if (url.pathname === '/api/admin/platform/integration-clients/INT-A/adapter-samples/latest') return {sample:{sampleId:'IADS-1',integrationClientId:'INT-A',targetEventType:'care.daily_report.finalized',status:'captured',sampleExpiresAt:'2026-09-02T08:00:00Z',discoveredFieldCount:4,reusableAdapters:[{adapterTemplateId:'IADT-HHS',adapterVersionId:'IADV-HHS-V1',displayName:'HHS Daily Health Report',sourceSystem:'HHS',version:1,bindingCount:3,exactFingerprint:true}],fields:[
       {locatorKey:'branch-code',sourcePath:'branch.code',valuePreview:'EXT-C',valueType:'string',selectable:true,suggestedTarget:'subject.externalCenterId'},
       {locatorKey:'resident-name',sourcePath:'resident.full_name',valuePreview:'คุณยายตัวอย่าง',valueType:'string',selectable:true,suggestedTarget:'subject.displayName'},
       {locatorKey:'temperature',sourcePath:'vitals[type=temperature].value',valuePreview:'37.2',unitPreview:'C',valueType:'number',selectable:true,suggestedTarget:'vitals.temperature'},
@@ -834,10 +834,11 @@ async function adminCareOperationsJourney(browser) {
     widths:[dialog.scrollWidth,dialog.clientWidth],
     offenders:[...dialog.querySelectorAll('*')].filter((item)=>item.scrollWidth>item.clientWidth+1).slice(0,8).map((item)=>({tag:item.tagName,className:item.className,scrollWidth:item.scrollWidth,clientWidth:item.clientWidth,text:item.textContent?.trim().slice(0,40)})),
     fieldFirst:dialog.textContent.includes('รหัสสาขาต้นทาง')&&dialog.textContent.includes('คุณยายตัวอย่าง'),
+    reuseOffer:dialog.textContent.includes('พี่หมอพบการจับคู่ข้อมูลที่ใช้งานอยู่แล้ว')&&dialog.textContent.includes('HHS Daily Health Report V1')&&dialog.textContent.includes('ใช้กับ 3 ระบบเชื่อมต่อ'),
     noJsonRequired:!dialog.textContent.includes('กรอก JSONPath'),
     minimumControl:Math.min(...[...dialog.querySelectorAll('select,button')].filter((item)=>item.getClientRects().length).map((item)=>item.getBoundingClientRect().height)),
   }));
-  assert.deepEqual({overflow:mobileAdapter.overflow,fieldFirst:mobileAdapter.fieldFirst,noJsonRequired:mobileAdapter.noJsonRequired,minimumControl:Math.floor(mobileAdapter.minimumControl)},{overflow:true,fieldFirst:true,noJsonRequired:true,minimumControl:44},JSON.stringify(mobileAdapter));
+  assert.deepEqual({overflow:mobileAdapter.overflow,fieldFirst:mobileAdapter.fieldFirst,reuseOffer:mobileAdapter.reuseOffer,noJsonRequired:mobileAdapter.noJsonRequired,minimumControl:Math.floor(mobileAdapter.minimumControl)},{overflow:true,fieldFirst:true,reuseOffer:true,noJsonRequired:true,minimumControl:44},JSON.stringify(mobileAdapter));
   await page.setViewportSize({width:1280,height:800});
   assert.equal(await page.locator('#integrationClientDetailDialog').evaluate((dialog)=>dialog.scrollWidth<=dialog.clientWidth),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
