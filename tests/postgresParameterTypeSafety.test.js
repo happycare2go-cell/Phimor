@@ -175,11 +175,7 @@ function untypedStatusAssignmentCandidates() {
 }
 
 test('runtime SQL guard rejects new untyped assignment/literal placeholder reuse', () => {
-  // consultationLifecycle is the one explicitly deferred same-class finding in this workstream.
-  // Pinning it here keeps the exception visible while making any new occurrence fail this guard.
-  assert.deepEqual(untypedStatusAssignmentCandidates(), [
-    { file:'backend/services/consultationRepository.js', column:'state', parameter:'$2' },
-  ]);
+  assert.deepEqual(untypedStatusAssignmentCandidates(), []);
 });
 
 test('PostgreSQL preflight prepares fixed statements in a read-only transaction without executing them', () => {

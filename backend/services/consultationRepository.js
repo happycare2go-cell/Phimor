@@ -1,6 +1,14 @@
 const { databaseQuery } = require('../db');
 const { assertWaitingOnInvariant } = require('../domain/consultation');
 
+const UPDATE_CASE_WORKFLOW_SQL = `UPDATE consultation_cases SET
+  state = $2::varchar, waiting_on = $3,
+  resolved_at = CASE WHEN $2::varchar = 'resolved' THEN CURRENT_TIMESTAMP ELSE resolved_at END,
+  closed_at = COALESCE($4, closed_at), close_reason = COALESCE($5, close_reason),
+  updated_at = CURRENT_TIMESTAMP
+WHERE case_id = $1
+RETURNING *, CURRENT_TIMESTAMP AS database_now`;
+
 function createConsultationRepository({ queryFn = databaseQuery } = {}) {
   return {
     async createOrder(record) {
@@ -682,13 +690,7 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
     async updateCaseWorkflow(caseId, { state, waitingOn, closedAt = null, closeReason = null }) {
       assertWaitingOnInvariant(state, waitingOn);
       const result = await queryFn(
-        `UPDATE consultation_cases SET
-          state = $2, waiting_on = $3,
-          resolved_at = CASE WHEN $2 = 'resolved' THEN CURRENT_TIMESTAMP ELSE resolved_at END,
-          closed_at = COALESCE($4, closed_at), close_reason = COALESCE($5, close_reason),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE case_id = $1
-        RETURNING *, CURRENT_TIMESTAMP AS database_now`,
+        UPDATE_CASE_WORKFLOW_SQL,
         [caseId, state, waitingOn, closedAt, closeReason]
       );
       return result.rows[0] || null;
@@ -731,4 +733,4 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
   };
 }
 
-module.exports = { createConsultationRepository };
+module.exports = { UPDATE_CASE_WORKFLOW_SQL, createConsultationRepository };

@@ -23,6 +23,21 @@ function safeErrorCode(error) {
   return /^[A-Z][A-Z0-9_]{0,79}$/.test(value) ? value : 'SCHEDULED_JOB_FAILED';
 }
 
+function safeDiagnosticValue(value, pattern, maxLength) {
+  const text=typeof value==='string'?value.trim():'';
+  return text.length<=maxLength&&pattern.test(text)?text:null;
+}
+
+function safeSchedulerError(error) {
+  return {
+    errorCode:safeErrorCode(error),
+    postgresCode:safeDiagnosticValue(error?.code,/^[0-9A-Z]{5}$/,5),
+    postgresRoutine:safeDiagnosticValue(error?.routine,/^[A-Za-z][A-Za-z0-9_]{0,79}$/,80),
+    postgresConstraint:safeDiagnosticValue(error?.constraint,/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/,128),
+    operation:safeDiagnosticValue(error?.safeOperation,/^[a-z][a-z0-9_]{0,63}$/,64),
+  };
+}
+
 function createSchedulerCoordinatorService({
   lockService = createDistributedJobLockService(),
   now = () => new Date(),
@@ -42,7 +57,8 @@ function createSchedulerCoordinatorService({
     const startedAt = now();
     snapshot(jobName, {
       status: 'running', startedAt: startedAt.toISOString(), completedAt: null,
-      durationMs: null, errorCode: null,
+      durationMs: null, errorCode: null, postgresCode:null, postgresRoutine:null,
+      postgresConstraint:null, operation:null,
     });
     try {
       const result = await lockService.runWithLock(lockKey, task);
@@ -65,12 +81,15 @@ function createSchedulerCoordinatorService({
     } catch (error) {
       const completedAt = now();
       const durationMs = Math.max(0, completedAt.getTime() - startedAt.getTime());
-      const errorCode = safeErrorCode(error);
+      const diagnostic = safeSchedulerError(error);
       snapshot(jobName, {
         status: 'failed', completedAt: completedAt.toISOString(), durationMs,
-        lastFailedAt: completedAt.toISOString(), errorCode,
+        lastFailedAt: completedAt.toISOString(), ...diagnostic,
       });
-      logger.error?.('[Scheduler]', { jobName, status: 'failed', durationMs, errorCode });
+      logger.error?.('[Scheduler]', {
+        jobName, status:'failed', durationMs,
+        ...Object.fromEntries(Object.entries(diagnostic).filter(([,value])=>value!==null)),
+      });
       throw error;
     }
   }
@@ -85,4 +104,4 @@ function createSchedulerCoordinatorService({
   return { run, health };
 }
 
-module.exports = { JOB_LOCK_KEYS, createSchedulerCoordinatorService, safeErrorCode };
+module.exports = { JOB_LOCK_KEYS, createSchedulerCoordinatorService, safeErrorCode, safeSchedulerError };
