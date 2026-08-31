@@ -52,6 +52,11 @@
     return date && Number.isFinite(date.getTime())
       ? date.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'short', timeZone:'Asia/Bangkok' }) : 'ยังไม่มีข้อมูล';
   };
+  const formatDateOnly = (value) => {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value||'')) ? new Date(`${value}T00:00:00+07:00`) : null;
+    return date && Number.isFinite(date.getTime())
+      ? date.toLocaleDateString('th-TH',{dateStyle:'long',timeZone:'Asia/Bangkok'}) : 'ยังไม่มีข้อมูล';
+  };
   const buildResidentOptionsRequest = (centerId, search = '') => ({
     path:`/api/admin/platform/centers/${encodeURIComponent(centerId)}/resident-options?search=${encodeURIComponent(search)}&limit=100`,
     options:{ method:'GET' },
@@ -132,6 +137,14 @@
     path:`/api/admin/platform/integration-identity-alerts/${encodeURIComponent(alertId)}/status`,
     options:{ method:'PATCH', body:JSON.stringify({ status }) },
   });
+  const ADAPTER_EVENT_TYPE='care.daily_report.finalized';
+  const adapterBase=(integrationClientId)=>`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}`;
+  const buildAdapterCaptureRequest=(integrationClientId)=>({path:`${adapterBase(integrationClientId)}/adapter-capture`,options:{method:'POST',body:JSON.stringify({targetEventType:ADAPTER_EVENT_TYPE})}});
+  const buildAdapterSampleRequest=(integrationClientId)=>({path:`${adapterBase(integrationClientId)}/adapter-samples/latest?targetEventType=${encodeURIComponent(ADAPTER_EVENT_TYPE)}`,options:{method:'GET'}});
+  const buildAdapterStatusRequest=(integrationClientId)=>({path:`${adapterBase(integrationClientId)}/adapter-status?targetEventType=${encodeURIComponent(ADAPTER_EVENT_TYPE)}`,options:{method:'GET'}});
+  const buildAdapterPreviewRequest=(integrationClientId,sampleId,mappingRules)=>({path:`${adapterBase(integrationClientId)}/adapter-preview`,options:{method:'POST',body:JSON.stringify({sampleId,mappingRules})}});
+  const buildAdapterDraftRequest=(integrationClientId,sampleId,mappingRules)=>({path:`${adapterBase(integrationClientId)}/adapter-draft`,options:{method:'PUT',body:JSON.stringify({sampleId,mappingRules})}});
+  const buildAdapterActivateRequest=(integrationClientId,sampleId,adapterProfileId)=>({path:`${adapterBase(integrationClientId)}/adapter-activate`,options:{method:'POST',body:JSON.stringify({sampleId,adapterProfileId})}});
   function createOneTimeSecretState() {
     let value = null;
     return {
@@ -376,15 +389,18 @@
       const token = ++detailGeneration; const clientId = state.detail.integrationClientId;
       const nextCenterPage = centerPage || state.detail.centerPage || 1;
       const nextSubjectPage = subjectPage || state.detail.subjectPage || 1;
-      const [clientResult, centerResult, subjectResult] = await Promise.all([
+      const [clientResult, centerResult, subjectResult, adapterSampleResult, adapterStatusResult] = await Promise.all([
         request(`/api/admin/platform/integration-clients/${encodeURIComponent(clientId)}`, {method:'GET'}),
         send(buildCenterMappingListRequest(clientId, {page:nextCenterPage,search:state.detail.centerSearch || ''})),
         send(buildSubjectMappingListRequest(clientId, {page:nextSubjectPage,search:state.detail.subjectSearch || ''})),
+        send(buildAdapterSampleRequest(clientId)),
+        send(buildAdapterStatusRequest(clientId)),
       ]);
       if (token !== detailGeneration || !state.detail || state.detail.integrationClientId !== clientId) return;
       Object.assign(state.detail, { client:clientResult.integrationClient, centerMappings:safeArray(centerResult.items),
         centerPagination:centerResult.pagination, subjectMappings:safeArray(subjectResult.items),
         subjectPagination:subjectResult.pagination, centerPage:nextCenterPage, subjectPage:nextSubjectPage,
+        adapterSample:adapterSampleResult.sample||null,adapterStatus:adapterStatusResult,
         loading:false, error:null });
       const directoryClient = state.integrations.find((item) => item.integrationClientId === clientId);
       if (directoryClient) Object.assign(directoryClient, clientResult.integrationClient);
@@ -410,6 +426,41 @@
     function section(title, description = '') {
       const node = element('section', 'care-ops__detail-section'); node.append(element('h3', '', title));
       if (description) node.append(element('p', 'care-ops__meta', description)); return node;
+    }
+    function adapterRulesFromSelection(sample,selections){return safeArray(sample?.targetFields).map((target)=>{
+      const selected=selections?.[target.id];if(Array.isArray(selected)){const locatorKeys=selected.filter(Boolean);return locatorKeys.length?{targetField:target.id,locatorKeys}:null;}
+      return selected?{targetField:target.id,locatorKey:selected}:null;
+    }).filter(Boolean);}
+    function ensureAdapterSelections(sample){
+      if(!state.detail.adapterSelections||state.detail.adapterSelectionSampleId!==sample.sampleId){const selections={};
+        safeArray(sample.fields).forEach((field)=>{if(field.selectable&&field.suggestedTarget&&!selections[field.suggestedTarget])selections[field.suggestedTarget]=field.locatorKey;});
+        state.detail.adapterSelections=selections;state.detail.adapterSelectionSampleId=sample.sampleId;state.detail.adapterPreview=null;}
+      return state.detail.adapterSelections;
+    }
+    function renderAdapterSection(clientId){
+      const node=section('7. การจับคู่ข้อมูล','เลือกข้อมูล PHIMOR ก่อน แล้วเลือกค่าจากตัวอย่างของระบบต้นทาง ไม่ต้องเขียน JSON หรือ JSONPath');
+      const active=state.detail.adapterStatus?.activeAdapter;
+      node.append(element('p','care-ops__meta','ประเภทข้อมูล: รายงานสุขภาพที่ยืนยันแล้ว'));
+      node.append(element('p','care-ops__meta',active?`ใช้งาน Adapter Version ${active.version} · เปิด ${formatDate(active.activatedAt)}`:'ยังไม่มี Field Picker Adapter ที่เปิดใช้งาน — canonical client เดิมยังทำงานตามปกติ'));
+      const sample=state.detail.adapterSample;
+      if(!sample){node.append(element('div','care-ops__notice','ข้อมูลตัวอย่างจะใช้เพื่อจับคู่เท่านั้น และจะยังไม่ถูกบันทึกเป็นข้อมูลสุขภาพ'),button('รับข้อมูลตัวอย่าง',()=>detailAction(buildAdapterCaptureRequest(clientId),'เปิดช่วงรอรับข้อมูลตัวอย่าง 30 นาทีแล้ว'),''));return node;}
+      if(sample.status==='waiting'){node.append(element('div','care-ops__adapter-waiting','รอรับข้อมูลตัวอย่าง'),element('p','care-ops__meta',`ระบบนี้เท่านั้นที่ส่งตัวอย่างได้ · หมดเวลา ${formatDate(sample.captureExpiresAt)}`),element('div','care-ops__notice','ข้อมูลที่รับในช่วงนี้จะถูกใช้เพื่อจับคู่เท่านั้น ไม่สร้างข้อมูลสุขภาพ ไม่เรียนรู้ผู้พัก และไม่ส่ง LINE'),button('เริ่มช่วงรับตัวอย่างใหม่',()=>detailAction(buildAdapterCaptureRequest(clientId),'เริ่มช่วงรอรับข้อมูลตัวอย่างใหม่แล้ว'),'secondary'));return node;}
+      if(sample.status!=='captured'){node.append(element('p','care-ops__meta','ไม่มีข้อมูลตัวอย่างที่พร้อมใช้'),button('รับข้อมูลตัวอย่างใหม่',()=>detailAction(buildAdapterCaptureRequest(clientId),'เปิดช่วงรอรับข้อมูลตัวอย่างแล้ว'),''));return node;}
+      const selections=ensureAdapterSelections(sample);
+      node.append(element('div','care-ops__notice',`ตัวอย่างจะถูกล้างภายใน 24 ชั่วโมง · ${sample.discoveredFieldCount||0} ค่า · ไม่เก็บ credential หรือ header`));
+      const picker=element('div','care-ops__adapter-picker');let lastSection='';
+      safeArray(sample.targetFields).forEach((target)=>{if(target.section!==lastSection){picker.append(element('h4','',target.section));lastSection=target.section;}
+        const options=[{value:'',label:target.required?'กรุณาเลือกข้อมูล':'ไม่รับข้อมูล'}];safeArray(sample.fields).filter((field)=>field.selectable).forEach((field)=>options.push({value:field.locatorKey,label:`${field.valuePreview}${field.unitPreview?` ${field.unitPreview}`:''}`}));
+        const current=Array.isArray(selections[target.id])?selections[target.id]:[selections[target.id]||''];const field=selectField(`${target.label}${target.required?' *':target.stronglyRecommended?' (แนะนำ)':''}`,options,current[0]);field.label.classList.add('care-ops__adapter-field');field.control.addEventListener('change',()=>{selections[target.id]=target.id==='subject.displayName'?[field.control.value||'',current[1]||'']:field.control.value||null;state.detail.adapterPreview=null;});
+        const chosen=sample.fields.find((item)=>item.locatorKey===field.control.value);const detail=element('details','care-ops__adapter-source');detail.append(element('summary','','รายละเอียด'),element('div','',chosen?.sourcePath||'ยังไม่ได้เลือก'));field.label.append(detail);
+        if(target.id==='subject.displayName'){const familyName=selectField('นามสกุล (ถ้าระบบต้นทางแยกช่อง)',options,current[1]||'');familyName.control.addEventListener('change',()=>{selections[target.id]=[field.control.value||'',familyName.control.value||''];state.detail.adapterPreview=null;});field.label.append(familyName.label);}
+        picker.append(field.label);
+      });node.append(picker);
+      const selectedKeys=Object.values(selections).flatMap((value)=>Array.isArray(value)?value:[value]);const unused=safeArray(sample.fields).filter((field)=>field.selectable&&!selectedKeys.includes(field.locatorKey));const extras=element('details','care-ops__advanced');extras.append(element('summary','','ข้อมูลอื่นจากระบบต้นทาง (ไม่รับข้อมูลโดยค่าเริ่มต้น)'));unused.slice(0,50).forEach((field)=>extras.append(element('div','care-ops__adapter-unused',field.valuePreview)));node.append(extras);
+      const actions=element('div','care-ops__actions');actions.append(button('รับข้อมูลตัวอย่างใหม่',()=>detailAction(buildAdapterCaptureRequest(clientId),'เปิดช่วงรอรับข้อมูลตัวอย่างใหม่แล้ว'),'secondary'));
+      actions.append(button('ทดสอบการแปลง',async()=>{const dialog=doc.getElementById('integrationClientDetailDialog');setBusy(dialogParts(dialog).body,true);try{state.detail.adapterPreview=await send(buildAdapterPreviewRequest(clientId,sample.sampleId,adapterRulesFromSelection(sample,selections)));renderIntegrationDetail();}catch(error){showDialogError(dialog,errorMessage(error));setBusy(dialogParts(dialog).body,false);}},''));node.append(actions);
+      if(state.detail.adapterPreview?.valid){const value=state.detail.adapterPreview.preview;const measurementLabels=new Map(safeArray(sample.targetFields).filter((target)=>target.measurementType).map((target)=>[target.measurementType,target.label]));const previewBox=element('div','care-ops__adapter-preview');previewBox.append(element('h4','','ตัวอย่างข้อมูลใน PHIMOR'),element('strong','',value.residentDisplayName),element('div','',`วันที่รายงาน ${formatDateOnly(value.careDate)}`),element('div','',`เวลาบันทึก ${formatDate(value.recordedAt)}`),element('div','',`เวลายืนยัน ${formatDate(value.finalizedAt)}`),element('div','',`ผู้ยืนยัน ${value.finalizedBy}`));safeArray(value.observations).forEach((item)=>previewBox.append(element('div','',`${measurementLabels.get(item.measurementType)||'สัญญาณชีพ'}: ${item.numericValue} ${item.sourceUnit}`)));if(value.generalReport)previewBox.append(element('div','',`รายงานทั่วไป: ${value.generalReport}`));node.append(previewBox,button('ยืนยันและเปิดใช้งาน',async()=>{if(!(await confirmAction('ยืนยันและเปิดใช้งาน',active?'ระบบจะสร้าง Adapter เวอร์ชันใหม่ และเวอร์ชันเดิมยังทำงานจนกว่าจะยืนยันสำเร็จ':'ข้อมูลใหม่จะใช้ mapping ที่ยืนยันแล้วเท่านั้น')))return;const dialog=doc.getElementById('integrationClientDetailDialog');setBusy(dialogParts(dialog).body,true);try{const draft=await send(buildAdapterDraftRequest(clientId,sample.sampleId,adapterRulesFromSelection(sample,selections)));await send(buildAdapterActivateRequest(clientId,sample.sampleId,draft.adapter.adapterProfileId));state.feedback={tone:'success',text:`เปิดใช้งาน Adapter Version ${draft.adapter.version} แล้ว`};await refreshIntegrationDetail();}catch(error){showDialogError(dialog,errorMessage(error));setBusy(dialogParts(dialog).body,false);}},''));}
+      return node;
     }
     function pager(pagination, onPage) {
       const actions = element('div', 'care-ops__pager');
@@ -469,7 +520,8 @@
       const warning = element('div','care-ops__warning','ระบบใช้เฉพาะชื่อ–นามสกุลเต็มที่ตรงกัน ไม่ใช้ห้อง โทรศัพท์ การจับคู่คล้าย หรือ AI เมื่อเรียนรู้สำเร็จ รหัสภายนอกจะเป็นข้อมูลอ้างอิงหลัก ข้อมูลที่ตีตกแล้วไม่สามารถกู้คืนจาก PHIMOR ได้ หากต้องการข้อมูลย้อนหลัง ต้องให้ระบบต้นทางส่งใหม่หลังแก้ไข');
       policy.append(mode.label,unresolved.label,group.label,warning,button('บันทึกนโยบาย',()=>detailAction(buildIdentityPolicyRequest(clientId,{identityResolutionMode:mode.control.value,unresolvedEventPolicy:unresolved.control.value,familyGroupRequirement:group.control.value}),'บันทึกนโยบายการระบุตัวตนแล้ว',{confirmTitle:'ยืนยันนโยบายการรับข้อมูล',confirmMessage:'นโยบายนี้มีผลกับ event ใหม่ ข้อมูลที่ถูกตีตกจะไม่ถูกเก็บใน PHIMOR'}),''));
 
-      const centerMappings = section('7. การจับคู่ที่ระบบเรียนรู้แล้ว · ศูนย์', 'การเชื่อมรหัสศูนย์ภายนอก: รหัสที่เรียนรู้แล้วเป็นข้อมูลอ้างอิงหลัก การแก้ไขใช้ขั้นสูงโดยปิดรายการเดิมก่อน');
+      const adapterSection=renderAdapterSection(clientId);
+      const centerMappings = section('8. การจับคู่ที่ระบบเรียนรู้แล้ว · ศูนย์', 'การเชื่อมรหัสศูนย์ภายนอก: รหัสที่เรียนรู้แล้วเป็นข้อมูลอ้างอิงหลัก การแก้ไขใช้ขั้นสูงโดยปิดรายการเดิมก่อน');
       const centerSearch=input('ค้นหา External Center ID',{maxLength:120,value:state.detail.centerSearch||'',placeholder:'ค้นหารหัสศูนย์ภายนอก'});centerSearch.control.addEventListener('change',()=>{state.detail.centerSearch=centerSearch.control.value.slice(0,120);refreshIntegrationDetail({centerPage:1});});centerMappings.append(centerSearch.label);
       const centerMapForm = element('div','care-ops__inline-form'); const externalCenter = input('External Center ID',{required:true,maxLength:160,placeholder:'VENDOR_CENTER_01'});
       const scopedCenter = selectField('PHIMOR Center',[{value:'',label:'เลือกศูนย์'},...safeArray(client.centers).map((item)=>({value:item.centerId,label:item.name||'ไม่ระบุชื่อ',disabled:item.status!=='active'}))]);
@@ -477,7 +529,7 @@
       safeArray(state.detail.centerMappings).forEach((item)=>{const row=element('div','care-ops__managed-row');const meta=element('div');const source=item.mappingSource==='learned_automatically'?'เรียนรู้อัตโนมัติ':'ผู้ดูแลกำหนด';meta.append(element('strong','',item.externalCenterId),element('div','care-ops__meta',`${item.centerName||'ไม่ระบุศูนย์'} · ${item.status} · ${source} · สร้าง ${formatDate(item.createdAt)} · ใช้ล่าสุด ${formatDate(item.lastUsedAt||item.updatedAt)}${item.deactivatedAt?` · ปิด ${formatDate(item.deactivatedAt)}`:''}`));row.append(meta);if(item.status==='active')row.append(button('ปิดการเชื่อม',()=>detailAction(buildDeactivateCenterMappingRequest(clientId,item.externalCenterId),'ปิดการเชื่อมรหัสศูนย์แล้ว',{confirmTitle:'ปิดการเชื่อมรหัสศูนย์',confirmMessage:'event ใหม่จากรหัสศูนย์นี้จะไม่ผ่านการตรวจสอบ'}),'secondary'));centerMappings.append(row);});
       if(state.detail.centerPagination)centerMappings.append(pager(state.detail.centerPagination,(page)=>refreshIntegrationDetail({centerPage:page})));
 
-      const subjectMappings = section('8. การจับคู่ที่ระบบเรียนรู้แล้ว · ผู้พัก', 'การเชื่อมรหัสผู้พักภายนอก: ระบบเรียนรู้จากชื่อ–นามสกุลเต็มที่ตรงกันเท่านั้น ไม่ใช้ห้อง โทรศัพท์ หรือ AI');
+      const subjectMappings = section('9. การจับคู่ที่ระบบเรียนรู้แล้ว · ผู้พัก', 'การเชื่อมรหัสผู้พักภายนอก: ระบบเรียนรู้จากชื่อ–นามสกุลเต็มที่ตรงกันเท่านั้น ไม่ใช้ห้อง โทรศัพท์ หรือ AI');
       const subjectSearch=input('ค้นหา External Resident ID',{maxLength:120,value:state.detail.subjectSearch||'',placeholder:'ค้นหารหัสผู้พักภายนอก'});subjectSearch.control.addEventListener('change',()=>{state.detail.subjectSearch=subjectSearch.control.value.slice(0,120);refreshIntegrationDetail({subjectPage:1});});subjectMappings.append(subjectSearch.label);
       const activeMappings=safeArray(state.detail.centerMappings).filter((item)=>item.status==='active');
       const extCenterSelect=selectField('External Center ID',[{value:'',label:'เลือกการเชื่อมศูนย์'},...activeMappings.map((item)=>({value:item.externalCenterId,label:`${item.externalCenterId} → ${item.centerName||'ศูนย์'}`}))],state.detail.selectedExternalCenter||'');
@@ -488,8 +540,8 @@
       safeArray(state.detail.subjectMappings).forEach((item)=>{const row=element('div','care-ops__managed-row');const meta=element('div');const source=item.mappingSource==='learned_automatically'?'เรียนรู้อัตโนมัติ':'ผู้ดูแลกำหนด';meta.append(element('strong','',`${item.externalCenterId} · ${item.externalResidentId}`),element('div','care-ops__meta',`${item.centerName||'ไม่ระบุศูนย์'} · ${item.residentDisplayName||'ยังไม่เชื่อมผู้พัก'}${item.room?` · ห้อง ${item.room}`:''} · ${item.mappingStatus} · ${source} · Care Profile ${item.careProfileReady?'พร้อม':'ยังไม่พร้อม'} · ใช้ล่าสุด ${formatDate(item.lastUsedAt||item.updatedAt)}`));row.append(meta);if(item.mappingStatus!=='inactive')row.append(button('ปิดการเชื่อม',()=>detailAction(buildDeactivateSubjectMappingRequest(clientId,item.externalCenterId,item.externalResidentId),'ปิดการเชื่อมรหัสผู้พักแล้ว',{confirmTitle:'ปิดการเชื่อมรหัสผู้พัก',confirmMessage:'การเชื่อมนี้จะไม่ใช้กับ event ใหม่ ข้อมูลประวัติเดิมจะไม่ถูกลบ'}),'secondary'));subjectMappings.append(row);});
       if(state.detail.subjectPagination)subjectMappings.append(pager(state.detail.subjectPagination,(page)=>refreshIntegrationDetail({subjectPage:page})));
 
-      const readiness=section('9. ความพร้อมใช้งาน','รายการนี้เป็นข้อมูลช่วยตรวจสอบ สิทธิ์จริงยังบังคับจาก status, scope นโยบาย และ mapping ที่ backend');readiness.append(renderReadiness(client.readiness));
-      body.replaceChildren(info,status,scopes,events,credentials,policy,centerMappings,subjectMappings,readiness);
+      const readiness=section('10. ความพร้อมใช้งาน','รายการนี้เป็นข้อมูลช่วยตรวจสอบ สิทธิ์จริงยังบังคับจาก status, scope นโยบาย และ mapping ที่ backend');readiness.append(renderReadiness(client.readiness));
+      body.replaceChildren(info,status,scopes,events,credentials,policy,adapterSection,centerMappings,subjectMappings,readiness);
     }
     function renderIntegrations() {
       const header = element('div','care-ops__directory-tools');
@@ -706,6 +758,7 @@
     buildClientStatusRequest, buildIntegrationDirectoryRequest, buildCenterScopeRequest, buildEventScopeRequest, buildCredentialRequest,
     buildCenterMappingListRequest, buildCenterMappingRequest, buildDeactivateCenterMappingRequest,
     buildSubjectMappingListRequest, buildSubjectMappingRequest, buildDeactivateSubjectMappingRequest,
-    buildIdentityPolicyRequest, buildAlertStatusRequest,
+    buildIdentityPolicyRequest, buildAlertStatusRequest,ADAPTER_EVENT_TYPE,buildAdapterCaptureRequest,
+    buildAdapterSampleRequest,buildAdapterStatusRequest,buildAdapterPreviewRequest,buildAdapterDraftRequest,buildAdapterActivateRequest,
     createOneTimeSecretState, truncateGroupId, mappingConfirmationMessage, createController };
 }));

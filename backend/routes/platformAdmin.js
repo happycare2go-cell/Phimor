@@ -2,6 +2,7 @@ const express = require('express');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { platformService: defaultPlatformService } = require('../services/platformService');
 const { integrationEventService: defaultIntegrationEventService } = require('../services/integrationEventService');
+const { integrationAdapterService: defaultIntegrationAdapterService } = require('../services/integrationAdapterService');
 const { PlatformError } = require('../domain/platform');
 
 function serviceFor(req) {
@@ -10,6 +11,10 @@ function serviceFor(req) {
 
 function eventServiceFor(req) {
   return req.app.locals.integrationEventService || defaultIntegrationEventService;
+}
+
+function adapterServiceFor(req) {
+  return req.app.locals.integrationAdapterService || defaultIntegrationAdapterService;
 }
 
 function actorFor(req) {
@@ -345,6 +350,42 @@ function createPlatformAdminRouter() {
       externalResidentId: req.params.externalResidentId,
       actorReference,
     }) });
+  }));
+
+  router.post('/integration-clients/:integrationClientId/adapter-capture', platformAction(async (req, res, service, actorReference) => {
+    const body=req.body||{};assertBodyKeys(body,['targetEventType']);
+    res.status(201).json(await adapterServiceFor(req).startCapture({
+      integrationClientId:req.params.integrationClientId,targetEventType:body.targetEventType,actorReference,
+    }));
+  }));
+
+  router.get('/integration-clients/:integrationClientId/adapter-samples/latest', platformAction(async (req, res, service, actorReference) => {
+    res.json(await adapterServiceFor(req).getLatestSample({
+      integrationClientId:req.params.integrationClientId,targetEventType:req.query.targetEventType,actorReference,
+    }));
+  }));
+
+  router.put('/integration-clients/:integrationClientId/adapter-draft', platformAction(async (req, res, service, actorReference) => {
+    const body=req.body||{};assertBodyKeys(body,['sampleId','mappingRules']);
+    res.status(201).json(await adapterServiceFor(req).createDraft({integrationClientId:req.params.integrationClientId,
+      sampleId:body.sampleId,mappingRules:body.mappingRules,actorReference}));
+  }));
+
+  router.post('/integration-clients/:integrationClientId/adapter-preview', platformAction(async (req, res) => {
+    const body=req.body||{};assertBodyKeys(body,['sampleId','adapterProfileId','mappingRules']);
+    res.json(await adapterServiceFor(req).previewAdapter({integrationClientId:req.params.integrationClientId,
+      sampleId:body.sampleId,adapterProfileId:body.adapterProfileId||null,mappingRules:body.mappingRules||null}));
+  }));
+
+  router.post('/integration-clients/:integrationClientId/adapter-activate', platformAction(async (req, res, service, actorReference) => {
+    const body=req.body||{};assertBodyKeys(body,['sampleId','adapterProfileId']);
+    res.json(await adapterServiceFor(req).activateAdapter({integrationClientId:req.params.integrationClientId,
+      sampleId:body.sampleId,adapterProfileId:body.adapterProfileId,actorReference}));
+  }));
+
+  router.get('/integration-clients/:integrationClientId/adapter-status', platformAction(async (req, res) => {
+    res.json(await adapterServiceFor(req).getAdapterStatus({integrationClientId:req.params.integrationClientId,
+      targetEventType:req.query.targetEventType}));
   }));
 
   return router;

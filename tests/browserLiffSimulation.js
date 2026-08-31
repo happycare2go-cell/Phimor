@@ -43,6 +43,8 @@ const MEDICATION_EDITOR_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'lif
 const PHARMACIST_CONSOLE_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'pharmacist', 'console.js'), 'utf8');
 const PHARMACIST_CONSOLE_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'pharmacist', 'console.css'), 'utf8');
 const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.js'), 'utf8');
+const ADMIN_CARE_OPERATIONS_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.css'), 'utf8');
+const FIELD_PICKER_ADAPTER_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'field-picker-adapter-ui.css'), 'utf8');
 const ADMIN_EXCEPTION_QUEUE_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'exception-queue-ui.js'), 'utf8');
 const APP_SHELL_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.js'), 'utf8');
 const APP_SHELL_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.css'), 'utf8');
@@ -77,7 +79,9 @@ function localHtml(name) {
     .replace('<link rel="stylesheet" href="../shared/medication-editor.css">', `<style>${MEDICATION_EDITOR_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./console.css">', `<style>${PHARMACIST_CONSOLE_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./lab-results-ui.css">', `<style>${FAMILY_LAB_RESULTS_CSS}</style>`)
-    .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`);
+    .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./care-operations-ui.css">', `<style>${ADMIN_CARE_OPERATIONS_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./field-picker-adapter-ui.css">', `<style>${FIELD_PICKER_ADAPTER_CSS}</style>`);
 }
 
 async function mockBackend(page, handler) {
@@ -789,6 +793,17 @@ async function adminCareOperationsJourney(browser) {
     if (url.pathname === '/api/admin/platform/centers/CTR-A/capabilities') return {capabilities:[{centerId:'CTR-A',capabilityKey:'vital_signs_v1',enabled:true},{centerId:'CTR-A',capabilityKey:'daily_care_v1',enabled:false}]};
     if (url.pathname === '/api/admin/platform/organizations/ORG-A/integration-clients') return {integrationClients:[{integrationClientId:'INT-A',displayName:'Vendor ตัวอย่าง',status:'active'}]};
     if (url.pathname === '/api/admin/platform/integration-clients/INT-A') return {integrationClient:{integrationClientId:'INT-A',displayName:'Vendor ตัวอย่าง',status:'active',sourceSystem:'vendor_demo',organizationId:'ORG-A',centers:[{centerId:'CTR-A',center_id:'CTR-A',name:'ศูนย์ตัวอย่าง',status:'active'}],eventScopes:['care.daily_report.finalized'],credentials:[{status:'active',lastUsedAt:'2026-08-27T08:00:00Z'}],identityResolutionPolicy:{identityResolutionMode:'exact_name_learning',unresolvedEventPolicy:'ignore',familyGroupRequirement:'required_before_ingest'},operationalCounts:{processed:12,ignoredSubjectAmbiguous:2}}};
+    if (url.pathname === '/api/admin/platform/integration-clients/INT-A/adapter-status') return {activeAdapter:null,versions:[]};
+    if (url.pathname === '/api/admin/platform/integration-clients/INT-A/adapter-samples/latest') return {sample:{sampleId:'IADS-1',integrationClientId:'INT-A',targetEventType:'care.daily_report.finalized',status:'captured',sampleExpiresAt:'2026-09-02T08:00:00Z',discoveredFieldCount:4,fields:[
+      {locatorKey:'branch-code',sourcePath:'branch.code',valuePreview:'EXT-C',valueType:'string',selectable:true,suggestedTarget:'subject.externalCenterId'},
+      {locatorKey:'resident-name',sourcePath:'resident.full_name',valuePreview:'คุณยายตัวอย่าง',valueType:'string',selectable:true,suggestedTarget:'subject.displayName'},
+      {locatorKey:'temperature',sourcePath:'vitals[type=temperature].value',valuePreview:'37.2',unitPreview:'C',valueType:'number',selectable:true,suggestedTarget:'vitals.temperature'},
+      {locatorKey:'unused-room',sourcePath:'resident.room',valuePreview:'A201',valueType:'string',selectable:true,suggestedTarget:null},
+    ],targetFields:[
+      {id:'subject.externalCenterId',label:'รหัสสาขาต้นทาง',section:'ข้อมูลผู้พัก',type:'identifier',required:true},
+      {id:'subject.displayName',label:'ชื่อ-นามสกุลผู้พัก',section:'ข้อมูลผู้พัก',type:'text',required:false},
+      {id:'vitals.temperature',label:'อุณหภูมิ',section:'สัญญาณชีพ',type:'number',measurementType:'temperature',unit:'Cel',required:false},
+    ]}};
     if (url.pathname === '/api/admin/platform/integration-clients/INT-A/external-centers') return {items:[{externalCenterId:'EXT-C',centerId:'CTR-A',centerName:'ศูนย์ตัวอย่าง',status:'active',mappingSource:'learned_automatically',createdAt:'2026-08-27T07:00:00Z',lastUsedAt:'2026-08-27T08:00:00Z'}],pagination:{page:1,totalPages:1,total:1}};
     if (url.pathname === '/api/admin/platform/integration-clients/INT-A/external-subjects') return {items:[{externalCenterId:'EXT-C',externalResidentId:'EXT-R',centerName:'ศูนย์ตัวอย่าง',residentDisplayName:'คุณยายตัวอย่าง',mappingStatus:'mapped',mappingSource:'learned_automatically',careProfileReady:true,createdAt:'2026-08-27T07:00:00Z',lastUsedAt:'2026-08-27T08:00:00Z'}],pagination:{page:1,totalPages:1,total:1}};
     if (url.pathname === '/api/admin/platform/integration-identity-alerts') return {items:[{alertId:'IIA-1',integrationClientId:'INT-A',sourceSystemDisplayName:'Vendor ตัวอย่าง',normalizedDisplayName:'คุณยาย ตัวอย่าง',candidateCenterNames:['ศูนย์ตัวอย่างชื่อยาวสำหรับตรวจสอบการตัดบรรทัด','ศูนย์ตัวอย่างสาขาที่สอง'],candidateCount:2,occurrenceCount:3,status:'open',lastSeenAt:'2026-08-27T08:00:00Z'}]};
@@ -810,7 +825,23 @@ async function adminCareOperationsJourney(browser) {
   await page.locator('#exceptionQueueRefresh').click();await page.waitForFunction(()=>document.querySelector('#exceptionQueueContent').textContent.includes('กลุ่ม LINE ไม่ตรงกัน'));
   await page.getByRole('button',{name:'ตรวจสอบกลุ่ม'}).click();await page.waitForFunction(()=>document.querySelector('#careOperationsContent').textContent.includes('MISMATCH'));assert.match(await page.locator('#careOperationsContent').textContent(), /MISMATCH/);
   await page.getByRole('button',{name:'ตรวจสอบอีกครั้ง'}).click(); await page.waitForFunction(() => document.querySelector('#careOperationsContent').textContent.includes('VERIFIED')); assert.equal(reconciled,1);
-  assert.doesNotMatch(await page.locator('#careOperationsPanel').textContent(), /send anyway|ส่งต่อไปเลย/i); await page.close();
+  assert.doesNotMatch(await page.locator('#careOperationsPanel').textContent(), /send anyway|ส่งต่อไปเลย/i);
+  await page.locator('[data-shell-destination="integrations"]').first().click();
+  await page.getByRole('button',{name:'จัดการระบบเชื่อมต่อ'}).click();
+  await page.waitForFunction(()=>document.querySelector('#integrationClientDetailDialog')?.textContent.includes('การจับคู่ข้อมูล'));
+  const mobileAdapter=await page.locator('#integrationClientDetailDialog').evaluate((dialog)=>({
+    overflow:dialog.scrollWidth<=dialog.clientWidth,
+    widths:[dialog.scrollWidth,dialog.clientWidth],
+    offenders:[...dialog.querySelectorAll('*')].filter((item)=>item.scrollWidth>item.clientWidth+1).slice(0,8).map((item)=>({tag:item.tagName,className:item.className,scrollWidth:item.scrollWidth,clientWidth:item.clientWidth,text:item.textContent?.trim().slice(0,40)})),
+    fieldFirst:dialog.textContent.includes('รหัสสาขาต้นทาง')&&dialog.textContent.includes('คุณยายตัวอย่าง'),
+    noJsonRequired:!dialog.textContent.includes('กรอก JSONPath'),
+    minimumControl:Math.min(...[...dialog.querySelectorAll('select,button')].filter((item)=>item.getClientRects().length).map((item)=>item.getBoundingClientRect().height)),
+  }));
+  assert.deepEqual({overflow:mobileAdapter.overflow,fieldFirst:mobileAdapter.fieldFirst,noJsonRequired:mobileAdapter.noJsonRequired,minimumControl:Math.floor(mobileAdapter.minimumControl)},{overflow:true,fieldFirst:true,noJsonRequired:true,minimumControl:44},JSON.stringify(mobileAdapter));
+  await page.setViewportSize({width:1280,height:800});
+  assert.equal(await page.locator('#integrationClientDetailDialog').evaluate((dialog)=>dialog.scrollWidth<=dialog.clientWidth),true);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.close();
 }
 
 async function unifiedHealthReportJourney(browser) {

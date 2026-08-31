@@ -21,6 +21,7 @@ test.after(async () => { await new Promise((resolve) => server.close(resolve)); 
 test.beforeEach(async () => {
   db.resetAll(); sequence = 0;
   delete app.locals.platformOperationalLogger;
+  delete app.locals.integrationAdapterService;
   repository = createMemoryPlatformRepository();
   let randomSequence = 1;
   service = createPlatformService({
@@ -120,6 +121,16 @@ test('System Admin commissioning routes create suspended client, manage status, 
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'active'})});assert.equal(response.status,200);assert.equal((await response.json()).integrationClient.status,'active');
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:admin,body:JSON.stringify({status:'suspended',organizationId:'forged'})});assert.equal(response.status,400);assert.equal((await response.json()).errorCode,'UNKNOWN_REQUEST_FIELD');
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:{'X-Line-User-Id':'U-CENTER'},body:JSON.stringify({status:'active'})});assert.equal(response.status,401);
+});
+
+test('Field Picker capture is a purpose-built System Admin action with audited actor identity',async()=>{
+  const calls=[];app.locals.integrationAdapterService={async startCapture(input){calls.push(input);return{sample:{sampleId:'IADS-1',status:'waiting'},message:'commissioning only'};}};
+  let response=await call('/api/admin/platform/integration-clients/INT-A/adapter-capture',{method:'POST',body:JSON.stringify({targetEventType:'care.daily_report.finalized'})});
+  assert.equal(response.status,401);assert.equal(calls.length,0);
+  response=await call('/api/admin/platform/integration-clients/INT-A/adapter-capture',{method:'POST',headers:admin,body:JSON.stringify({targetEventType:'care.daily_report.finalized'})});
+  assert.equal(response.status,201);assert.deepEqual(calls,[{integrationClientId:'INT-A',targetEventType:'care.daily_report.finalized',actorReference:'admin:key'}]);
+  response=await call('/api/admin/platform/integration-clients/INT-A/adapter-capture',{method:'POST',headers:admin,body:JSON.stringify({targetEventType:'care.daily_report.finalized',samplePayload:{secret:'must-not-pass'}})});
+  assert.equal(response.status,400);assert.equal(calls.length,1);
 });
 
 test('unexpected Platform database errors are logged safely while the client receives a generic 500', async()=>{
