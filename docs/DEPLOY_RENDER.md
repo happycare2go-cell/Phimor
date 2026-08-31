@@ -92,7 +92,7 @@ of application startup because no numbered migration currently owns them:
 It also ensures expression indexes for common legacy lookups on Center,
 staff, Resident, Care Profile, Appointment, Transport, notification, and
 access-request fields. These names do not overlap the relational tables owned
-by migrations 0001–0015 (`vitals` is the legacy store; canonical Vital data is
+by migrations 0001–0017 (`vitals` is the legacy store; canonical Vital data is
 in `vital_sign_sets`/`vital_sign_observations`). Removing this startup DDL now
 would break installations whose legacy tables were bootstrapped by it.
 
@@ -100,9 +100,15 @@ Remaining risk: the backend database role still needs schema DDL privileges
 and startup can mutate those legacy objects. This is temporary compatibility
 debt. A future reviewed migration must take ownership of every legacy table and
 index before startup DDL can be removed. Numbered migrations remain the only
-supported mechanism for migrations 0001–0015. Migration 0014 must precede the
+supported mechanism for migrations 0001–0017. Migration 0014 must precede the
 multi-instance backend deployment because rate limiting intentionally fails
 closed when its shared table is unavailable.
+
+Migration 0017 creates the Field Picker Adapter profile and temporary-sample
+tables. Before deploying a backend that imports the adapter service, hold
+Auto-Deploy, verify a current backup and migration status, run the SELECT-only
+`npm run preflight:integration-adapter-v1`, apply 0017, and verify final migration
+status. Deploy the backend and System Admin LIFF only after the schema is current.
 
 ## Stop conditions
 

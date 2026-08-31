@@ -203,7 +203,7 @@ test('Center switch invalidates old state before authoritative selection and gua
 
 test('Phase 1 introduces no migration, environment variable or Family LIFF dependency', () => {
   const migrationNames = fs.readdirSync(path.join(root, 'backend', 'migrations')).filter((name) => /^\d{4}_.*\.js$/.test(name)).sort();
-  assert.equal(migrationNames.at(-1), '0016_add_center_family_linking_integrity.js');
+  assert.ok(migrationNames.includes('0016_add_center_family_linking_integrity.js'));
   assert.doesNotMatch(shellJs + shellCss, /process\.env|LIFF_ID|CareProfile|Resident/);
   assert.match(centerHtml, /\.\.\/shared\/app-shell\.js/);
   assert.match(adminHtml, /\.\.\/shared\/app-shell\.js/);

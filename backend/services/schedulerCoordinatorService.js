@@ -16,6 +16,7 @@ const JOB_LOCK_KEYS = Object.freeze({
   centerStaffReconciliation: 'phimor:scheduler:center-staff-reconciliation:v1',
   sourceImageRetention: 'phimor:scheduler:source-image-retention:v1',
   sharedRateLimitCleanup: 'phimor:scheduler:shared-rate-limit-cleanup:v1',
+  integrationAdapterRetention: 'phimor:scheduler:integration-adapter-retention:v1',
 });
 
 function safeErrorCode(error) {

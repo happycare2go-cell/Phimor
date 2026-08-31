@@ -25,6 +25,7 @@ const { createVitalSignsRouter } = require('./routes/vitalSigns');
 const { createDailyCareRouter } = require('./routes/dailyCare');
 const { createIntegrationEventsRouter } = require('./routes/integrationEvents');
 const { integrationEventService } = require('./services/integrationEventService');
+const { integrationAdapterService } = require('./services/integrationAdapterService');
 const reminderService = require('./services/reminderService');
 const cardService = require('./services/cardService');
 const transportService = require('./services/transportService');
@@ -180,6 +181,7 @@ function startScheduler() {
   scheduledTasks.push(cron.schedule('15 2 * * *', () => run('centerStaffReconciliation', () => require('./services/centerService').reconcileAllCenterStaff()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('45 2 * * *', () => run('sourceImageRetention', () => require('./services/retentionService').purgeExpiredSourceImages()), { timezone: TZ }));
   scheduledTasks.push(cron.schedule('10 * * * *', () => run('sharedRateLimitCleanup', () => sharedRateLimiter.cleanupExpired()), { timezone: TZ }));
+  scheduledTasks.push(cron.schedule('25 * * * *', () => run('integrationAdapterRetention', () => integrationAdapterService.purgeExpired()), { timezone: TZ }));
   // Staging only: run time-sensitive jobs every minute with an optional clock
   // offset. Production never enters this branch.
   if (process.env.STAGING_MODE === 'true') {

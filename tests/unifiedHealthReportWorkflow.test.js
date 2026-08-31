@@ -116,8 +116,9 @@ test('ordinary presentation does not expose internal identity or external integr
   assert.doesNotMatch(familyHtml,/Care Profile ID|Resident ID|Integration Client ID|Group ID/);
 });
 
-test('no schema migration 0017 is introduced for the unified workflow',()=>{
+test('later Adapter migration remains isolated from the unified clinical workflow',()=>{
   const migrationNames=fs.readdirSync(path.join(root,'backend','migrations')).filter((name)=>/^\d{4}_.+\.js$/.test(name)).sort();
-  assert.equal(migrationNames.at(-1),'0016_add_center_family_linking_integrity.js');
-  assert.equal(migrationNames.some((name)=>name.startsWith('0017_')),false);
+  assert.equal(migrationNames.at(-1),'0017_create_integration_field_picker_adapters.js');
+  const adapterMigration=fs.readFileSync(path.join(root,'backend','migrations',migrationNames.at(-1)),'utf8');
+  assert.doesNotMatch(adapterMigration,/ALTER TABLE (?:daily_care|vital|care_profiles|residents)/i);
 });

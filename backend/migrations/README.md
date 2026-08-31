@@ -1,9 +1,10 @@
 # PHIMOR database migrations
 
-The current code sequence ends at `0016_add_center_family_linking_integrity.js`. The canonical
+The current code sequence ends at `0017_create_integration_field_picker_adapters.js`. The canonical
 tail is `0013_add_consultation_payment_recovery.js`, then
 `0014_create_shared_rate_limit_windows.js`, `0015_add_plus_payment_v1.js`, then
-`0016_add_center_family_linking_integrity.js`.
+`0016_add_center_family_linking_integrity.js`, then
+`0017_create_integration_field_picker_adapters.js`.
 Plus payment must remain disabled until migration 0015 is applied after every
 earlier pending migration and the compatible backend is ready to deploy.
 
@@ -11,6 +12,11 @@ Migration 0016 adds only expression/partial indexes to the legacy JSONB
 `accessRequests` and `residents` tables. It performs explicit duplicate
 preflight checks and stops without changing evidence if token, link-request,
 or active Care Profile/Resident invariants are already violated.
+
+Migration 0017 adds only the versioned Integration Adapter profile and temporary
+commissioning-sample tables. Run `npm run preflight:integration-adapter-v1`
+before applying it. The preflight is SELECT-only and blocks a missing Integration
+foundation or a partial pre-existing Adapter schema instead of choosing a repair.
 
 Migrations are explicit operations. The application does not run them during startup.
 
