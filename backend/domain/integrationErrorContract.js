@@ -15,6 +15,7 @@ const PUBLIC_ERROR_DEFINITIONS = Object.freeze({
   RATE_LIMITED: Object.freeze({ message:'เรียกใช้งานถี่เกินไป กรุณารอตาม Retry-After', retryable:true }),
   TEMPORARY_PROCESSING_UNAVAILABLE: Object.freeze({ message:'ระบบยังประมวลผล event ไม่สำเร็จและจะลองใหม่ตามนโยบาย', retryable:true }),
   PROCESSING_RETRY_EXHAUSTED: Object.freeze({ message:'ระบบประมวลผล event ไม่สำเร็จภายในจำนวนครั้งที่กำหนด', retryable:false }),
+  ADAPTER_SOURCE_CHANGED: Object.freeze({ message:'รูปแบบข้อมูลต้นทางเปลี่ยน กรุณาให้ผู้ดูแลรับข้อมูลตัวอย่างใหม่', retryable:false }),
 });
 
 const INTERNAL_CODE_MAP = Object.freeze({
@@ -38,6 +39,11 @@ const INTERNAL_CODE_MAP = Object.freeze({
   INTEGRATION_CREDENTIAL_REVOKED:'INVALID_CREDENTIAL',
   INTEGRATION_CREDENTIAL_EXPIRED:'INVALID_CREDENTIAL',
   RATE_LIMITED:'RATE_LIMITED',
+  ADAPTER_SOURCE_CHANGED:'ADAPTER_SOURCE_CHANGED',
+  ADAPTER_UNIT_UNSUPPORTED:'ADAPTER_SOURCE_CHANGED',
+  ADAPTER_VALUE_INVALID:'ADAPTER_SOURCE_CHANGED',
+  ADAPTER_DATE_INVALID:'ADAPTER_SOURCE_CHANGED',
+  ADAPTER_DATETIME_INVALID:'ADAPTER_SOURCE_CHANGED',
 });
 
 function cleanCode(value) {

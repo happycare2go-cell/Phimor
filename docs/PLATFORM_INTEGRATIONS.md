@@ -67,6 +67,24 @@ Authorization: Bearer <one-time-issued-integration-credential>
 Content-Type: application/json
 ```
 
+### Optional Field Picker Adapter V1
+
+Canonical clients continue to send the strict envelope below without any new
+configuration. For a commissioned client whose native payload cannot be changed,
+System Admin may open a 30-minute capture window under **ระบบเชื่อมต่อ → Integration
+Client detail → การจับคู่ข้อมูล**. Authentication, scope, request size, and rate
+limits run before the next payload is captured. Capture never runs identity
+learning, creates clinical data, enqueues a notification, or contacts LINE.
+
+The operator maps PHIMOR fields to temporary sample values and confirms a preview.
+Only source locators are stored in the immutable active adapter; unmapped fields
+are ignored. Runtime transformation occurs before this document's strict
+`normalizeEnvelope()` contract, with no AI or heuristic remapping. Missing mapped
+fields, type drift, or unfamiliar units fail closed as `ADAPTER_SOURCE_CHANGED`.
+Samples expire within 24 hours and their payload is cleared immediately after
+activation. V1 supports only `care.daily_report.finalized`; `care.vitals.recorded`
+and all identity, GroupBinding, idempotency, and finalized-record rules are unchanged.
+
 The controlled HHS sender profile, exact snake-case schema, field-mapping
 worksheet, credential plan, and production checklist are documented in
 [`HHS_PILOT_V1_CONTRACT.md`](HHS_PILOT_V1_CONTRACT.md) and
