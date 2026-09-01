@@ -204,7 +204,8 @@ function createPlatformAdminRouter() {
 
   router.get('/integration-clients', platformAction(async (req, res, service) => {
     res.json(await service.listIntegrationClientDirectory({
-      search:req.query.search, status:req.query.status, page:req.query.page, limit:req.query.limit,
+      search:req.query.search, status:req.query.status, view:req.query.view,
+      page:req.query.page, limit:req.query.limit,
     }));
   }));
 

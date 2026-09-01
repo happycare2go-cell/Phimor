@@ -132,7 +132,7 @@ function createPlatformService(overrides = {}) {
     const safeMetadata = {};
     for (const key of ['capabilityKey', 'enabled', 'clientCode', 'clientStatus', 'eventType', 'externalCenterId',
       'externalResidentId', 'mappingStatus', 'mappingSource', 'previousOrganizationId', 'credentialId', 'overlapSeconds',
-      'identityResolutionMode', 'unresolvedEventPolicy', 'familyGroupRequirement']) {
+      'identityResolutionMode', 'unresolvedEventPolicy', 'familyGroupRequirement', 'previousStatus', 'revokedAt']) {
       if (metadata[key] !== undefined && metadata[key] !== null) safeMetadata[key] = metadata[key];
     }
     return repository.insertAuditEvent({
@@ -454,9 +454,19 @@ function createPlatformService(overrides = {}) {
     if (status && !INTEGRATION_CLIENT_STATUSES.includes(status)) {
       throw new PlatformError('INVALID_CLIENT_STATUS_FILTER', 'ตัวกรองสถานะ Integration Client ไม่ถูกต้อง', 400);
     }
+    const view = String(input.view || '').trim();
+    if (view && !['current', 'archived'].includes(view)) {
+      throw new PlatformError('INVALID_INTEGRATION_DIRECTORY_VIEW', 'มุมมองรายการระบบเชื่อมต่อไม่ถูกต้อง', 400);
+    }
+    if (view === 'current' && status === 'revoked') {
+      throw new PlatformError('INVALID_INTEGRATION_DIRECTORY_FILTER', 'รายการปัจจุบันไม่รวมระบบเชื่อมต่อที่เพิกถอนแล้ว', 400);
+    }
+    if (view === 'archived' && status && status !== 'revoked') {
+      throw new PlatformError('INVALID_INTEGRATION_DIRECTORY_FILTER', 'ประวัติการเชื่อมต่อแสดงเฉพาะระบบที่เพิกถอนแล้ว', 400);
+    }
     const page = Math.max(1, Number(input.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(input.limit) || 20));
-    return { search, status:status || null, page, limit, offset:(page - 1) * limit };
+    return { search, status:status || null, view:view || null, page, limit, offset:(page - 1) * limit };
   }
 
   function integrationDirectoryProjection(row) {
@@ -487,6 +497,7 @@ function createPlatformService(overrides = {}) {
       mappingReadiness:{ activeCenters:counts.activeCenterMappings, mappedResidents:counts.mappedSubjects,
         state:mappingReady ? 'ready' : 'not_ready' },
       lastUsedAt:row.last_used_at || null,
+      revokedAt:row.revoked_at || null,
       warningCount:counts.warnings,
       readiness:{ state:readinessState, configurationComplete,
         label:readinessState === 'ready' ? 'พร้อมรับข้อมูล' : readinessState === 'suspended' ? 'ระงับการใช้งาน'
@@ -537,7 +548,7 @@ function createPlatformService(overrides = {}) {
       }
       await audit('integration.client_revoked', actorReference, {
         organizationId: client.organization_id, integrationClientId,
-      });
+      }, { previousStatus:client.status, revokedAt:updated.revoked_at });
       return clientProjection(updated);
     });
   }
@@ -560,7 +571,7 @@ function createPlatformService(overrides = {}) {
 
   async function removeClientCenterScope({ integrationClientId, centerId, actorReference }) {
     return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
-      const client = await requireClient(integrationClientId, { active: false });
+      const client = await requireConfigurableClient(integrationClientId);
       const mappingDependencies = await repository.findActiveExternalCenterMappingByCenter(integrationClientId, centerId);
       if (mappingDependencies?.status === 'active') {
         throw new PlatformError('CENTER_SCOPE_HAS_MAPPING', 'ต้องปิด external Center mapping ก่อน', 409);
@@ -588,7 +599,7 @@ function createPlatformService(overrides = {}) {
   async function removeClientEventScope({ integrationClientId, eventType, actorReference }) {
     return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
       assertEventType(eventType);
-      const client = await requireClient(integrationClientId, { active: false });
+      const client = await requireConfigurableClient(integrationClientId);
       await repository.removeClientEventScope(integrationClientId, eventType);
       await audit('integration.event_scope_removed', actorReference, {
         organizationId: client.organization_id, integrationClientId,
@@ -657,7 +668,7 @@ function createPlatformService(overrides = {}) {
   }
 
   async function revokeCredential({ integrationClientId, credentialId, actorReference }) {
-    const client = await requireClient(integrationClientId, { active: false });
+    const client = await requireConfigurableClient(integrationClientId);
     return runTransaction(`integration-client-control:${integrationClientId}`, async () => {
       const credential = await repository.findCredential(credentialId);
       if (!credential || credential.integration_client_id !== integrationClientId) {
@@ -743,7 +754,7 @@ function createPlatformService(overrides = {}) {
   }
 
   async function deactivateExternalCenterMapping({ integrationClientId, externalCenterId, actorReference }) {
-    const client = await requireClient(integrationClientId, { active: false });
+    const client = await requireConfigurableClient(integrationClientId);
     const externalId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
     return runTransaction(`integration-center-mapping:${integrationClientId}:${externalId}`, async () => {
       const mapping = await repository.deactivateExternalCenterMapping(integrationClientId, externalId);
@@ -940,7 +951,7 @@ function createPlatformService(overrides = {}) {
   }
 
   async function deactivateExternalSubjectMapping({ integrationClientId, externalCenterId, externalResidentId, actorReference }) {
-    const client = await requireClient(integrationClientId, { active: false });
+    const client = await requireConfigurableClient(integrationClientId);
     const extCenterId = requiredText(externalCenterId, { code:'EXTERNAL_CENTER_REQUIRED', label:'external Center ID', max:160 });
     const extResidentId = requiredText(externalResidentId, { code:'EXTERNAL_RESIDENT_REQUIRED', label:'external Resident ID', max:160 });
     return runTransaction(`integration-subject-mapping:${integrationClientId}:${extCenterId}:${extResidentId}`, async () => {

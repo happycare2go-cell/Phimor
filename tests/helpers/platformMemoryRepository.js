@@ -2,7 +2,7 @@ function createMemoryPlatformRepository() {
   const state = {
     organizations: [], organizationCenters: [], capabilities: [], clients: [],
     credentials: [], clientCenters: [], eventScopes: [], centerMappings: [],
-    subjectMappings: [], auditEvents: [],
+    subjectMappings: [], integrationEvents: [], auditEvents: [],
   };
   let tick = 0;
   const stamp = () => new Date(Date.UTC(2026, 7, 27, 0, 0, tick++)).toISOString();
@@ -46,16 +46,18 @@ function createMemoryPlatformRepository() {
     async createIntegrationClient(record) { if(state.clients.some((item)=>item.client_code===record.clientCode))throw Object.assign(new Error('duplicate client code'),{code:'23505'});const row={integration_client_id:record.integrationClientId,organization_id:record.organizationId,client_code:record.clientCode,display_name:record.displayName,source_system:record.sourceSystem,status:record.status||'active',created_at:stamp(),updated_at:stamp(),revoked_at:null};state.clients.push(row);return clone(row); },
     async findIntegrationClient(id) { return clone(state.clients.find((row)=>row.integration_client_id===id)); },
     async listIntegrationClients(orgId) { return state.clients.filter((row)=>row.organization_id===orgId).map(clone); },
-    async listIntegrationClientDirectory({search='',status=null,limit=20,offset=0}) {
+    async listIntegrationClientDirectory({search='',status=null,view=null,limit=20,offset=0}) {
       const needle=String(search||'').toLocaleLowerCase('en-US');
-      const rows=state.clients.filter((row)=>(!status||row.status===status)&&(!needle
+      const rows=state.clients.filter((row)=>(!status||row.status===status)
+        &&(!view||(view==='current'&&['active','suspended'].includes(row.status))||(view==='archived'&&row.status==='revoked'))&&(!needle
         ||[row.display_name,row.client_code,row.source_system].some((value)=>String(value||'').toLocaleLowerCase('en-US').includes(needle))))
         .sort((a,b)=>String(a.display_name).localeCompare(String(b.display_name))||String(a.integration_client_id).localeCompare(String(b.integration_client_id)));
       return rows.slice(offset,offset+limit).map((row)=>{const org=state.organizations.find((item)=>item.organization_id===row.organization_id);const credentials=state.credentials.filter((item)=>item.integration_client_id===row.integration_client_id&&item.status==='active');return{...clone(row),organization_name:org?.display_name,organization_status:org?.status,allowed_center_count:state.clientCenters.filter((item)=>item.integration_client_id===row.integration_client_id).length,allowed_event_count:state.eventScopes.filter((item)=>item.integration_client_id===row.integration_client_id).length,active_credential_count:credentials.length,last_used_at:credentials.map((item)=>item.last_used_at).filter(Boolean).sort().at(-1)||null,active_center_mapping_count:state.centerMappings.filter((item)=>item.integration_client_id===row.integration_client_id&&item.status==='active').length,mapped_subject_count:state.subjectMappings.filter((item)=>item.integration_client_id===row.integration_client_id&&item.mapping_status==='mapped').length,warning_count:0,identity_resolution_mode:'manual_mapping_only',total_count:rows.length};});
     },
-    async countIntegrationClientDirectory({search='',status=null}) {
+    async countIntegrationClientDirectory({search='',status=null,view=null}) {
       const needle=String(search||'').toLocaleLowerCase('en-US');
-      return state.clients.filter((row)=>(!status||row.status===status)&&(!needle
+      return state.clients.filter((row)=>(!status||row.status===status)
+        &&(!view||(view==='current'&&['active','suspended'].includes(row.status))||(view==='archived'&&row.status==='revoked'))&&(!needle
         ||[row.display_name,row.client_code,row.source_system].some((value)=>String(value||'').toLocaleLowerCase('en-US').includes(needle)))).length;
     },
     async updateIntegrationClientStatus(id,status) { const row=state.clients.find((item)=>item.integration_client_id===id);if(!row)return null;row.status=status;row.revoked_at=status==='revoked'?stamp():null;row.updated_at=stamp();return clone(row); },

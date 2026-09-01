@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>External Integration Archive Preview</title>
+  <style>
+    :root{font-family:system-ui,"Sarabun",sans-serif;color:#16204a;background:#f5f6fa}
+    body{margin:0}.top{background:#1c2b64;color:#fff;padding:18px 16px}.top h1{margin:0;font-size:22px}
+    .wrap{padding:12px}.card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 2px 12px #14204a18}
+    input,select,button{font:inherit;padding:10px;border:1px solid #ccd1df;border-radius:8px;box-sizing:border-box;min-height:44px}
+    button{background:#1c2b64;color:#fff;border:0}.secondary{background:#eef1fa;color:#1c2b64}.danger{background:#9b2c2c}
+    .muted{color:#667085}dialog{border:0;border-radius:14px}dialog::backdrop{background:#10182899}button:disabled{opacity:.55}
+  </style>
+  <link rel="stylesheet" href="../../liff-app/system-admin/care-operations-ui.css">
+</head>
+<body>
+  <header class="top"><h1>PHIMOR System Admin</h1></header>
+  <main class="wrap"><section class="card care-ops" id="careOperationsPanel" aria-labelledby="careOperationsTitle">
+    <div class="care-ops__header"><div><h2 id="careOperationsTitle">ระบบเชื่อมต่อ</h2><p class="muted">จัดการระบบปัจจุบันและดูประวัติโดยไม่ลบข้อมูลเดิม</p></div></div>
+    <nav class="care-ops__tabs" aria-label="ส่วนงานระบบเชื่อมต่อ"><button type="button" class="care-ops__tab" data-care-ops-tab="integrations" aria-selected="true">ระบบเชื่อมต่อ</button></nav>
+    <div class="care-ops__content" id="careOperationsContent" aria-live="polite"></div>
+  </section></main>
+  <script src="../../liff-app/system-admin/care-operations-ui.js"></script>
+  <script>
+    const organization={organizationId:'ORG-FICTIONAL',displayName:'Fictional Organization',status:'active',organizationType:'external_care_center'};
+    const center={centerId:'CTR-FICTIONAL',organizationId:'ORG-FICTIONAL',name:'Fictional Pilot Center',status:'active'};
+    const clients={
+      'INT-CURRENT':{integrationClientId:'INT-CURRENT',organizationId:'ORG-FICTIONAL',clientCode:'current-vendor',displayName:'Current Vendor',sourceSystem:'Current System',status:'active'},
+      'INT-SUSPENDED':{integrationClientId:'INT-SUSPENDED',organizationId:'ORG-FICTIONAL',clientCode:'paused-vendor',displayName:'Paused Vendor',sourceSystem:'Paused System',status:'suspended'},
+      'INT-ARCHIVED':{integrationClientId:'INT-ARCHIVED',organizationId:'ORG-FICTIONAL',clientCode:'legacy-vendor',displayName:'Legacy Vendor',sourceSystem:'Legacy System',status:'revoked',revokedAt:'2026-08-20T04:30:00Z'},
+    };
+    const detail=(client)=>({...client,organization,organizationName:organization.displayName,centers:[center],eventScopes:['care.daily_report.finalized'],credentials:[{credentialId:`KEY-${client.integrationClientId}`,publicPrefix:'abcd1234',status:client.status==='revoked'?'revoked':'active',createdAt:'2026-07-01T02:00:00Z',revokedAt:client.status==='revoked'?client.revokedAt:null,lastUsedAt:'2026-08-18T08:00:00Z'}],identityResolutionPolicy:{identityResolutionMode:'exact_name_learning',unresolvedEventPolicy:'ignore',familyGroupRequirement:'required_before_ingest'},mappingCounts:{centers:1,activeCenters:1,residents:1,mappedResidents:1},operationalCounts:{processed:24},readiness:{state:client.status,label:client.status==='revoked'?'เพิกถอนแล้ว':client.status==='suspended'?'ระงับการใช้งาน':'พร้อมรับข้อมูล',configurationComplete:client.status!=='revoked',checks:{}}});
+    const summary=(client)=>({...client,organizationName:organization.displayName,allowedCenterCount:1,allowedEventCount:1,activeCredentialCount:client.status==='revoked'?0:1,lastUsedAt:'2026-08-18T08:00:00Z',mappingReadiness:{activeCenters:1,mappedResidents:1},warningCount:0,readiness:{label:client.status==='revoked'?'เพิกถอนแล้ว':client.status==='suspended'?'ระงับการใช้งาน':'พร้อมรับข้อมูล'}});
+    const response=async(path,opt={})=>{
+      const url=new URL(path,location.origin);
+      if(url.pathname==='/api/admin/platform/operations-foundation')return{organizations:[organization],centers:[center],bounded:{}};
+      if(url.pathname==='/api/admin/platform/integration-clients'){
+        const view=url.searchParams.get('view');const query=(url.searchParams.get('search')||'').toLowerCase();
+        const rows=Object.values(clients).filter((client)=>view==='archived'?client.status==='revoked':client.status!=='revoked').filter((client)=>!query||[client.displayName,client.clientCode,client.sourceSystem].some((value)=>value.toLowerCase().includes(query))).map(summary);
+        return{items:rows,pagination:{page:1,limit:20,total:rows.length,totalPages:rows.length?1:0}};
+      }
+      const match=/^\/api\/admin\/platform\/integration-clients\/(INT-[A-Z]+)$/.exec(url.pathname);if(match)return{integrationClient:detail(clients[match[1]])};
+      if(url.pathname.endsWith('/external-centers'))return{items:[{externalCenterId:'EXT-CENTER',centerId:center.centerId,centerName:center.name,status:'active',mappingSource:'configured_manually',createdAt:'2026-07-01T02:00:00Z',lastUsedAt:'2026-08-18T08:00:00Z'}],pagination:{page:1,total:1,totalPages:1}};
+      if(url.pathname.endsWith('/external-subjects'))return{items:[{externalCenterId:'EXT-CENTER',externalResidentId:'EXT-RESIDENT',centerName:center.name,residentDisplayName:'Fictional Resident',mappingStatus:'mapped',mappingSource:'configured_manually',careProfileReady:true,createdAt:'2026-07-01T02:00:00Z',lastUsedAt:'2026-08-18T08:00:00Z'}],pagination:{page:1,total:1,totalPages:1}};
+      if(url.pathname.endsWith('/adapter-status'))return{activeAdapter:{adapterTemplateId:'IADT-SHARED',adapterVersionId:'IADV-2',displayName:'Shared Health Report Adapter',sourceSystem:'Reusable Vendor',version:2,status:'active',bindingCount:2,activatedAt:'2026-08-01T02:00:00Z'},versions:[{adapterVersionId:'IADV-2',version:2,status:'active',activatedAt:'2026-08-01T02:00:00Z'},{adapterVersionId:'IADV-1',version:1,status:'superseded',activatedAt:'2026-07-01T02:00:00Z'}],notices:[]};
+      if(url.pathname.endsWith('/adapter-samples/latest'))return{sample:null};
+      if(url.pathname.endsWith('/revoke')&&opt.method==='POST'){const clientId=url.pathname.split('/').at(-2);clients[clientId].status='revoked';clients[clientId].revokedAt='2026-09-01T09:00:00Z';return{integrationClient:detail(clients[clientId])};}
+      return{};
+    };
+    const controller=window.PhimorCareOperationsUI.createController({doc:document,request:response,confirmAction:async(title,message)=>window.confirm(`${title}\n\n${message}`)});controller.setTab('integrations');controller.load({tabs:['integrations']});
+  </script>
+</body>
+</html>

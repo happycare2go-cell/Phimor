@@ -40,7 +40,16 @@ test('wizard and directory remain mobile touch-safe with no browser persistence'
   assert.doesNotMatch(source,/localStorage|sessionStorage|credential.*URL|location\.hash/);
   const request=ui.buildIntegrationDirectoryRequest({search:'ชื่อระบบ',status:'active',page:3,limit:20});
   assert.match(request.path,/search=%E0%B8%8A%E0%B8%B7%E0%B9%88%E0%B8%AD%E0%B8%A3%E0%B8%B0%E0%B8%9A%E0%B8%9A/);
+  assert.match(request.path,/view=current/);
   assert.equal(request.options.method,'GET');
+});
+
+test('Integration archive UI separates current history and renders revoked detail without mutation controls',()=>{
+  const archived=ui.buildIntegrationDirectoryRequest({view:'archived',search:'Legacy',page:2,limit:20});
+  assert.match(archived.path,/view=archived/);assert.match(archived.path,/search=Legacy/);assert.match(archived.path,/page=2/);
+  assert.match(source,/ประวัติการเชื่อมต่อ/);assert.match(source,/การเชื่อมต่อนี้ถูกยุติแล้ว/);
+  assert.match(source,/ระบบนี้ถูกย้ายไปยังประวัติการเชื่อมต่อ/);assert.match(source,/const readOnly = client\.status === 'revoked'/);
+  assert.match(css,/care-ops__directory-view/);assert.match(css,/care-ops__archive-notice/);assert.match(css,/care-ops__directory-view button\{min-height:44px/);
 });
 
 test('existing Integration detail, credential rotation and supported HHS event scopes remain present',()=>{

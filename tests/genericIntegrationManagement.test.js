@@ -191,5 +191,5 @@ test('generic commissioning UI builders are exact, safe, and one-time secret sta
   const secret=ui.createOneTimeSecretState();assert.equal(secret.show('pim_int_test.secret'),true);assert.equal(secret.hasValue(),true);secret.clear();assert.equal(secret.read(),null);
   const source=fs.readFileSync(path.resolve(__dirname,'..','liff-app','system-admin','care-operations-ui.js'),'utf8');
   assert.doesNotMatch(source,/localStorage|sessionStorage|console\./);assert.match(source,/pagehide/);assert.match(source,/ฉันบันทึกแล้ว/);
-  assert.match(ui.buildIntegrationDirectoryRequest({search:'HHS',status:'suspended',page:2,limit:20}).path,/integration-clients\?search=HHS&status=suspended&page=2&limit=20/);
+  assert.match(ui.buildIntegrationDirectoryRequest({search:'HHS',status:'suspended',page:2,limit:20}).path,/integration-clients\?search=HHS&status=suspended&view=current&page=2&limit=20/);
 });

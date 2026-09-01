@@ -175,7 +175,7 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
       );
     },
 
-    listIntegrationClientDirectory({ search = '', status = null, limit = 20, offset = 0 }) {
+    listIntegrationClientDirectory({ search = '', status = null, view = null, limit = 20, offset = 0 }) {
       return many(
         `WITH center_counts AS (
           SELECT integration_client_id, COUNT(*)::int AS allowed_center_count
@@ -200,7 +200,7 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
           FROM integration_event_inbox GROUP BY integration_client_id
         ), directory AS (
           SELECT c.integration_client_id, c.organization_id, c.client_code, c.display_name,
-            c.source_system, c.status, c.created_at, c.updated_at, o.display_name AS organization_name,
+            c.source_system, c.status, c.created_at, c.updated_at, c.revoked_at, o.display_name AS organization_name,
             o.status AS organization_status,
             COALESCE(cc.allowed_center_count,0) AS allowed_center_count,
             COALESCE(ec.allowed_event_count,0) AS allowed_event_count,
@@ -225,23 +225,29 @@ function createPlatformRepository({ queryFn = databaseQuery } = {}) {
             OR POSITION(LOWER($1) IN LOWER(c.client_code)) > 0
             OR POSITION(LOWER($1) IN LOWER(c.source_system)) > 0)
             AND ($2::text IS NULL OR c.status = $2)
+            AND ($3::text IS NULL
+              OR ($3::text = 'current' AND c.status IN ('active','suspended'))
+              OR ($3::text = 'archived' AND c.status = 'revoked'))
         )
         SELECT *, COUNT(*) OVER()::int AS total_count
         FROM directory ORDER BY LOWER(display_name), integration_client_id
-        LIMIT $3 OFFSET $4`,
-        [search, status, limit, offset]
+        LIMIT $4 OFFSET $5`,
+        [search, status, view, limit, offset]
       );
     },
 
-    countIntegrationClientDirectory({ search = '', status = null }) {
+    countIntegrationClientDirectory({ search = '', status = null, view = null }) {
       return one(
         `SELECT COUNT(*)::int AS total
          FROM integration_clients c
          WHERE ($1::text = '' OR POSITION(LOWER($1) IN LOWER(c.display_name)) > 0
            OR POSITION(LOWER($1) IN LOWER(c.client_code)) > 0
            OR POSITION(LOWER($1) IN LOWER(c.source_system)) > 0)
-           AND ($2::text IS NULL OR c.status = $2)`,
-        [search, status]
+           AND ($2::text IS NULL OR c.status = $2)
+           AND ($3::text IS NULL
+             OR ($3::text = 'current' AND c.status IN ('active','suspended'))
+             OR ($3::text = 'archived' AND c.status = 'revoked'))`,
+        [search, status, view]
       ).then((row) => Number(row?.total) || 0);
     },
 

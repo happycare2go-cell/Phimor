@@ -123,6 +123,18 @@ test('System Admin commissioning routes create suspended client, manage status, 
   response=await call(`/api/admin/platform/integration-clients/${client.integrationClientId}/status`,{method:'PATCH',headers:{'X-Line-User-Id':'U-CENTER'},body:JSON.stringify({status:'active'})});assert.equal(response.status,401);
 });
 
+test('System Admin Integration directory separates current and archived clients without weakening authorization',async()=>{
+  const organization=await setupCenter('CTR-A');
+  const active=await service.createIntegrationClient({organizationId:organization.organizationId,clientCode:'route-active',displayName:'Route Active',sourceSystem:'Vendor A',actorReference:'ADM'});
+  const suspended=await service.createIntegrationClient({organizationId:organization.organizationId,clientCode:'route-suspended',displayName:'Route Suspended',sourceSystem:'Vendor B',initialStatus:'suspended',actorReference:'ADM'});
+  const archived=await service.createIntegrationClient({organizationId:organization.organizationId,clientCode:'route-archived',displayName:'Route Archived',sourceSystem:'Vendor C',initialStatus:'suspended',actorReference:'ADM'});
+  await service.revokeIntegrationClient({integrationClientId:archived.integrationClientId,actorReference:'ADM'});
+  let response=await call('/api/admin/platform/integration-clients?view=current&limit=20',{headers:admin});assert.equal(response.status,200);let body=await response.json();assert.deepEqual(new Set(body.items.map((item)=>item.integrationClientId)),new Set([active.integrationClientId,suspended.integrationClientId]));
+  response=await call('/api/admin/platform/integration-clients?view=archived&limit=20',{headers:admin});assert.equal(response.status,200);body=await response.json();assert.deepEqual(body.items.map((item)=>item.integrationClientId),[archived.integrationClientId]);
+  response=await call('/api/admin/platform/integration-clients?view=invalid',{headers:admin});assert.equal(response.status,400);assert.equal((await response.json()).errorCode,'INVALID_INTEGRATION_DIRECTORY_VIEW');
+  response=await call('/api/admin/platform/integration-clients?view=archived');assert.equal(response.status,401);
+});
+
 test('Field Picker capture is a purpose-built System Admin action with audited actor identity',async()=>{
   const calls=[];app.locals.integrationAdapterService={async startCapture(input){calls.push(input);return{sample:{sampleId:'IADS-1',status:'waiting'},message:'commissioning only'};}};
   let response=await call('/api/admin/platform/integration-clients/INT-A/adapter-capture',{method:'POST',body:JSON.stringify({targetEventType:'care.daily_report.finalized'})});
