@@ -30,7 +30,9 @@ The generated `schemaVersion` is `1.0`; `eventType` comes from the adapter; and
 stable ID is derived from Integration Client, target event type, and
 `externalRecordId`, preserving retries and idempotency.
 
-Array mappings use stable discriminator selection such as `type=temperature`.
+Array mappings use an explicit safe discriminator allowlist: `type`, `kind`,
+`measurement_type`, `measurementType`, `item_type`, and `itemType`. Examples
+include `type=temperature` and `item_type=symptom_note`.
 Arrays without a unique stable discriminator cannot be selected. If a required
 locator disappears, changes type, or has an unsupported unit, processing fails
 closed as `ADAPTER_SOURCE_CHANGED`; no alternative field is guessed and no

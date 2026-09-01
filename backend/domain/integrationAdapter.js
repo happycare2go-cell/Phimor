@@ -10,6 +10,9 @@ const MAX_ARRAY_ITEMS=20;
 const MAX_PREVIEW_LENGTH=160;
 const BLOCKED_KEYS=new Set(['__proto__','prototype','constructor']);
 const SECRET_KEY=/(?:password|passwd|secret|token|api[_-]?key|apikey|authorization|credential)/i;
+const ARRAY_DISCRIMINATOR_KEYS=Object.freeze([
+  'type','kind','measurement_type','measurementType','item_type','itemType',
+]);
 
 const TARGET_FIELDS=Object.freeze([
   {id:'eventId',label:'รหัสเหตุการณ์ต้นทาง',section:'ข้อมูลรายงาน',type:'identifier',required:false,aliases:['event_id','eventid','message_id']},
@@ -86,8 +89,7 @@ function discoverFields(payload){
     if(!array.every((item)=>item&&typeof item==='object'&&!Array.isArray(item))){add({locator:{kind:'unstable_array',arrayPath},sourcePath:pathLabel(arrayPath),valuePreview:'ตำแหน่งข้อมูลไม่คงที่ — ยังใช้ไม่ได้',valueType:'array',selectable:false,unstable:true});return;}
     // `name` and generic `code` are intentionally excluded: they can contain a
     // person name/external ID and are unsafe reusable-template discriminators.
-    const candidates=['type','kind','measurement_type','measurementType'];
-    const discriminator=candidates.find((key)=>array.every((item)=>primitive(item[key])&&item[key]!==null)&&new Set(array.map((item)=>String(item[key]))).size===array.length);
+    const discriminator=ARRAY_DISCRIMINATOR_KEYS.find((key)=>array.every((item)=>primitive(item[key])&&item[key]!==null)&&new Set(array.map((item)=>String(item[key]))).size===array.length);
     if(!discriminator){add({locator:{kind:'unstable_array',arrayPath},sourcePath:pathLabel(arrayPath),valuePreview:'ตำแหน่งข้อมูลไม่คงที่ — ยังใช้ไม่ได้',valueType:'array',selectable:false,unstable:true});return;}
     for(const item of array){
       for(const [key,value] of Object.entries(item)){if(key===discriminator||!primitive(value)||value===null)continue;assertSafeKey(key);
@@ -177,6 +179,7 @@ function transformPayload({integrationClientId,targetEventType=TARGET_EVENT_TYPE
 }
 
 module.exports={TARGET_EVENT_TYPE,TARGET_FIELDS,MAX_SAMPLE_BYTES,MAX_FIELDS,MAX_DEPTH,MAX_ARRAY_ITEMS,
+  ARRAY_DISCRIMINATOR_KEYS,
   IntegrationAdapterError,sanitizeSample,structuralShape,discoverFields,describeStructure,fingerprintStructure,
   compareStructure,locatorIdentity,autoSuggest,keyForLocator,
   extractLocator,validateMappingRules,transformPayload,normalizeDate,normalizeDatetime,normalizeNumber,inferKnownUnit};
