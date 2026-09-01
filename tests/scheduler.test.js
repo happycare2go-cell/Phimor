@@ -51,7 +51,7 @@ test('ทุก production cron เข้าผ่าน job-scoped distributed 
     'cardExpiry', 'pendingCardReminders', 'appointmentReminders', 'appointmentWeeklySummary',
     'centerTomorrowSummary', 'transportReminders', 'subscriptionExpiry', 'notificationRetry',
     'webhookInbox', 'integrationInbox', 'consultationLifecycle', 'plusPaymentReconciliation', 'centerStaffReconciliation',
-    'sourceImageRetention', 'sharedRateLimitCleanup',
+    'sourceImageRetention', 'sharedRateLimitCleanup', 'integrationAdapterRetention',
   ]) assert.match(source, new RegExp(`run\\('${job}'`));
   assert.match(source, /schedulerCoordinator\.run\(jobName, task\)/);
   assert.doesNotMatch(source, /cron\.schedule\([^\n]+=> \{ [^\n]+\.catch\(console\.error\)/);

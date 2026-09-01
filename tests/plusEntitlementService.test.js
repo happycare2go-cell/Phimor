@@ -143,7 +143,7 @@ test('central capability registry exposes only implemented Plus intelligence', a
   assert.equal(PLUS_CAPABILITY_REGISTRY.doctor_visit_organization.status, 'LIVE');
   assert.equal(PLUS_CAPABILITY_REGISTRY.monthly_health_summary.status, 'FUTURE');
   const decision = await canUseCapability({
-    lineUserId: 'U-1', capability: 'ai_lab_explanation', flags: flags({ internalEntitlementOnly: false, aiExplanation: true }),
+    lineUserId: 'U-1', capability: 'ai_lab_explanation', at: NOW, flags: flags({ internalEntitlementOnly: false, aiExplanation: true }),
     queryFn: queryRows([entitlement({ source: 'payment', features: ['ai_explanation'] })]),
   });
   assert.equal(decision.allowed, true);

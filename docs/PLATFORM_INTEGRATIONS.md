@@ -373,7 +373,7 @@ unnecessary free-form health history in operational matching metadata.
 ## Reusable Field Picker adapters
 
 Field transformations belong to a trusted `sourceSystem` and event/payload
-shape, not to a Center or branch. Commission the first compatible client once;
+shape, not to a Center or branch. Commission the first exact structural fingerprint once;
 later clients with the same authenticated source identity can bind the same
 active template version after a representative sample passes structural and
 canonical validation. Runtime values never influence the structural fingerprint.

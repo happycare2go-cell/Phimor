@@ -1,7 +1,7 @@
 # PHIMOR Field Picker Adapter V1
 
-The ownership rule is **one trusted source system + target event type + compatible
-payload shape = one reusable Adapter Template**. A template owns immutable
+The ownership rule is **one trusted source system + target event type + exact
+structural fingerprint = one reusable Adapter Template**. A template owns immutable
 versions and deterministic field rules. Each Integration Client has a separate
 binding to a selected template/version; Center scopes, credentials, external
 identities, Resident mappings, and tenant authorization are never shared.

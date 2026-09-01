@@ -42,6 +42,7 @@ module.exports={
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (adapter_template_id,version),
+      UNIQUE (adapter_template_id,adapter_version_id),
       CHECK ((status='active')=(activated_at IS NOT NULL AND activated_by IS NOT NULL)
         OR status IN ('draft','superseded'))
     )`);
@@ -54,12 +55,14 @@ module.exports={
       integration_client_id VARCHAR(80) NOT NULL REFERENCES integration_clients(integration_client_id),
       target_event_type VARCHAR(120) NOT NULL CHECK (target_event_type='care.daily_report.finalized'),
       adapter_template_id VARCHAR(80) NOT NULL REFERENCES integration_adapter_templates(adapter_template_id),
-      adapter_version_id VARCHAR(80) NOT NULL REFERENCES integration_adapter_versions(adapter_version_id),
+      adapter_version_id VARCHAR(80) NOT NULL,
       status VARCHAR(24) NOT NULL CHECK (status IN ('active','inactive')),
       activated_by VARCHAR(128) NOT NULL,
       activated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (adapter_template_id,adapter_version_id)
+        REFERENCES integration_adapter_versions(adapter_template_id,adapter_version_id)
     )`);
     await client.query(`CREATE UNIQUE INDEX uq_integration_adapter_client_active
       ON integration_adapter_bindings(integration_client_id,target_event_type) WHERE status='active'`);
@@ -94,7 +97,7 @@ module.exports={
     await client.query(`CREATE TABLE integration_adapter_source_notices (
       adapter_notice_id VARCHAR(80) PRIMARY KEY,
       adapter_template_id VARCHAR(80) NOT NULL REFERENCES integration_adapter_templates(adapter_template_id),
-      adapter_version_id VARCHAR(80) NOT NULL REFERENCES integration_adapter_versions(adapter_version_id),
+      adapter_version_id VARCHAR(80) NOT NULL,
       notice_type VARCHAR(48) NOT NULL CHECK (notice_type IN ('NEW_SOURCE_FIELDS_AVAILABLE','ADAPTER_SOURCE_CHANGED','ADAPTER_TRANSFORM_FAILURE')),
       source_field_key CHAR(64) NOT NULL,
       source_path VARCHAR(600) NOT NULL,
@@ -105,7 +108,9 @@ module.exports={
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_by VARCHAR(128),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(adapter_template_id,notice_type,source_field_key)
+      UNIQUE(adapter_template_id,notice_type,source_field_key),
+      FOREIGN KEY (adapter_template_id,adapter_version_id)
+        REFERENCES integration_adapter_versions(adapter_template_id,adapter_version_id)
     )`);
     await client.query(`CREATE INDEX idx_integration_adapter_notice_queue
       ON integration_adapter_source_notices(adapter_template_id,status,notice_type,last_seen_at DESC)`);

@@ -110,7 +110,7 @@ function mappingLocatorKeys(rules){return new Set((rules||[]).flatMap((rule)=>ru
 function compareStructure({baselineStructure=[],mappingRules=[],payload}){
   const currentStructure=describeStructure(payload);const baselineByKey=new Map(baselineStructure.map((field)=>[field.fieldKey,field]));
   const currentByKey=new Map(currentStructure.map((field)=>[field.fieldKey,field]));const mappedKeys=mappingLocatorKeys(mappingRules);
-  const breaking=[];for(const key of mappedKeys){const baseline=baselineByKey.get(key);const current=currentByKey.get(key);if(!current)breaking.push({fieldKey:key,sourcePath:baseline?.sourcePath||'mapped_source',reason:'mapped_locator_missing'});else if(!current.selectable)breaking.push({fieldKey:key,sourcePath:current.sourcePath,reason:'mapped_locator_incompatible'});}
+  const breaking=[];for(const key of mappedKeys){const baseline=baselineByKey.get(key);const current=currentByKey.get(key);if(!current)breaking.push({fieldKey:key,sourcePath:baseline?.sourcePath||'mapped_source',reason:'mapped_locator_missing'});else if(!current.selectable)breaking.push({fieldKey:key,sourcePath:current.sourcePath,reason:'mapped_locator_incompatible'});else if(baseline&&baseline.valueType!==current.valueType)breaking.push({fieldKey:key,sourcePath:current.sourcePath,reason:'mapped_type_changed',valueType:current.valueType});}
   const added=currentStructure.filter((field)=>field.selectable&&!baselineByKey.has(field.fieldKey)).map(({fieldKey,sourcePath,valueType})=>({fieldKey,sourcePath,valueType}));
   return{currentStructure,currentFingerprint:fingerprintStructure(currentStructure),breaking,added,
     exact:fingerprintStructure(currentStructure)===fingerprintStructure(baselineStructure)};
