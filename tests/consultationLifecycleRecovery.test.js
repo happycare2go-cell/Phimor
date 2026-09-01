@@ -5,7 +5,7 @@ process.env.NODE_ENV='test';
 
 const {createDistributedJobLockService}=require('../backend/services/distributedJobLockService');
 const {createConsultationLifecycleNotificationService,NEAR_EXPIRY_MILESTONE_MINUTES}=require('../backend/services/consultationLifecycleNotificationService');
-const {createConsultationLifecycleSchedulerService,CONSULTATION_LIFECYCLE_JOB_LOCK}=require('../backend/services/consultationLifecycleSchedulerService');
+const {createConsultationLifecycleSchedulerService}=require('../backend/services/consultationLifecycleSchedulerService');
 const {createConsultationRepository}=require('../backend/services/consultationRepository');
 
 test('distributed scheduler owns one PostgreSQL advisory session lock and always releases it',async()=>{
@@ -17,26 +17,25 @@ test('distributed scheduler owns one PostgreSQL advisory session lock and always
   assert.deepEqual(queries.map((item)=>item.params),[['job-key'],['job-key']]);assert.equal(released,1);
 });
 
-test('second backend instance skips lifecycle work while another instance owns the lock',async()=>{
+test('consultation lifecycle business service does not acquire a redundant scheduler lock',async()=>{
   let payment=0,expiry=0,notifications=0;
   const service=createConsultationLifecycleSchedulerService({
-    lockService:{async runWithLock(key){assert.equal(key,CONSULTATION_LIFECYCLE_JOB_LOCK);return {acquired:false,skipped:true};}},
+    lockService:{async runWithLock(){throw new Error('redundant lock must not run');}},
     reconciliation:{async sweepPendingOrders(){payment+=1;}},expiration:{async sweepExpired(){expiry+=1;}},notifications:{async enqueueDueNotifications(){notifications+=1;}},
   });
-  assert.deepEqual(await service.runDueWork(),{acquired:false,skipped:true});
-  assert.deepEqual({payment,expiry,notifications},{payment:0,expiry:0,notifications:0});
+  assert.deepEqual(await service.runDueWork(),{payment:undefined,expired:undefined,notification:undefined});
+  assert.deepEqual({payment,expiry,notifications},{payment:1,expiry:1,notifications:1});
 });
 
-test('lock owner runs payment reconciliation, expiry materialization and notifications in order',async()=>{
+test('coordinator-owned lifecycle work runs payment, expiry and notifications in order',async()=>{
   const order=[];
   const service=createConsultationLifecycleSchedulerService({
-    lockService:{async runWithLock(key,task){assert.equal(key,CONSULTATION_LIFECYCLE_JOB_LOCK);return {acquired:true,skipped:false,result:await task()};}},
     reconciliation:{async sweepPendingOrders(){order.push('payment');return {processed:1};}},
     expiration:{async sweepExpired(){order.push('expiry');return {closed:1};}},
     notifications:{async enqueueDueNotifications(){order.push('notification');return {queued:2};}},
   });
   const result=await service.runDueWork();
-  assert.deepEqual(order,['payment','expiry','notification']);assert.equal(result.result.payment.processed,1);assert.equal(result.result.expired.closed,1);
+  assert.deepEqual(order,['payment','expiry','notification']);assert.equal(result.payment.processed,1);assert.equal(result.expired.closed,1);
 });
 
 function lifecycleHarness() {

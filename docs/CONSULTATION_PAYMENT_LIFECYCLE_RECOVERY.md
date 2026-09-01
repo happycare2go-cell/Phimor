@@ -16,7 +16,7 @@ The Family client discovers the current order through authenticated Care Profile
 
 ## Scheduled recovery ownership
 
-Every backend instance may reach the one-minute cron callback, but only one instance runs the logical consultation recovery cycle. The worker acquires the PostgreSQL session advisory lock `phimor:consultation-payment-lifecycle-v1` on a dedicated database connection. Other instances skip that cycle.
+Every backend instance may reach the one-minute cron callback, but only one instance runs the logical consultation recovery cycle. After entering the instance's bounded scheduler lane, the shared coordinator acquires the PostgreSQL session advisory lock `phimor:scheduler:consultation-lifecycle:v1` on a dedicated database connection. Other instances skip that cycle. The lifecycle business service does not acquire a second scheduler lock.
 
 The owner runs, in order:
 

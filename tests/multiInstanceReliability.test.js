@@ -50,7 +50,7 @@ test('two scheduler instances contend on one stable job key and the loser skips'
   await assert.rejects(first.run('user-supplied-job', async () => {}), /SCHEDULER_JOB_NOT_REGISTERED/);
 });
 
-test('unrelated scheduled jobs use distinct keys and can run concurrently', async () => {
+test('unrelated scheduled jobs retain distinct distributed keys but serialize in one local lane', async () => {
   const active = new Set();
   const lockService = {
     async runWithLock(key, task) {
@@ -67,10 +67,13 @@ test('unrelated scheduled jobs use distinct keys and can run concurrently', asyn
   const first = coordinator.run('appointmentReminders', async () => { started += 1; await gate; });
   const second = coordinator.run('transportReminders', async () => { started += 1; await gate; });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(started, 2);
+  assert.equal(started, 1);
   assert.notEqual(JOB_LOCK_KEYS.appointmentReminders, JOB_LOCK_KEYS.transportReminders);
+  assert.equal(coordinator.health().lane.concurrency, 1);
+  assert.equal(coordinator.health().lane.queuedJobs, 1);
   release();
   const results = await Promise.all([first, second]);
+  assert.equal(started, 2);
   assert.equal(results.every((result) => result.acquired), true);
 });
 

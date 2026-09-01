@@ -2,16 +2,42 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 
+const DEFAULT_DATABASE_POOL_MAX = 10;
+const DEFAULT_DATABASE_POOL_CONNECTION_TIMEOUT_MS = 2000;
+
+function boundedInteger(value, fallback, minimum, maximum) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
+function createDatabasePoolConfig(env = process.env) {
+    return {
+        connectionString: env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        // Keep the current small-deployment capacity explicit. Scheduler
+        // serialization, rather than a larger pool, preserves request capacity.
+        max: boundedInteger(env.DATABASE_POOL_MAX, DEFAULT_DATABASE_POOL_MAX, 4, 20),
+        // node-postgres otherwise waits indefinitely for a checked-out client.
+        connectionTimeoutMillis: boundedInteger(
+            env.DATABASE_POOL_CONNECTION_TIMEOUT_MS,
+            DEFAULT_DATABASE_POOL_CONNECTION_TIMEOUT_MS,
+            250,
+            10000,
+        ),
+    };
+}
+
 // เชื่อมต่อ PostgreSQL ผ่านตัวแปร DATABASE_URL
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false // จำเป็นสำหรับการเชื่อมต่อบน Cloud
-    }
-});
+const poolConfig = createDatabasePoolConfig();
+const pool = new Pool(poolConfig);
+
+function safePoolErrorCode(error) {
+    const value = String(error?.code || '').trim();
+    return /^[0-9A-Z_]{2,32}$/.test(value) ? value : 'DATABASE_POOL_ERROR';
+}
 
 pool.on('error', (err) => {
-    console.error('Unexpected error on idle client', err);
+    console.error('[Database Pool]', { event:'idle_client_error', errorCode:safePoolErrorCode(err) });
 });
 
 const now = () => new Date().toISOString();
@@ -242,6 +268,15 @@ async function pingDatabase() {
   return true;
 }
 
+function getDatabasePoolMetrics(poolInstance = pool, config = poolConfig) {
+  return Object.freeze({
+    totalCount:Math.max(0, Number(poolInstance?.totalCount) || 0),
+    idleCount:Math.max(0, Number(poolInstance?.idleCount) || 0),
+    waitingCount:Math.max(0, Number(poolInstance?.waitingCount) || 0),
+    configuredMax:Math.max(0, Number(config?.max) || 0),
+  });
+}
+
 async function withTransactionLocks(lockKeys, fn) {
   const keys = [...new Set((Array.isArray(lockKeys) ? lockKeys : [lockKeys])
     .filter(Boolean).map((key) => String(key)))].sort();
@@ -313,5 +348,7 @@ module.exports = {
   AdminUsers,
   audit, resetAll, initializeDatabase, withTransaction, withTransactionLocks, pingDatabase,
   acquireDatabaseClient,
+  createDatabasePoolConfig, getDatabasePoolMetrics, safePoolErrorCode,
+  DEFAULT_DATABASE_POOL_MAX, DEFAULT_DATABASE_POOL_CONNECTION_TIMEOUT_MS,
   databaseQuery: query,
 };

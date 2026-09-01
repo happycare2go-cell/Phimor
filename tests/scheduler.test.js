@@ -59,9 +59,10 @@ test('ทุก production cron เข้าผ่าน job-scoped distributed 
 
 test('/ready surfaces scheduler diagnostics without treating lock ownership as readiness failure', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'backend', 'server.js'), 'utf8');
-  assert.match(source, /const scheduler = schedulerCoordinator\.health\(\)/);
-  assert.match(source, /const ready = database && rateLimits\.available && plusPaymentStorage\.available && missing\.length === 0/);
+  assert.match(source, /createReadinessService/);
+  assert.match(source, /schedulerHealth:\(\) => schedulerCoordinator\.health\(\)/);
+  assert.match(source, /getDatabasePoolMetrics/);
   assert.match(source, /paymentAvailable\(loadFeatureFlags\(\)\)/);
-  assert.match(source, /plusPaymentStorage/);
+  assert.match(source, /plusPaymentHealth/);
   assert.doesNotMatch(source, /ready\s*=.*skipped_due_to_lock/);
 });

@@ -87,7 +87,6 @@ test('expiration sweep is bounded and no-work completes without writes',async()=
 test('lifecycle scheduler annotates the failing bounded operation without payloads',async()=>{
   const failure=Object.assign(new Error('query and parameter details'),{code:'42P08',routine:'parse_param'});
   const service=createConsultationLifecycleSchedulerService({
-    lockService:{async runWithLock(_key,task){return task();}},
     reconciliation:{async sweepPendingOrders(){return {scanned:0};}},
     expiration:{async sweepExpired(){throw failure;}},
     notifications:{async enqueueDueNotifications(){throw new Error('must not run after failure');}},

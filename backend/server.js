@@ -42,6 +42,7 @@ const { createPlusPaymentSchedulerService } = require('./services/plusPaymentSch
 const { createPlusPaymentRepository } = require('./services/plusPaymentRepository');
 const { loadFeatureFlags } = require('./config/featureFlags');
 const { paymentAvailable } = require('./services/plusPaymentOrderService');
+const { createReadinessService, readinessTimeoutMs } = require('./services/readinessService');
 
 const consultationLifecycleScheduler = createConsultationLifecycleSchedulerService();
 const schedulerCoordinator = createSchedulerCoordinatorService();
@@ -50,6 +51,19 @@ const plusPaymentRepository = createPlusPaymentRepository();
 
 const app = express();
 app.locals.schedulerHealth = () => schedulerCoordinator.health();
+const readinessService = createReadinessService({
+  pingDatabase:() => db.pingDatabase(),
+  notificationHealth:() => notificationService.getHealth(),
+  rateLimitHealth:() => sharedRateLimiter.getHealth(),
+  plusPaymentHealth:() => paymentAvailable(loadFeatureFlags())
+    ? plusPaymentRepository.getHealth() : Promise.resolve({ available:true, configured:false }),
+  plusPaymentConfigured:() => paymentAvailable(loadFeatureFlags()),
+  getDatabasePoolMetrics:() => db.getDatabasePoolMetrics(),
+  schedulerHealth:() => schedulerCoordinator.health(),
+  realtimeHealth:() => app.locals.consultationRealtimeHealth?.() || { configured:false, started:false },
+  missingEnvironment:() => missingRuntimeEnvironment(),
+  timeoutMs:readinessTimeoutMs(),
+});
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -125,18 +139,10 @@ app.use('/api', groupsRouter);
 let schedulerHeartbeatAt = null;
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'phimor-backend', now: new Date().toISOString() }));
 app.get('/ready', async (req, res) => {
-  const missing = missingRuntimeEnvironment();
-  let database = true; let databaseError = null;
-  try { await db.pingDatabase(); } catch (error) { database = false; databaseError = error.message; }
-  const notifications = await notificationService.getHealth().catch(() => ({ unavailable: true }));
-  const rateLimits = await sharedRateLimiter.getHealth();
-  const plusPaymentStorage = paymentAvailable(loadFeatureFlags())
-    ? await plusPaymentRepository.getHealth()
-    : { available: true, configured: false };
-  const consultationRealtime = app.locals.consultationRealtimeHealth?.() || { configured:false, started:false };
-  const scheduler = schedulerCoordinator.health();
-  const ready = database && rateLimits.available && plusPaymentStorage.available && missing.length === 0;
-  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', database, databaseError, missingEnvironment: missing, rateLimits, plusPaymentStorage, schedulerHeartbeatAt, scheduler, notifications, consultationRealtime });
+  const { ready, ...details } = await readinessService.check();
+  res.status(ready ? 200 : 503).json({
+    status:ready ? 'ready' : 'not_ready', ...details, schedulerHeartbeatAt,
+  });
 });
 app.get('/config/liff', (req, res) => res.json(buildPublicLiffConfig()));
 

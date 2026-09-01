@@ -4,9 +4,13 @@ This document describes runtime ownership and recovery. It contains no clinical 
 
 ## Scheduled work
 
-Every registered job is executed through `schedulerCoordinatorService`. Each job has a fixed, code-owned PostgreSQL session advisory-lock key. A backend that cannot acquire the job lock records `skipped_due_to_lock` and does no work; it does not make `/ready` fail. The connection that acquires the lock owns it, releases it in `finally`, and PostgreSQL releases it automatically if that connection dies.
+Every registered job is executed through `schedulerCoordinatorService`. Each backend instance has one bounded local execution lane, so only one job at a time may acquire a scheduler advisory-lock client and execute its task. A job already running or queued is not enqueued again. The queue is therefore bounded by the fixed, code-owned job registry, and one failed job cannot poison the lane.
 
-The scheduler diagnostic returned by `/ready` includes only job name, timestamps, status, duration, and a safe error code. It never includes notification bodies or clinical payloads. System Admin can read the same summary together with notification and integration queue counts from `GET /api/admin/operations/reliability`.
+After entering the local lane, each job uses its distinct PostgreSQL session advisory-lock key for cross-instance ownership. A backend that cannot acquire the job lock records `skipped_due_to_lock` and does no work; it does not make `/ready` fail. The same connection acquires and releases the lock in `finally`, and PostgreSQL releases it automatically if that connection dies. Consultation lifecycle business work deliberately has no second scheduler-level lock because the coordinator is the single ownership boundary.
+
+The PostgreSQL pool keeps the existing small-deployment capacity explicit (`DATABASE_POOL_MAX=10`) and uses a bounded acquisition timeout (`DATABASE_POOL_CONNECTION_TIMEOUT_MS=2000`). The Consultation Realtime `LISTEN` session remains intentionally checked out. With one local scheduler lane, a scheduler burst reserves at most one additional lock client before its business task requests database capacity, leaving capacity for interactive traffic. These values may be overridden only within the documented safe bounds; increasing the pool is not the starvation fix.
+
+The scheduler diagnostic returned by `/ready` includes only job name, timestamps, status, duration, lane counts, and a safe error code. Database pool diagnostics contain only `totalCount`, `idleCount`, `waitingCount`, and `configuredMax`. `/ready` has a bounded dependency-check budget (`READINESS_TIMEOUT_MS=2500`) and returns `503 not_ready` with a safe code when capacity is unavailable instead of hanging. It never includes connection strings, SQL, notification bodies, or clinical payloads. System Admin can read the scheduler summary together with notification and integration queue counts from `GET /api/admin/operations/reliability`.
 
 | Job | Ownership / delivery boundary |
 | --- | --- |

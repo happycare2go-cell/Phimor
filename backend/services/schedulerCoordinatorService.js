@@ -43,8 +43,14 @@ function createSchedulerCoordinatorService({
   lockService = createDistributedJobLockService(),
   now = () => new Date(),
   logger = console,
+  scheduleDrain = queueMicrotask,
 } = {}) {
   const states = new Map();
+  const queue = [];
+  const queuedJobs = new Set();
+  let activeJobName = null;
+  let drainScheduled = false;
+  let localDuplicateSkips = 0;
 
   function snapshot(jobName, patch) {
     const next = { jobName, ...(states.get(jobName) || {}), ...patch };
@@ -52,9 +58,8 @@ function createSchedulerCoordinatorService({
     return next;
   }
 
-  async function run(jobName, task) {
+  async function execute(jobName, task) {
     const lockKey = JOB_LOCK_KEYS[jobName];
-    if (!lockKey || typeof task !== 'function') throw new Error('SCHEDULER_JOB_NOT_REGISTERED');
     const startedAt = now();
     snapshot(jobName, {
       status: 'running', startedAt: startedAt.toISOString(), completedAt: null,
@@ -95,9 +100,70 @@ function createSchedulerCoordinatorService({
     }
   }
 
+  function scheduleNext() {
+    if (drainScheduled || activeJobName || queue.length === 0) return;
+    drainScheduled = true;
+    scheduleDrain(() => {
+      drainScheduled = false;
+      if (activeJobName || queue.length === 0) return;
+      const next = queue.shift();
+      queuedJobs.delete(next.jobName);
+      activeJobName = next.jobName;
+      execute(next.jobName, next.task).then(
+        (result) => {
+          activeJobName = null;
+          next.resolve(result);
+          scheduleNext();
+        },
+        (error) => {
+          activeJobName = null;
+          next.reject(error);
+          scheduleNext();
+        },
+      );
+    });
+  }
+
+  function run(jobName, task) {
+    const lockKey = JOB_LOCK_KEYS[jobName];
+    if (!lockKey || typeof task !== 'function') return Promise.reject(new Error('SCHEDULER_JOB_NOT_REGISTERED'));
+    if (activeJobName === jobName || queuedJobs.has(jobName)) {
+      const skippedAt = now().toISOString();
+      localDuplicateSkips += 1;
+      const current = states.get(jobName) || {};
+      snapshot(jobName, {
+        ...current,
+        lastLocalDuplicateSkippedAt: skippedAt,
+        localDuplicateSkips: Number(current.localDuplicateSkips || 0) + 1,
+      });
+      logger.info?.('[Scheduler]', { jobName, status:'skipped_due_to_local_duplicate' });
+      return Promise.resolve({
+        acquired:false, skipped:true, reasonCode:'SCHEDULER_LOCAL_DUPLICATE',
+      });
+    }
+
+    const queuedAt = now().toISOString();
+    queuedJobs.add(jobName);
+    snapshot(jobName, {
+      status:'queued', queuedAt, completedAt:null, durationMs:null, errorCode:null,
+      postgresCode:null, postgresRoutine:null, postgresConstraint:null, operation:null,
+    });
+    const result = new Promise((resolve, reject) => {
+      queue.push({ jobName, task, resolve, reject });
+    });
+    scheduleNext();
+    return result;
+  }
+
   function health() {
     return {
       configuredJobs: Object.keys(JOB_LOCK_KEYS).length,
+      lane: {
+        concurrency:1,
+        activeJobName,
+        queuedJobs:queue.length,
+        localDuplicateSkips,
+      },
       jobs: Object.fromEntries([...states.entries()].map(([name, state]) => [name, { ...state }])),
     };
   }
