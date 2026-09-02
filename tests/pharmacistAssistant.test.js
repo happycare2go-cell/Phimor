@@ -28,7 +28,7 @@ const PROFILE={
   owner_line_id:'U-FAMILY',health_history:[{weight:60}],_updatedAt:'2026-08-24T00:00:00.000Z',
 };
 const SNAPSHOTS=[
-  {snapshot_id:'S-2',care_profile_id:'CP-1',recorded_at:'2026-08-24T00:00:00.000Z',items:[{name:'Drug A',dose:'2 เม็ด',instruction:'หลังอาหาร'}]},
+  {snapshot_id:'S-2',care_profile_id:'CP-1',recorded_at:'2026-08-24T00:00:00.000Z',items:[{name:'Drug A',strength:'10 mg',indication:'ข้อมูลที่บันทึก',dose:'2',unit:'เม็ด',frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning','evening'],instruction:'ตามฉลาก',notes:'หมายเหตุ',timing:'เวลาเดิม',condition:'ข้อมูลเดิม'}]},
   {snapshot_id:'S-1',care_profile_id:'CP-1',recorded_at:'2026-08-20T00:00:00.000Z',items:[{name:'Drug A',dose:'1 เม็ด',instruction:'หลังอาหาร'}]},
 ];
 
@@ -66,8 +66,13 @@ function validAssistant() {
 
 test('assigned active verified pharmacist receives purpose-minimized attributed context',async()=>{
   const context=await createConsultationContextBuilder(contextDependencies())({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM',now:NOW});
+  assert.equal(context.schemaVersion,'consultation-context-v2');
   assert.equal(context.case.caseId,'CASE-1');
   assert.equal(context.currentMedications[0].source.category,'medication_snapshot');
+  assert.equal(context.currentMedications[0].indication,'ข้อมูลที่บันทึก');
+  assert.deepEqual(context.currentMedications[0].dayPeriods,['morning','evening']);
+  assert.equal(context.currentMedications[0].useCondition,'after_meal');
+  assert.equal(context.currentMedications[0].condition,'ข้อมูลเดิม');
   assert.equal(context.medicationChanges.source.category,'medication_diff');
   assert.equal(context.recordedFacts[0].source.category,'care_profile');
   assert.equal(context.appointments[0].source.category,'appointment');
@@ -167,13 +172,17 @@ test('assistant passes only minimized structured context and returns refresh tim
   let call; let audit;
   const service=createPharmacistAssistantService({
     config:{ai:{provider:'gemini',explanationModel:'test-model',timeoutMs:1000,maxRetries:0}},
-    contextBuilder:async()=>({schemaVersion:'consultation-context-v1',contextTimestamp:NOW,case:{caseId:'CASE-1'},recordedFacts:[]}),
+    contextBuilder:async()=>({schemaVersion:'consultation-context-v2',contextTimestamp:NOW,case:{caseId:'CASE-1'},recordedFacts:[],currentMedications:[{name:'Drug A',indication:'ข้อมูลที่บันทึก',useCondition:'after_meal',dayPeriods:['morning','evening'],notes:'หมายเหตุ'}]}),
     provider:{async generateStructured(input){call=input;return validAssistant();}},
     recordAudit:async(input)=>{audit=input;return {recorded:true};},
   });
   const result=await service({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM'});
   assert.equal(result.status,'available'); assert.equal(result.contextTimestamp,NOW);
+  assert.equal(result.contextVersion,'consultation-context-v2');
+  assert.equal(audit.contextVersion,'consultation-context-v2');
   assert.equal(call.task,'pharmacist_assistance'); assert.equal(call.context.includes('U-PHARM'),false);
+  assert.match(call.context,/"indication":"ข้อมูลที่บันทึก"/);
+  assert.match(call.context,/"dayPeriods":\["morning","evening"\]/);
   assert.equal(audit.requesterType,'pharmacist'); assert.equal(audit.consultationCaseId,'CASE-1');
   assert.equal(Object.hasOwn(audit,'rawPrompt'),false); assert.equal(Object.hasOwn(audit,'rawResponse'),false);
 });

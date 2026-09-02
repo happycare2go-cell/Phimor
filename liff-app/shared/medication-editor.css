@@ -4,7 +4,8 @@
 .medication-editor__summary-heading{display:grid;gap:2px}
 .medication-editor__summary-heading strong{font-size:17px;color:var(--navy,#1c2b64)}
 .medication-editor__summary-heading span{font-weight:700;color:#344054}
-.medication-editor__usage,.medication-editor__instruction,.medication-editor__card-details{margin:0;white-space:pre-line;line-height:1.55;color:#344054}
+.medication-editor__usage,.medication-editor__instruction,.medication-editor__indication,.medication-editor__card-details{margin:0;white-space:pre-line;line-height:1.55;color:#344054}
+.medication-editor__indication{font-size:14px;color:#475467}
 .medication-editor__instruction,.medication-editor__card-details{font-size:13px;color:var(--gray,#667085)}
 .medication-editor__edit{justify-self:start;min-height:44px}
 .medication-editor__empty{padding:22px 14px;text-align:center;border:1px dashed #cbd5e1;border-radius:16px;color:var(--gray,#667085)}
@@ -14,11 +15,16 @@
 .medication-editor__section{display:grid;gap:10px;padding:2px 0 10px;border-bottom:1px solid #eef1f5}
 .medication-editor__section h4{margin:0;color:#344054;font-size:15px}
 .medication-editor__row label{display:grid;gap:5px;min-width:0;font-size:13px;color:var(--gray,#667085)}
-.medication-editor__row input,.medication-editor__row textarea{width:100%;min-width:0;box-sizing:border-box;min-height:44px}
+.medication-editor__row input,.medication-editor__row textarea,.medication-editor__row select{width:100%;min-width:0;box-sizing:border-box;min-height:44px}
 .medication-editor__row textarea{min-height:88px;resize:vertical}
 .medication-editor__dose-group{display:grid;grid-template-columns:minmax(0,1fr) minmax(92px,.45fr);gap:8px}
 .medication-editor__dose-group--legacy{grid-template-columns:minmax(0,1fr)}
-.medication-editor__legacy-note{margin:0;color:#566778;font-size:.82rem;line-height:1.5}
+.medication-editor__legacy-note{margin:0;color:#566778;font-size:.82rem;line-height:1.5;white-space:pre-line}
+.medication-editor__day-periods{min-width:0;margin:0;padding:0;border:0}
+.medication-editor__day-periods>legend{padding:0;margin:0 0 6px;font-size:13px;font-weight:400;color:var(--gray,#667085)}
+.medication-editor__day-period-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.medication-editor__day-period-option{display:flex!important;grid-template-columns:none!important;align-items:center;gap:8px;min-height:44px;padding:8px 10px;border:1px solid #dbe3ef;border-radius:12px;color:#344054!important}
+.medication-editor__day-period-option input{width:20px!important;min-width:20px!important;min-height:20px!important;margin:0}
 .medication-editor__advanced{border:1px solid #dbe3ef;border-radius:12px;padding:0 12px}
 .medication-editor__advanced summary,.medication-editor__draft-edit>summary{display:flex;align-items:center;min-height:44px;font-weight:700;cursor:pointer;color:#475467}
 .medication-editor__advanced-body{display:grid;gap:10px;padding:0 0 12px}

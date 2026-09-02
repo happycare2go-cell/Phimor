@@ -8,21 +8,24 @@ const editor = require('../liff-app/shared/medication-editor');
 const family = fs.readFileSync(path.join(root,'liff-app/family/index.html'),'utf8');
 const center = fs.readFileSync(path.join(root,'liff-app/center-admin/index.html'),'utf8');
 const css = fs.readFileSync(path.join(root,'liff-app/shared/medication-editor.css'),'utf8');
+const editorSource = fs.readFileSync(path.join(root,'liff-app/shared/medication-editor.js'),'utf8');
 const operation = fs.readFileSync(path.join(root,'liff-app/family/medication-operation.js'),'utf8');
 
 test('shared editor keeps the canonical model but presents clear human field semantics', () => {
   assert.equal(editor.MAX_ROWS, 30);
   assert.equal(editor.MAX_IMAGES, 4);
   assert.deepEqual(new Set(editor.FIELDS.map(([field])=>field)), new Set(
-    ['name','strength','dose','instruction','amount','unit','frequency','timing','route','condition']));
+    ['name','strength','indication','dose','instruction','amount','unit','route','notes']));
   assert.equal(editor.FIELD_LABELS.strength,'ความแรงของยา');
   assert.equal(editor.FIELD_LABELS.dose,'ครั้งละ');
   assert.equal(editor.FIELD_LABELS.amount,'จำนวนที่ได้รับทั้งหมด');
-  assert.equal(editor.FIELD_LABELS.condition,'หมายเหตุเพิ่มเติม');
+  assert.equal(editor.FIELD_LABELS.indication,'ข้อบ่งใช้ยา');
+  assert.equal(editor.FIELD_LABELS.notes,'หมายเหตุเพิ่มเติม');
+  assert.equal(editor.FIELD_LABELS.condition,'ข้อบ่งใช้ / หมายเหตุ (ข้อมูลเดิม)');
 });
 
 test('dose summary does not combine per-administration unit with complete dispensed amount', () => {
-  const item={name:'ยาน้ำ',dose:'5',unit:'มล.',amount:'1 ขวด',frequency:'1 ครั้ง',timing:'ก่อนนอน'};
+  const item={name:'ยาน้ำ',dose:'5',unit:'มล.',amount:'1 ขวด',frequency:'1 ครั้ง',dayPeriods:['bedtime']};
   assert.equal(editor.doseLine(item),'ครั้งละ 5 มล.');
   assert.doesNotMatch(editor.doseLine(item),/1 ขวด/);
   assert.equal(editor.scheduleLine(item),'วันละ 1 ครั้ง · ก่อนนอน');
@@ -74,12 +77,12 @@ test('image batching is bounded and ignores an unbounded fifth image', () => {
   assert.equal(result.extracted.length,4);
 });
 
-test('Family and Center are read-first and never render an automatic blank row', () => {
+test('Family and Center are manual-first, read-first and never render an automatic blank row', () => {
   assert.doesNotMatch(editor.renderRows.toString(), /items\.length\s*\?[^:]+:\s*\[\{\}\]/);
   for (const source of [family,center]) {
     assert.match(source,/MedicationCards/);
-    assert.match(source,/ถ่ายรูป \/ อัปโหลดฉลากยา/);
     assert.match(source,/กรอกยาเอง/);
+    assert.match(source,/type="file"[^>]*hidden disabled aria-hidden="true"/);
     assert.match(source,/multiple/);
     assert.match(source,/medications\/draft-proposal/);
     assert.match(source,/baseSnapshotId/);
@@ -87,7 +90,51 @@ test('Family and Center are read-first and never render an automatic blank row',
     assert.match(source,/MEDICATION_SNAPSHOT_STALE/);
   }
   assert.match(editor.renderCards.toString(),/ยังไม่มีรายการยาปัจจุบัน/);
-  assert.match(editor.renderCards.toString(),/เพิ่มยาโดยถ่ายรูปฉลากยา หรือกรอกข้อมูลเอง/);
+  assert.match(editor.renderCards.toString(),/เพิ่มรายการยาโดยกรอกข้อมูล/);
+});
+
+test('structured schedule uses fixed choices and a direct mismatch check', () => {
+  assert.deepEqual(editor.FREQUENCIES,['','1 ครั้ง','2 ครั้ง','3 ครั้ง','4 ครั้ง']);
+  assert.deepEqual(editor.DAY_PERIODS.map(([value])=>value),['morning','noon','evening','bedtime']);
+  assert.equal(editor.scheduleLine({frequency:'2 ครั้ง',dayPeriods:['morning','evening'],useCondition:'after_meal'}),
+    'วันละ 2 ครั้ง · เช้า, เย็น · หลังอาหาร');
+  assert.deepEqual(editor.structuredScheduleLines({frequency:'2 ครั้ง',dayPeriods:['evening','morning'],useCondition:'after_meal'}),
+    ['วันละ 2 ครั้ง','เช้า, เย็น','หลังอาหาร']);
+  assert.equal(editor.scheduleConflict({frequency:'2 ครั้ง',dayPeriods:['morning']}),true);
+  assert.equal(editor.scheduleConflict({frequency:'2 ครั้ง',dayPeriods:[]}),false);
+  assert.equal(editor.scheduleConflict({frequency:'2 ครั้ง',dayPeriods:['morning'],useCondition:'as_needed'}),false);
+  assert.match(editor.validateSchedules.toString(),/จำนวนครั้งต่อวันไม่ตรงกับช่วงเวลาที่เลือก/);
+});
+
+test('indication, notes and legacy condition remain visibly separate', () => {
+  const item={name:'ยา A',indication:'ความดันโลหิตสูง',notes:'เฝ้าดูตามแผน',condition:'ข้อความเดิมรวมกัน'};
+  assert.deepEqual(editor.medicationSummaryLines(item),[
+    'ข้อบ่งใช้: ความดันโลหิตสูง','หมายเหตุเพิ่มเติม: เฝ้าดูตามแผน',
+    'ข้อมูลเดิม (ข้อบ่งใช้ / หมายเหตุ): ข้อความเดิมรวมกัน',
+  ]);
+  assert.match(editor.renderRows.toString(),/จะไม่ย้ายไปช่อง/);
+  assert.equal(editor.clean({name:'Amlodipine'}).indication,'');
+});
+
+test('legacy timing variants remain readable as original text without reinterpretation',()=>{
+  for(const timing of ['ก่อนนอน','หลังอาหาร','หลังอาหาร เช้า เย็น','หลังตื่นตามคำสั่งเดิม']){
+    const item=editor.clean({name:'ยาเดิม',timing});
+    assert.equal(item.timing,timing);
+    assert.equal(editor.scheduleLine(item),timing);
+  }
+  assert.equal(editor.FIELD_LABELS.timing,'เวลาใช้ยา (ข้อมูลเดิม)');
+  assert.match(editorSource,/ไม่ตีความข้อมูลเดิมผิด/);
+  assert.equal(editor.legacyTimingLine({frequency:'1 ครั้ง',dayPeriods:['morning'],timing:'หลังอาหาร เช้า'}),
+    'เวลาใช้ยา (ข้อมูลเดิม): หลังอาหาร เช้า');
+  assert.deepEqual(editor.medicationSummaryLines({name:'ยาเดิม',frequency:'1 ครั้ง',dayPeriods:['morning'],timing:'หลังอาหาร เช้า'}),[
+    'วันละ 1 ครั้ง','เช้า','เวลาใช้ยา (ข้อมูลเดิม): หลังอาหาร เช้า',
+  ]);
+  assert.deepEqual(editor.medicationSummaryLines({name:'ยาเดิม',timing:'หลังตื่นตามคำสั่งเดิม'}),[
+    'เวลาใช้ยา (ข้อมูลเดิม): หลังตื่นตามคำสั่งเดิม',
+  ]);
+  assert.deepEqual(editor.medicationSummaryLines({name:'ยาเดิม',frequency:'เมื่อมีอาการ'}),[
+    'ความถี่ (ข้อมูลเดิม): เมื่อมีอาการ',
+  ]);
 });
 
 test('extraction remains a draft and current-set save does not persist source image bytes', () => {

@@ -31,6 +31,9 @@ async function medication(snapshotId, id, values = {}) {
     name: values.name || 'Metformin', strength: values.strength || '', dose: values.dose || '',
     instruction: values.instruction || '', amount: values.amount ?? null, unit: values.unit ?? null,
     frequency: values.frequency ?? null, timing: values.timing ?? null, route: values.route ?? null,
+    indication:values.indication || '', use_condition:values.useCondition ?? null,
+    day_periods:Array.isArray(values.dayPeriods) ? values.dayPeriods : [], notes:values.notes || '',
+    condition:values.condition || '',
     stable_medication_id: values.stable_medication_id || null,
     source_image_base64: 'private-medication-image', recorded_by: 'U-RECORDER',
   });
@@ -108,13 +111,31 @@ test('medication instructions preserve stored text and structured fields', async
   await snapshot('S-1', '2026-08-20T00:00:00.000Z');
   await medication('S-1', 'M-1', {
     name: 'ยาเดิม', strength: '500 มก.', dose: 'ครั้งละ 1 เม็ด', instruction: 'หลังอาหารทันที',
-    amount: '1', unit: 'เม็ด', frequency: 'วันละ 2 ครั้ง', timing: 'หลังอาหาร', route: 'รับประทาน',
+    amount:'30 เม็ด', unit:'เม็ด', frequency:'วันละ 2 ครั้ง', timing:'หลังอาหาร', route:'รับประทาน',
+    indication:'เบาหวาน', useCondition:'after_meal', dayPeriods:['morning','evening'], notes:'ติดตามตามแผน',
   });
   const result = await getMedicationInstructions({ careProfileId: 'CP-1', requester, medicationId: 'M-1' });
   assert.equal(result.instructions[0].dose, 'ครั้งละ 1 เม็ด');
   assert.equal(result.instructions[0].instruction, 'หลังอาหารทันที');
   assert.equal(result.instructions[0].frequency, 'วันละ 2 ครั้ง');
   assert.equal(result.instructions[0].route, 'รับประทาน');
+  assert.equal(result.instructions[0].indication,'เบาหวาน');
+  assert.equal(result.instructions[0].useCondition,'after_meal');
+  assert.deepEqual(result.instructions[0].dayPeriods,['morning','evening']);
+  assert.equal(result.instructions[0].notes,'ติดตามตามแผน');
+  assert.equal(result.instructions[0].amount,'30 เม็ด');
+});
+
+test('retrieval projects new facts while retaining explicit legacy timing and condition',async()=>{
+  await profile();await snapshot('S-1','2026-08-20T00:00:00.000Z');
+  await medication('S-1','M-1',{name:'Amlodipine',indication:'ความดันโลหิตสูง',useCondition:'before_meal',
+    dayPeriods:['morning','bedtime'],notes:'ข้อความใหม่',timing:'เวลาเดิมไม่มาตรฐาน',condition:'ข้อความเดิมรวมกัน'});
+  const current=await getCurrentMedicationSnapshot({careProfileId:'CP-1',requester});
+  assert.deepEqual(Object.fromEntries(['indication','useCondition','dayPeriods','notes','timing','condition']
+    .map((field)=>[field,current.medications[0][field]])),{
+    indication:'ความดันโลหิตสูง',useCondition:'before_meal',dayPeriods:['morning','bedtime'],notes:'ข้อความใหม่',
+    timing:'เวลาเดิมไม่มาตรฐาน',condition:'ข้อความเดิมรวมกัน',
+  });
 });
 
 test('retrieval outputs never leak source images or LINE identifiers', async () => {
@@ -160,6 +181,21 @@ test('diff reports instruction changes separately from dose', async () => {
   );
   assert.equal(result.doseChanged.length, 0);
   assert.equal(result.instructionChanged.length, 1);
+});
+
+test('structured schedule order is stable and structured-only changes are not dose changes',async()=>{
+  let result=await compare(
+    [{name:'Drug A',frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning','evening']}],
+    [{name:'Drug A',frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['evening','morning']}],
+  );
+  assert.equal(result.unchanged.length,1);
+  db.resetAll();
+  result=await compare(
+    [{name:'Drug A',frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning','evening']}],
+    [{name:'Drug A',frequency:'2 ครั้ง',useCondition:'before_meal',dayPeriods:['morning','evening']}],
+  );
+  assert.equal(result.doseChanged.length,0);
+  assert.equal(result.multipleFieldsChanged.length,1);
 });
 
 test('dispensed amount is not reinterpreted as per-administration dose', () => {

@@ -209,6 +209,134 @@ test('legacy image directions stored in dose survive open-and-save unchanged', a
   assert.equal((await db.MedicationSnapshots.findAll()).length, 1);
 });
 
+test('structured schedule and separated indication/notes round-trip in canonical order', async () => {
+  await familyProfile();
+  const item=baseItem({indication:'ความดันโลหิตสูง',notes:'ข้อความทั่วไป',frequency:'2 ครั้ง',
+    timing:null,useCondition:'after_meal',dayPeriods:['evening','morning','morning']});
+  const result=await save([item]);
+  assert.deepEqual(Object.fromEntries(['indication','notes','frequency','useCondition','dayPeriods','condition','timing']
+    .map((field)=>[field,result.medications[0][field]])),{
+    indication:'ความดันโลหิตสูง',notes:'ข้อความทั่วไป',frequency:'2 ครั้ง',useCondition:'after_meal',
+    dayPeriods:['morning','evening'],condition:'ข้อมูลตามฉลาก',timing:null,
+  });
+  const current=await loadCurrentSnapshot('CP-1');
+  assert.deepEqual(current.medications[0].dayPeriods,['morning','evening']);
+  assert.equal(current.medications[0].indication,'ความดันโลหิตสูง');
+});
+
+test('invalid schedule enums and direct frequency mismatch fail closed', async () => {
+  await familyProfile();
+  await assert.rejects(save([baseItem({useCondition:'sometimes',dayPeriods:[]})]),
+    (error)=>error.code==='INVALID_MEDICATION_USE_CONDITION'&&error.status===422);
+  await assert.rejects(save([baseItem({frequency:'ห้าครั้ง',useCondition:null,dayPeriods:[]})]),
+    (error)=>error.code==='INVALID_MEDICATION_FREQUENCY'&&error.status===422);
+  await assert.rejects(save([baseItem({frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning']})]),
+    (error)=>error.code==='MEDICATION_SCHEDULE_CONFLICT'&&error.status===422);
+  await assert.rejects(save([baseItem({frequency:'1 ครั้ง',useCondition:null,dayPeriods:['midnight']})]),
+    (error)=>error.code==='INVALID_MEDICATION_DAY_PERIODS'&&error.status===422);
+  await assert.rejects(save([baseItem({indication:{unsafe:true},useCondition:null,dayPeriods:[]})]),
+    (error)=>error.code==='INVALID_MEDICATION_FIELD_TYPE'&&error.status===422);
+  assert.equal((await db.MedicationSnapshots.findAll()).length,0);
+});
+
+test('blank schedule and schedule without day periods remain valid', async () => {
+  await familyProfile();
+  const first=await save([baseItem({frequency:'',timing:null,useCondition:null,dayPeriods:[]})]);
+  assert.deepEqual(first.medications[0].dayPeriods,[]);
+  const second=await save([baseItem({frequency:'3 ครั้ง',timing:null,useCondition:'before_meal',dayPeriods:[]})],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(second.medications[0].frequency,'3 ครั้ง');
+  assert.equal(second.medications[0].useCondition,'before_meal');
+});
+
+test('opening and saving legacy timing/condition without changes creates no rewrite', async () => {
+  await familyProfile();
+  const legacy=baseItem({frequency:'วันละ 2 ครั้ง',timing:'เช้า-เย็น หลังอาหาร',condition:'ความดัน / ข้อความเก่ารวมกัน'});
+  const first=await save([legacy]);
+  const noChange=await save([{...legacy,indication:'',notes:'',useCondition:null,dayPeriods:[]}],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(noChange.noChange,true);
+  assert.equal(noChange.medications[0].timing,'เช้า-เย็น หลังอาหาร');
+  assert.equal(noChange.medications[0].condition,'ความดัน / ข้อความเก่ารวมกัน');
+  assert.equal((await db.MedicationSnapshots.findAll()).length,1);
+});
+
+test('legacy as-needed frequency remains readable and no-change compatible without reclassification', async () => {
+  await familyProfile();
+  const legacy=baseItem({frequency:'เมื่อมีอาการ',timing:null,condition:'ข้อความเดิม'});
+  const first=await save([legacy]);
+  const noChange=await save([{...legacy,indication:'',notes:'',useCondition:null,dayPeriods:[]}],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(noChange.noChange,true);
+  assert.equal(noChange.medications[0].frequency,'เมื่อมีอาการ');
+  assert.equal(noChange.medications[0].useCondition,null);
+  assert.equal((await db.MedicationSnapshots.findAll()).length,1);
+});
+
+test('legacy as-needed schedule and condition survive a strength-only edit', async () => {
+  await familyProfile();
+  const legacy={
+    name:'Paracetamol',strength:'500 mg',dose:'1',instruction:'',amount:null,unit:'เม็ด',
+    frequency:'เมื่อมีอาการ',timing:'ก่อนนอน',route:'รับประทาน',condition:'ข้อมูลเก่า',
+  };
+  const first=await save([legacy]);
+  const edited=await save([{...legacy,strength:'650 mg',indication:'',useCondition:null,dayPeriods:[],notes:''}],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(edited.medications[0].strength,'650 mg');
+  assert.equal(edited.medications[0].frequency,'เมื่อมีอาการ');
+  assert.equal(edited.medications[0].timing,'ก่อนนอน');
+  assert.equal(edited.medications[0].condition,'ข้อมูลเก่า');
+});
+
+test('unknown legacy timing survives an unrelated indication edit byte-for-byte', async () => {
+  await familyProfile();
+  const legacy=baseItem({timing:'หลังอาหารทันทีตามแพทย์สั่ง'});
+  const first=await save([legacy]);
+  const edited=await save([{...legacy,indication:'ติดตามอาการ',useCondition:null,dayPeriods:[],notes:''}],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(edited.medications[0].indication,'ติดตามอาการ');
+  assert.equal(edited.medications[0].timing,'หลังอาหารทันทีตามแพทย์สั่ง');
+});
+
+test('legacy directions stored in dose survive an unrelated indication edit', async () => {
+  await familyProfile();
+  const legacy={
+    name:'ยาความดัน',strength:'',dose:'รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน',
+    instruction:'',amount:null,unit:null,frequency:null,timing:null,route:null,condition:'',
+  };
+  const first=await save([legacy]);
+  const edited=await save([{...legacy,indication:'ความดันโลหิตสูง',useCondition:null,dayPeriods:[],notes:''}],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(edited.medications[0].indication,'ความดันโลหิตสูง');
+  assert.equal(edited.medications[0].dose,legacy.dose);
+  assert.equal(edited.medications[0].instruction,'');
+});
+
+test('new indication remains distinct from preserved legacy condition', async () => {
+  await familyProfile();
+  const legacy=baseItem({condition:'ข้อมูลเก่า: ใช้ตามแพทย์สั่ง'});
+  const first=await save([legacy]);
+  const edited=await save([{...legacy,indication:'ลดความดันโลหิต',useCondition:null,dayPeriods:[],notes:''}],
+    {baseSnapshotId:first.currentSnapshot.snapshotId});
+  assert.equal(edited.medications[0].condition,'ข้อมูลเก่า: ใช้ตามแพทย์สั่ง');
+  assert.equal(edited.medications[0].indication,'ลดความดันโลหิต');
+  assert.notEqual(edited.medications[0].condition,edited.medications[0].indication);
+});
+
+test('schedule, indication and notes changes are generic changes, never dose changes', () => {
+  const before=baseItem({indication:'เดิม',notes:'เดิม',frequency:'1 ครั้ง',timing:null,useCondition:'before_meal',dayPeriods:['morning']});
+  for(const after of [
+    {...before,indication:'ใหม่'}, {...before,notes:'ใหม่'},
+    {...before,frequency:'2 ครั้ง',dayPeriods:['morning','evening']},
+    {...before,useCondition:'after_meal'},
+  ]){
+    const diff=medicationService.medicationSetDiff([before],[after]);
+    assert.equal(diff.changes.length,1);
+    assert.equal(diff.changes[0].category,'multiple_fields_changed');
+    assert.notEqual(diff.changes[0].category,'dose_changed');
+  }
+});
+
 test('changing only total dispensed amount is not classified as a dose change', () => {
   const result = medicationService.medicationSetDiff(
     [baseItem({ dose:'5', unit:'มล.', amount:'1 ขวด' })],

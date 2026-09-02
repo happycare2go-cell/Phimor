@@ -15,9 +15,20 @@
     ['questionsToAsk','คำถามที่ควรถามเพิ่ม'],['safetyConsiderations','ประเด็นความปลอดภัย'],
     ['responseGuidance','โครงสร้างประกอบการตอบ'],['escalationConsiderations','ประเด็นพิจารณาส่งต่อ'],
   ]);
+  const MEDICATION_USE_CONDITION_LABELS=Object.freeze({before_meal:'ก่อนอาหาร',after_meal:'หลังอาหาร',with_meal:'พร้อมอาหาร',as_needed:'เมื่อมีอาการ'});
+  const MEDICATION_PERIOD_LABELS=Object.freeze({morning:'เช้า',noon:'กลางวัน',evening:'เย็น',bedtime:'ก่อนนอน'});
 
   function safeText(value,fallback=''){return typeof value==='string'?value:fallback;}
   function safeArray(value){return Array.isArray(value)?value:[];}
+  function medicationSchedule(item={}){
+    const rawFrequency=safeText(item.frequency);const frequencyMatch=rawFrequency.match(/^(?:วันละ\s*)?([1-4])\s*ครั้ง$/u);
+    const frequency=frequencyMatch?`วันละ ${frequencyMatch[1]} ครั้ง`:(rawFrequency?`ความถี่เดิม ${rawFrequency}`:'');
+    const periods=safeArray(item.dayPeriods).map((value)=>MEDICATION_PERIOD_LABELS[value]).filter(Boolean).join(' / ');
+    const useCondition=MEDICATION_USE_CONDITION_LABELS[item.useCondition]||'';
+    const structured=[frequency,periods,useCondition].filter(Boolean).join(' · ');
+    const legacyTiming=safeText(item.timing);
+    return [structured,legacyTiming?`เวลาใช้ยาเดิม ${legacyTiming}`:''].filter(Boolean).join(' · ');
+  }
   function normalizedMessages(value){
     const bySequence=new Map();
     safeArray(value).forEach((item)=>{
@@ -310,7 +321,7 @@
     const grid=doc.createElement('dl');grid.className='case-context__grid';fields.forEach(([label,value])=>{const item=doc.createElement('div');textElement(doc,item,'dt','',label);textElement(doc,item,'dd','',contextValue(value));grid.appendChild(item);});profileSection.appendChild(grid);container.appendChild(profileSection);
 
     const medicationSection=doc.createElement('section');medicationSection.className='case-context__medications';textElement(doc,medicationSection,'h3','','ยาปัจจุบันที่บันทึกไว้');
-    const medications=safeArray(context.currentMedications);if(!medications.length)textElement(doc,medicationSection,'p','case-context__hint','ยังไม่มีรายการยาปัจจุบัน');else{const list=doc.createElement('ul');medications.forEach((item)=>{const details=[item.strength,item.dose,item.instruction,item.amount&&item.unit?`${item.amount} ${item.unit}`:null,item.frequency,item.timing,item.route,item.condition].filter(Boolean).join(' · ');textElement(doc,list,'li','',`${contextValue(item.name)}${details?` — ${details}`:''}`);});medicationSection.appendChild(list);}container.appendChild(medicationSection);
+    const medications=safeArray(context.currentMedications);if(!medications.length)textElement(doc,medicationSection,'p','case-context__hint','ยังไม่มีรายการยาปัจจุบัน');else{const list=doc.createElement('ul');medications.forEach((item)=>{const dose=item.dose?`ครั้งละ ${item.dose}${item.unit?` ${item.unit}`:''}`:null;const details=[item.strength,item.indication?`ข้อบ่งใช้ ${item.indication}`:null,dose,medicationSchedule(item),item.instruction,item.amount?`จำนวนที่ได้รับทั้งหมด ${item.amount}`:null,item.route,item.notes?`หมายเหตุเพิ่มเติม ${item.notes}`:null,item.condition?`ข้อมูลเดิม ${item.condition}`:null].filter(Boolean).join(' · ');textElement(doc,list,'li','',`${contextValue(item.name)}${details?` — ${details}`:''}`);});medicationSection.appendChild(list);}container.appendChild(medicationSection);
 
     const changeSection=doc.createElement('section');changeSection.className='case-context__medication-changes';textElement(doc,changeSection,'h3','','การเปลี่ยนแปลงยาล่าสุด');const changes=safeArray(context.recentMedicationChanges);if(!changes.length)textElement(doc,changeSection,'p','case-context__hint','ยังไม่มีประวัติการเปลี่ยนแปลงที่ยืนยันได้');else{const list=doc.createElement('ul');changes.forEach((entry)=>{const when=entry.snapshot?.recordedAt?new Date(entry.snapshot.recordedAt).toLocaleString('th-TH'):'ไม่ทราบเวลา';textElement(doc,list,'li','',`${when} · ${contextValue(entry.sourceLabel,'ข้อมูลในระบบ')}`)});changeSection.appendChild(list)}container.appendChild(changeSection);
 
@@ -496,5 +507,6 @@
     }catch(error){access.hidden=false;access.textContent=error?.message==='LIFF_ID_PHARMACIST_MISSING'?'ยังไม่ได้ตั้งค่า Pharmacist LIFF กรุณาติดต่อผู้ดูแลระบบ':'ไม่สามารถเปิด Pharmacist Console ได้';return null;}
   }
 
-  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,safeText,safeArray,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,createConsoleSession,renderCaseContext,renderAssistant,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
+  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,MEDICATION_USE_CONDITION_LABELS,MEDICATION_PERIOD_LABELS,
+    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,createConsoleSession,renderCaseContext,renderAssistant,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
 }));

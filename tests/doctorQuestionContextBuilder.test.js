@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   createDoctorQuestionContextBuilder,
 } = require('../backend/services/doctorQuestionContextBuilder');
+const { AI_VERSIONS } = require('../backend/config/aiVersions');
 
 const NOW = new Date('2026-08-26T00:00:00.000Z');
 
@@ -35,6 +36,8 @@ function dependencies(overrides = {}) {
       status: 'CURRENT_SNAPSHOT', currentSnapshot: { snapshotId: 'SNAP-NEW' },
       medications: [{
         name: 'Metformin', strength: '500 mg', dose: '1 เม็ด', instruction: 'หลังอาหาร',
+        indication:'เบาหวาน',notes:'ติดตามตามแผน',frequency:'2 ครั้ง',useCondition:'after_meal',
+        dayPeriods:['morning','evening'],condition:'ข้อมูลเดิม',
         imageBase64: 'PRIVATE-IMAGE', phone: '0822222222',
       }],
     }),
@@ -74,8 +77,12 @@ async function build(overrides = {}, input = {}) {
 
 test('Family owner context includes minimized current clinical facts with provenance', async () => {
   const result = await build();
+  assert.equal(AI_VERSIONS.doctorQuestionContext, 'doctor-question-context-v2');
   assert.deepEqual(result.context.conditions, [{ value: 'เบาหวาน', source: 'care_profile' }]);
   assert.equal(result.context.currentMedications[0].name, 'Metformin');
+  assert.equal(result.context.currentMedications[0].indication,'เบาหวาน');
+  assert.equal(result.context.currentMedications[0].notes,'ติดตามตามแผน');
+  assert.deepEqual(result.context.currentMedications[0].dayPeriods,['morning','evening']);
   assert.equal(result.context.medicationChanges.some((item) => item.type === 'dose_changed'), true);
   assert.equal(result.context.appointment.hospital, 'โรงพยาบาลกลาง');
   assert.equal(result.context.confirmedLabs.length, 2);

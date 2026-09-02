@@ -25,6 +25,7 @@ function isEligibleCurrentSnapshot(snapshot) {
 
 function projectMedication(record = {}) {
   const structured = record.instruction && typeof record.instruction === 'object' ? record.instruction : {};
+  const rawDayPeriods = record.dayPeriods ?? record.day_periods ?? structured.dayPeriods ?? structured.day_periods;
   return {
     medicationId: record.medication_id || record.medicationId || null,
     stableMedicationId: record.stable_medication_id || record.stableMedicationId
@@ -39,6 +40,10 @@ function projectMedication(record = {}) {
     timing: record.timing ?? structured.timing ?? null,
     route: record.route ?? structured.route ?? null,
     condition: typeof record.condition === 'string' ? record.condition : '',
+    indication: typeof record.indication === 'string' ? record.indication : '',
+    useCondition: record.useCondition ?? record.use_condition ?? structured.useCondition ?? structured.use_condition ?? null,
+    dayPeriods: Array.isArray(rawDayPeriods) ? [...rawDayPeriods] : [],
+    notes: typeof record.notes === 'string' ? record.notes : '',
   };
 }
 
@@ -171,6 +176,11 @@ async function getMedicationInstructions({ careProfileId, requester, medicationI
       frequency: item.frequency,
       timing: item.timing,
       route: item.route,
+      indication: item.indication,
+      useCondition: item.useCondition,
+      dayPeriods: item.dayPeriods,
+      notes: item.notes,
+      condition: item.condition,
     })),
   };
 }

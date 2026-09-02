@@ -61,6 +61,19 @@ function parseDoseAndInstruction(item) {
   return { dose: normalizeUnits(match[1]), instruction: normalizeUnits(match[2]), source: 'text' };
 }
 
+function normalizedSemanticFields(item = {}) {
+  const periodOrder = ['morning','noon','evening','bedtime'];
+  const periods = new Set((Array.isArray(item.dayPeriods) ? item.dayPeriods : []).map(normalizeText).filter(Boolean));
+  return {
+    amount:normalizeUnits(item.amount), unit:normalizeUnits(item.unit),
+    frequency:normalizeText(item.frequency), timing:normalizeText(item.timing),
+    route:normalizeText(item.route), condition:normalizeText(item.condition),
+    indication:normalizeText(item.indication), useCondition:normalizeText(item.useCondition),
+    dayPeriods:periodOrder.filter((value) => periods.has(value)),
+    notes:normalizeText(item.notes),
+  };
+}
+
 function normalizeMedication(item) {
   const nameAndStrength = extractNameAndStrength(item);
   const doseAndInstruction = parseDoseAndInstruction(item);
@@ -69,6 +82,8 @@ function normalizeMedication(item) {
       medicationId: item.medicationId, stableMedicationId: item.stableMedicationId,
       name: item.name, strength: item.strength, dose: item.dose, instruction: item.instruction,
       amount: item.amount, unit: item.unit, frequency: item.frequency, timing: item.timing, route: item.route,
+      condition:item.condition, indication:item.indication, useCondition:item.useCondition,
+      dayPeriods:Array.isArray(item.dayPeriods) ? [...item.dayPeriods] : [], notes:item.notes,
     },
     normalized: {
       stableMedicationId: normalizeText(item.stableMedicationId),
@@ -77,6 +92,7 @@ function normalizeMedication(item) {
       dose: doseAndInstruction.dose,
       instruction: doseAndInstruction.instruction,
       instructionSource: doseAndInstruction.source,
+      semanticFields:normalizedSemanticFields(item),
     },
   };
 }
@@ -177,12 +193,14 @@ async function compareMedicationSnapshots({ previousSnapshotId, currentSnapshotI
     const strengthChanged = before.normalized.strength !== after.normalized.strength;
     const doseChanged = before.normalized.dose !== after.normalized.dose;
     const instructionChanged = before.normalized.instruction !== after.normalized.instruction;
+    const semanticFieldsChanged = JSON.stringify(before.normalized.semanticFields)
+      !== JSON.stringify(after.normalized.semanticFields);
     const entry = changeEntry(pair, before, after);
-    const count = [strengthChanged, doseChanged, instructionChanged].filter(Boolean).length;
+    const count = [strengthChanged, doseChanged, instructionChanged, semanticFieldsChanged].filter(Boolean).length;
     if (strengthChanged) output.strengthChanged.push(entry);
     if (doseChanged || strengthChanged) output.doseChanged.push(entry); // compatibility projection
     if (instructionChanged) output.instructionChanged.push(entry);
-    if (count > 1) output.multipleFieldsChanged.push(entry);
+    if (semanticFieldsChanged || count > 1) output.multipleFieldsChanged.push(entry);
     if (count === 0) output.unchanged.push(entry);
   }
   return output;

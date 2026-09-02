@@ -37,6 +37,13 @@ class FakeElement{
 }
 const fakeDocument=()=>({createElement:(tag)=>new FakeElement(tag)});
 
+test('pharmacist medication schedule keeps legacy timing visibly distinct from structured facts',()=>{
+  assert.equal(consoleUI.medicationSchedule({frequency:'1 ครั้ง',dayPeriods:['morning'],useCondition:'after_meal',timing:'หลังอาหาร เช้า'}),
+    'วันละ 1 ครั้ง · เช้า · หลังอาหาร · เวลาใช้ยาเดิม หลังอาหาร เช้า');
+  assert.equal(consoleUI.medicationSchedule({timing:'ก่อนนอน'}),'เวลาใช้ยาเดิม ก่อนนอน');
+  assert.equal(consoleUI.medicationSchedule({frequency:'เมื่อมีอาการ'}),'ความถี่เดิม เมื่อมีอาการ');
+});
+
 test('pharmacist access denied is a safe backend-authoritative state',async()=>{
   const denied=Object.assign(new Error('private'),{errorCode:'PHARMACIST_LICENSE_NOT_VERIFIED'});
   const {session,state}=createHarness(async()=>{throw denied;});await session.initialize();
@@ -285,7 +292,9 @@ test('assigned case loads LINE contact and Care Profile context separately from 
     generatedAt:'2026-08-25T10:00:00Z',
     contact:{displayName:'ญาติผู้ติดต่อ',pictureUrl:'https://profile.line-scdn.net/avatar'},
     careProfile:{patientName:'คุณยาย',chronicConditions:['เบาหวาน'],drugAllergies:'Penicillin'},
-    currentMedications:[{name:'Metformin',dose:'500 mg',instruction:'หลังอาหาร'}],
+    currentMedications:[{name:'Metformin',strength:'500 mg',indication:'เบาหวาน',dose:'1',unit:'เม็ด',
+      frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning','evening'],instruction:'ตามฉลาก',
+      amount:'30 เม็ด',notes:'ติดตามตามแผน',condition:'ข้อมูลเดิม'}],
     upcomingAppointments:[{hospital:'โรงพยาบาลทดสอบ',datetime:'2026-08-26T10:00:00Z'}],
   };
   const harness=createHarness(async(pathValue)=>{
@@ -301,6 +310,7 @@ test('assigned case loads LINE contact and Care Profile context separately from 
   const visible=walkText(container).join('|');
   assert.match(visible,/ผู้ติดต่อผ่าน LINE|ญาติผู้ติดต่อ|อาจเป็นญาติหรือผู้ดูแล/);
   assert.match(visible,/Care Profile ของผู้รับการดูแล|คุณยาย|เบาหวาน|Penicillin|Metformin|โรงพยาบาลทดสอบ/);
+  assert.match(visible,/ข้อบ่งใช้ เบาหวาน|ครั้งละ 1 เม็ด|เช้า \/ เย็น|หลังอาหาร|จำนวนที่ได้รับทั้งหมด 30 เม็ด|หมายเหตุเพิ่มเติม ติดตามตามแผน|ข้อมูลเดิม/);
   assert.doesNotMatch(visible,/lineUserId|family_phone|emergency_contact|Health History/);
 });
 

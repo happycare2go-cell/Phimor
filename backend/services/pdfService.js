@@ -13,9 +13,18 @@ const FONT_BOLD = path.join(__dirname, '../assets/fonts/Sarabun-Bold.ttf');
 const NAVY = '#1C2B64';
 const GRAY = '#5A6580';
 const LIGHT_LINE = '#DCE2F0';
+const MEDICATION_USE_CONDITION_LABELS = Object.freeze({before_meal:'ก่อนอาหาร',after_meal:'หลังอาหาร',with_meal:'พร้อมอาหาร',as_needed:'เมื่อมีอาการ'});
+const MEDICATION_PERIOD_LABELS = Object.freeze({morning:'เช้า',noon:'กลางวัน',evening:'เย็น',bedtime:'ก่อนนอน'});
 
 function formatThaiDate(iso) {
   return formatThaiDateTime(iso);
+}
+
+function medicationHistoryValue(field, value) {
+  if (field === 'useCondition') return MEDICATION_USE_CONDITION_LABELS[value] || '-';
+  if (field === 'dayPeriods') return (Array.isArray(value) ? value : [])
+    .map((period) => MEDICATION_PERIOD_LABELS[period]).filter(Boolean).join(', ') || '-';
+  return value ?? '-';
 }
 
 /**
@@ -102,8 +111,14 @@ function generateHistoryPdf({ profile, appointments = [], currentMedications = n
       doc.font('regular').fontSize(11).fillColor(GRAY).text('ยังไม่มีรายการยาปัจจุบัน');
     } else {
       authoritativeMedications.forEach((m, i) => {
-        const detail = [m.strength, m.dose, m.instruction, m.amount && m.unit ? `${m.amount} ${m.unit}` : '',
-          m.frequency, m.timing, m.route, m.condition ? `หมายเหตุ ${m.condition}` : '',
+        const useConditionLabel=MEDICATION_USE_CONDITION_LABELS[m.useCondition] || '';
+        const periods=(Array.isArray(m.dayPeriods)?m.dayPeriods:[]).map((value)=>MEDICATION_PERIOD_LABELS[value]).filter(Boolean).join(' / ');
+        const detail = [m.strength, m.indication ? `ข้อบ่งใช้ ${m.indication}` : '',
+          m.dose ? `ครั้งละ ${m.dose}${m.unit ? ` ${m.unit}` : ''}` : '',
+          m.frequency, periods, useConditionLabel, m.timing ? `เวลาเดิม ${m.timing}` : '', m.instruction,
+          m.amount ? `จำนวนที่ได้รับทั้งหมด ${m.amount}` : '', m.route,
+          m.notes ? `หมายเหตุเพิ่มเติม ${m.notes}` : '',
+          m.condition ? `ข้อมูลเดิม (ข้อบ่งใช้ / หมายเหตุ) ${m.condition}` : '',
           currentMedicationSnapshot?.recordedAt ? `อัปเดต ${formatThaiDate(currentMedicationSnapshot.recordedAt)}` : '']
           .filter(Boolean).join(' | ');
         doc.font('bold').fontSize(11).fillColor('#000').text(`${i + 1}. ${m.name}`, { lineGap: 4 });
@@ -121,16 +136,17 @@ function generateHistoryPdf({ profile, appointments = [], currentMedications = n
         bodyText(`รายการยาที่บันทึกครั้งนั้น: ${(entry.medications || []).map((item) => `${item.name} ${item.strength || ''}`).join(', ') || '-'}`);
       } else {
         const labels={added:'เพิ่มยา',removed:'นำออกจากรายการยาปัจจุบัน',strength_changed:'ปรับขนาดยา',dose_changed:'ปรับปริมาณ',instruction_changed:'ปรับวิธีใช้',multiple_fields_changed:'ปรับข้อมูลหลายช่อง'};
-        const fieldLabels={strength:'ขนาดยา',dose:'ปริมาณที่ใช้',instruction:'วิธีใช้',amount:'จำนวน',unit:'หน่วย',frequency:'ความถี่',timing:'เวลา',route:'วิธีให้ยา',condition:'ข้อบ่งใช้ / หมายเหตุ'};
+        const fieldLabels={strength:'ความแรงของยา',dose:'ครั้งละ',instruction:'คำสั่งใช้ยาตามฉลาก',amount:'จำนวนที่ได้รับทั้งหมด',unit:'หน่วย',frequency:'ใช้วันละ',timing:'เวลาใช้ยาเดิม',route:'ทางใช้ยา',condition:'ข้อบ่งใช้ / หมายเหตุเดิม',indication:'ข้อบ่งใช้ยา',useCondition:'เงื่อนไขการใช้ยา',dayPeriods:'ช่วงเวลาที่ใช้ยา',notes:'หมายเหตุเพิ่มเติม'};
         for (const change of entry.changes || []) {
           const name=change.current?.name || change.previous?.name || 'ยา';
           const changedFields=(change.changedFields || []).filter((field)=>fieldLabels[field]);
-          const details=changedFields.map((field)=>`${fieldLabels[field]}: ${change.previous?.[field] ?? '-'} → ${change.current?.[field] ?? '-'}`);
+          const details=changedFields.map((field)=>`${fieldLabels[field]}: ${medicationHistoryValue(field,change.previous?.[field])} → ${medicationHistoryValue(field,change.current?.[field])}`);
           if(!details.length&&['added','removed'].includes(change.category)){
             const factual=change.current || change.previous || {};
             const values=[factual.strength,factual.dose,factual.instruction,
               factual.amount&&factual.unit?`${factual.amount} ${factual.unit}`:null,
-              factual.frequency,factual.timing,factual.route,factual.condition].filter(Boolean);
+              factual.frequency,(factual.dayPeriods||[]).join('/'),factual.useCondition,factual.timing,
+              factual.route,factual.indication,factual.notes,factual.condition].filter(Boolean);
             if(values.length)details.push(values.join(' | '));
           }
           bodyText(`• ${name} — ${labels[change.category] || 'มีการเปลี่ยนแปลง'}${details.length ? ` (${details.join(' | ')})` : ''}`);

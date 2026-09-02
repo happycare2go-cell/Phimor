@@ -10,14 +10,18 @@ const {
 const { normalizeMedication, matchNormalized } = require('./medicationDiffService');
 
 const MAX_MEDICATIONS = 30;
+const USE_CONDITIONS = Object.freeze(['before_meal', 'after_meal', 'with_meal', 'as_needed']);
+const DAY_PERIOD_ORDER = Object.freeze(['morning', 'noon', 'evening', 'bedtime']);
 const FIELD_LIMITS = Object.freeze({
   name:200, strength:120, dose:200, instruction:500, amount:120, unit:120,
-  frequency:120, timing:120, route:120, condition:500, stableMedicationId:160,
+  frequency:120, timing:120, route:120, condition:500, indication:500, notes:500,
+  stableMedicationId:160,
 });
 const ITEM_FIELDS = new Set([
   'medicationId', 'medication_id', 'stableMedicationId', 'stable_medication_id',
   'name', 'strength', 'dose', 'instruction', 'note', 'amount', 'unit',
-  'frequency', 'timing', 'route', 'condition',
+  'frequency', 'timing', 'route', 'condition', 'indication', 'useCondition',
+  'use_condition', 'dayPeriods', 'day_periods', 'notes',
 ]);
 
 class MedicationCurrentSetError extends Error {
@@ -41,6 +45,47 @@ function cleanText(value, field) {
   return text;
 }
 
+function cleanOptionalText(value, field, rowIndex) {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'string') {
+    invalid('INVALID_MEDICATION_FIELD_TYPE', 'รูปแบบข้อมูลยาไม่ถูกต้อง', { rowIndex, field }, 422);
+  }
+  return cleanText(value, field);
+}
+
+function canonicalUseCondition(value, rowIndex) {
+  if (value === null || value === undefined || value === '') return null;
+  const normalized = String(value).trim();
+  if (!USE_CONDITIONS.includes(normalized)) {
+    invalid('INVALID_MEDICATION_USE_CONDITION', 'รูปแบบเงื่อนไขการใช้ยาไม่ถูกต้อง',
+      { rowIndex, field:'useCondition' }, 422);
+  }
+  return normalized;
+}
+
+function canonicalDayPeriods(value, rowIndex) {
+  if (value === null || value === undefined) return Object.freeze([]);
+  if (!Array.isArray(value)) {
+    invalid('INVALID_MEDICATION_DAY_PERIODS', 'รูปแบบช่วงเวลาใช้ยาไม่ถูกต้อง',
+      { rowIndex, field:'dayPeriods' }, 422);
+  }
+  const unique = new Set();
+  for (const raw of value) {
+    const period = String(raw || '').trim();
+    if (!DAY_PERIOD_ORDER.includes(period)) {
+      invalid('INVALID_MEDICATION_DAY_PERIODS', 'รูปแบบช่วงเวลาใช้ยาไม่ถูกต้อง',
+        { rowIndex, field:'dayPeriods' }, 422);
+    }
+    unique.add(period);
+  }
+  return Object.freeze(DAY_PERIOD_ORDER.filter((period) => unique.has(period)));
+}
+
+function dailyFrequencyCount(value) {
+  const match = String(value || '').trim().match(/^(?:วันละ\s*)?([1-4])\s*ครั้ง$/u);
+  return match ? Number(match[1]) : null;
+}
+
 function canonicalMedication(item = {}, rowIndex = 0) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) invalid('INVALID_MEDICATION_ITEM', 'รูปแบบรายการยาไม่ถูกต้อง', { rowIndex });
   const unsupported = Object.keys(item).find((key) => !ITEM_FIELDS.has(key));
@@ -49,14 +94,30 @@ function canonicalMedication(item = {}, rowIndex = 0) {
   if (!name) invalid('MEDICATION_NAME_REQUIRED', 'กรุณาระบุชื่อยา', { rowIndex, field:'name' });
   const amount = item.amount === null || item.amount === undefined || item.amount === ''
     ? null : cleanText(item.amount, 'amount');
+  const useCondition = canonicalUseCondition(item.useCondition ?? item.use_condition, rowIndex);
+  const dayPeriods = canonicalDayPeriods(item.dayPeriods ?? item.day_periods, rowIndex);
+  const frequency = cleanText(item.frequency, 'frequency') || null;
+  const count = dailyFrequencyCount(frequency);
+  const modernSchedule = Object.hasOwn(item, 'useCondition') || Object.hasOwn(item, 'use_condition')
+    || Object.hasOwn(item, 'dayPeriods') || Object.hasOwn(item, 'day_periods');
+  const legacyAsNeededFrequency = frequency === 'เมื่อมีอาการ' && useCondition === null && dayPeriods.length === 0;
+  if (modernSchedule && frequency && count === null && !legacyAsNeededFrequency) {
+    invalid('INVALID_MEDICATION_FREQUENCY', 'รูปแบบจำนวนครั้งต่อวันไม่ถูกต้อง',
+      { rowIndex, field:'frequency' }, 422);
+  }
+  if (count !== null && dayPeriods.length > 0 && useCondition !== 'as_needed' && count !== dayPeriods.length) {
+    invalid('MEDICATION_SCHEDULE_CONFLICT', 'จำนวนครั้งต่อวันไม่ตรงกับช่วงเวลาที่เลือก กรุณาตรวจสอบอีกครั้ง',
+      { rowIndex, field:'dayPeriods', frequencyCount:count, dayPeriodCount:dayPeriods.length }, 422);
+  }
   return Object.freeze({
     medicationId:item.medicationId || item.medication_id || null,
     stableMedicationId:cleanText(item.stableMedicationId || item.stable_medication_id, 'stableMedicationId') || null,
     name, strength:cleanText(item.strength, 'strength'), dose:cleanText(item.dose, 'dose'),
     instruction:cleanText(item.instruction ?? item.note, 'instruction'), amount,
-    unit:cleanText(item.unit, 'unit') || null, frequency:cleanText(item.frequency, 'frequency') || null,
+    unit:cleanText(item.unit, 'unit') || null, frequency,
     timing:cleanText(item.timing, 'timing') || null, route:cleanText(item.route, 'route') || null,
-    condition:cleanText(item.condition, 'condition'),
+    condition:cleanText(item.condition, 'condition'), indication:cleanOptionalText(item.indication, 'indication', rowIndex),
+    useCondition, dayPeriods, notes:cleanOptionalText(item.notes, 'notes', rowIndex),
   });
 }
 
@@ -104,7 +165,9 @@ function comparable(item) {
     stableMedicationId:item.stableMedicationId || null, name:item.name, strength:item.strength || '',
     dose:item.dose || '', instruction:item.instruction || '', amount:item.amount ?? null,
     unit:item.unit ?? null, frequency:item.frequency ?? null, timing:item.timing ?? null,
-    route:item.route ?? null, condition:item.condition || '',
+    route:item.route ?? null, condition:item.condition || '', indication:item.indication || '',
+    useCondition:item.useCondition ?? null, dayPeriods:Array.isArray(item.dayPeriods) ? [...item.dayPeriods] : [],
+    notes:item.notes || '',
   };
 }
 
@@ -118,8 +181,11 @@ function medicationSetDiff(previousItems, currentItems) {
   for (const pair of matched.pairs) {
     const before = comparable(previousItems[pair.previousIndex]);
     const after = comparable(currentItems[pair.currentIndex]);
-    const fields = ['strength','dose','amount','unit','instruction','frequency','timing','route','condition']
-      .filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
+    const fields = ['strength','dose','amount','unit','instruction','frequency','timing','route','condition',
+      'indication','useCondition','dayPeriods','notes']
+      .filter((field) => field === 'dayPeriods'
+        ? JSON.stringify(before[field] || []) !== JSON.stringify(after[field] || [])
+        : String(before[field] ?? '') !== String(after[field] ?? ''));
     if (!fields.length) continue;
     let category = 'multiple_fields_changed';
     if (fields.length === 1 && fields[0] === 'strength') category = 'strength_changed';
@@ -154,6 +220,8 @@ function medicationRecord(item, { careProfileId, snapshotId, source, medicationI
     stable_medication_id:item.stableMedicationId, name:item.name, strength:item.strength,
     dose:item.dose, instruction:item.instruction, amount:item.amount, unit:item.unit,
     frequency:item.frequency, timing:item.timing, route:item.route, condition:item.condition,
+    indication:item.indication, use_condition:item.useCondition, day_periods:item.dayPeriods,
+    notes:item.notes,
     source, source_center_id:sourceCenterId,
   };
 }
@@ -321,7 +389,8 @@ function createMedicationCurrentSetService(overrides = {}) {
 const defaultService = createMedicationCurrentSetService();
 
 module.exports = {
-  MAX_MEDICATIONS, FIELD_LIMITS, MedicationCurrentSetError,
+  MAX_MEDICATIONS, USE_CONDITIONS, DAY_PERIOD_ORDER, FIELD_LIMITS, MedicationCurrentSetError,
+  canonicalUseCondition, canonicalDayPeriods, dailyFrequencyCount,
   canonicalMedication, validateCompleteSet, canonicalImageItems, medicationSetDiff, safeSourceLabel,
   safeCurrentProjection, createMedicationCurrentSetService,
   getCurrent:defaultService.getCurrent,

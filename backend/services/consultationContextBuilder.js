@@ -62,7 +62,10 @@ function medicationProjection(item, snapshot) {
     name:item.name || '', strength:item.strength || '', dose:item.dose || '',
     instruction:item.instruction || '', amount:item.amount ?? null, unit:item.unit ?? null,
     frequency:item.frequency ?? null, timing:item.timing ?? null, route:item.route ?? null,
-    condition:item.condition || '',
+    condition:item.condition || '', indication:item.indication || '',
+    useCondition:item.useCondition ?? null,
+    dayPeriods:Array.isArray(item.dayPeriods) ? Object.freeze([...item.dayPeriods]) : Object.freeze([]),
+    notes:item.notes || '',
     source:source('medication_snapshot',snapshot.recorded_at || snapshot._createdAt,snapshot.snapshot_id),
   });
 }

@@ -46,7 +46,11 @@ function medicationFact(item = {}) {
     dose: text(item.dose, 200), instruction: text(item.instruction, 500),
     amount: scalar(item.amount), unit: text(item.unit, 80) || null,
     frequency: text(item.frequency, 120) || null, timing: text(item.timing, 120) || null,
-    route: text(item.route, 120) || null, condition: text(item.condition, 200) || null,
+    useCondition: text(item.useCondition, 40) || null,
+    dayPeriods: Object.freeze((Array.isArray(item.dayPeriods) ? item.dayPeriods : [])
+      .map((value) => text(value, 40)).filter(Boolean).slice(0, 4)),
+    route: text(item.route, 120) || null, condition: text(item.condition, 500) || null,
+    indication: text(item.indication, 500) || null, notes: text(item.notes, 500) || null,
     source: 'medication_snapshot',
   });
 }

@@ -9,7 +9,10 @@ function safeMedication(item = {}) {
     name:item.name || '', strength:item.strength || '', dose:item.dose || '',
     instruction:item.instruction || '', amount:item.amount ?? null, unit:item.unit ?? null,
     frequency:item.frequency ?? null, timing:item.timing ?? null, route:item.route ?? null,
-    condition:item.condition || '',
+    condition:item.condition || '', indication:item.indication || '',
+    useCondition:item.useCondition ?? null,
+    dayPeriods:Array.isArray(item.dayPeriods) ? [...item.dayPeriods] : [],
+    notes:item.notes || '',
   };
 }
 

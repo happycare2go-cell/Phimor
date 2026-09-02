@@ -6,16 +6,27 @@
   const FIELDS = Object.freeze([
     ['name', 'ชื่อยา', 200, true, 'basic'],
     ['strength', 'ความแรงของยา', 120, false, 'basic'],
+    ['indication', 'ข้อบ่งใช้ยา', 500, false, 'basic'],
     ['dose', 'ครั้งละ', 200, false, 'usage'],
-    ['unit', 'หน่วย', 120, false, 'usage', ['เม็ด','แคปซูล','มล.','ช้อนชา','หยด','พัฟ']],
-    ['frequency', 'ใช้วันละ', 120, false, 'usage', ['1 ครั้ง','2 ครั้ง','3 ครั้ง','4 ครั้ง','เมื่อมีอาการ']],
-    ['timing', 'เวลาใช้ยา', 120, false, 'usage', ['เช้า','กลางวัน','เย็น','ก่อนนอน','ก่อนอาหาร','หลังอาหาร','พร้อมอาหาร']],
+    ['unit', 'หน่วยต่อครั้ง', 120, false, 'usage', ['เม็ด','แคปซูล','มล.','ช้อนชา','หยด','พัฟ']],
     ['route', 'ทางใช้ยา', 120, false, 'advanced', ['รับประทาน','ทาภายนอก','หยอดตา','หยอดหู','สูดพ่น','ฉีด']],
     ['instruction', 'คำสั่งใช้ยาตามฉลาก', 500, false, 'advanced'],
     ['amount', 'จำนวนที่ได้รับทั้งหมด', 120, false, 'advanced'],
-    ['condition', 'หมายเหตุเพิ่มเติม', 500, false, 'advanced'],
+    ['notes', 'หมายเหตุเพิ่มเติม', 500, false, 'advanced'],
   ]);
-  const FIELD_LABELS = Object.freeze(Object.fromEntries(FIELDS.map(([field, label]) => [field, label])));
+  const FIELD_LABELS = Object.freeze({
+    ...Object.fromEntries(FIELDS.map(([field, label]) => [field, label])),
+    frequency:'ใช้วันละ', useCondition:'เงื่อนไขการใช้ยา', dayPeriods:'ช่วงเวลาที่ใช้ยา',
+    timing:'เวลาใช้ยา (ข้อมูลเดิม)', condition:'ข้อบ่งใช้ / หมายเหตุ (ข้อมูลเดิม)',
+  });
+  const DAY_PERIODS = Object.freeze([
+    ['morning','เช้า'], ['noon','กลางวัน'], ['evening','เย็น'], ['bedtime','ก่อนนอน'],
+  ]);
+  const USE_CONDITIONS = Object.freeze([
+    ['','ไม่ระบุ'], ['before_meal','ก่อนอาหาร'], ['after_meal','หลังอาหาร'],
+    ['with_meal','พร้อมอาหาร'], ['as_needed','เมื่อมีอาการ'],
+  ]);
+  const FREQUENCIES = Object.freeze(['','1 ครั้ง','2 ครั้ง','3 ครั้ง','4 ครั้ง']);
   const MAX_ROWS = 30;
   const MAX_IMAGES = 4;
   const INPUT_IMAGE_ERRORS = new Set(['unsupported_image', 'invalid_image', 'image_too_large']);
@@ -23,6 +34,14 @@
   function clean(item = {}) {
     const output = { medicationId:item.medicationId || null, stableMedicationId:item.stableMedicationId || null };
     for (const [field] of FIELDS) output[field] = item[field] == null ? '' : String(item[field]);
+    output.frequency = item.frequency == null ? '' : String(item.frequency);
+    output.useCondition = item.useCondition == null ? '' : String(item.useCondition);
+    output.dayPeriods = DAY_PERIODS.map(([value]) => value)
+      .filter((value) => Array.isArray(item.dayPeriods) && item.dayPeriods.includes(value));
+    // These two fields are retained verbatim for historical compatibility.
+    // They are not reinterpreted as the new structured schedule/indication.
+    output.timing = item.timing == null ? '' : String(item.timing);
+    output.condition = item.condition == null ? '' : String(item.condition);
     return output;
   }
 
@@ -55,9 +74,33 @@
   }
 
   function scheduleLine(item = {}) {
+    const structured = structuredScheduleLines(item).join(' · ');
+    return structured || String(item.timing || '').trim();
+  }
+
+  function structuredScheduleLines(item = {}) {
     const rawFrequency = String(item.frequency || '').trim();
-    const frequency = /^\d+\s*ครั้ง$/u.test(rawFrequency) ? `วันละ ${rawFrequency}` : rawFrequency;
-    return [frequency, item.timing].map((value) => String(value || '').trim()).filter(Boolean).join(' · ');
+    const frequencyMatch = rawFrequency.match(/^(?:วันละ\s*)?([1-4])\s*ครั้ง$/u);
+    const frequency = frequencyMatch ? `วันละ ${frequencyMatch[1]} ครั้ง`
+      : (rawFrequency ? `ความถี่ (ข้อมูลเดิม): ${rawFrequency}` : '');
+    const periods = DAY_PERIODS.filter(([value]) => Array.isArray(item.dayPeriods) && item.dayPeriods.includes(value))
+      .map(([, label]) => label).join(', ');
+    const useCondition = item.useCondition ? (Object.fromEntries(USE_CONDITIONS)[item.useCondition] || '') : '';
+    return [frequency, periods, useCondition].filter(Boolean);
+  }
+
+  function legacyTimingLine(item = {}) {
+    const timing = String(item.timing || '').trim();
+    return timing ? `เวลาใช้ยา (ข้อมูลเดิม): ${timing}` : '';
+  }
+
+  function medicationSummaryLines(item = {}) {
+    return [item.strength, item.indication ? `ข้อบ่งใช้: ${item.indication}` : '', doseLine(item),
+      ...structuredScheduleLines(item), legacyTimingLine(item), instructionLine(item), item.route,
+      item.amount ? `จำนวนที่ได้รับทั้งหมด ${item.amount}` : '',
+      item.notes ? `หมายเหตุเพิ่มเติม: ${item.notes}` : '',
+      item.condition ? `ข้อมูลเดิม (ข้อบ่งใช้ / หมายเหตุ): ${item.condition}` : '']
+      .map((value) => String(value || '').trim()).filter(Boolean);
   }
 
   function renderMedicationSummary(parent, item = {}, { prefix = '' } = {}) {
@@ -67,8 +110,11 @@
     heading.append(element('strong', '', String(item.name || 'ยังไม่ระบุชื่อยา')));
     if (item.strength) heading.append(element('span', '', String(item.strength)));
     summary.append(heading);
-    const use = [doseLine(item), scheduleLine(item)].filter(Boolean);
+    if (item.indication) summary.append(element('p', 'medication-editor__indication', `ข้อบ่งใช้: ${item.indication}`));
+    const use = [doseLine(item), ...structuredScheduleLines(item)].filter(Boolean);
     if (use.length) summary.append(element('p', 'medication-editor__usage', use.join('\n')));
+    const legacyTiming = legacyTimingLine(item);
+    if (legacyTiming) summary.append(element('p', 'medication-editor__legacy', legacyTiming));
     const instruction = instructionLine(item);
     if (instruction) summary.append(element('p', 'medication-editor__instruction', instruction));
     parent.append(summary);
@@ -80,14 +126,16 @@
     if (!items.length) {
       const empty = element('div', 'medication-editor__empty');
       empty.append(element('strong', '', 'ยังไม่มีรายการยาปัจจุบัน'),
-        element('p', '', 'เพิ่มยาโดยถ่ายรูปฉลากยา หรือกรอกข้อมูลเอง'));
+        element('p', '', 'เพิ่มรายการยาโดยกรอกข้อมูลที่ระบุอยู่บนฉลากหรือเอกสารยา'));
       container.append(empty);
       return;
     }
     items.slice(0, MAX_ROWS).forEach((item, index) => {
       const card = element('article', 'medication-editor__card');
       renderMedicationSummary(card, item);
-      const details = [item.route, item.amount ? `จำนวนที่ได้รับทั้งหมด ${item.amount}` : '', item.condition]
+      const details = [item.route, item.amount ? `จำนวนที่ได้รับทั้งหมด ${item.amount}` : '',
+        item.notes ? `หมายเหตุเพิ่มเติม: ${item.notes}` : '',
+        item.condition ? `ข้อมูลเดิม (ข้อบ่งใช้ / หมายเหตุ): ${item.condition}` : '']
         .map((value) => String(value || '').trim()).filter(Boolean);
       if (details.length) card.append(element('p', 'medication-editor__card-details', details.join(' · ')));
       if (editable && onEdit) {
@@ -102,7 +150,7 @@
     const [field, labelText, maxLength, required, , options] = definition;
     const label = element('label');
     const labelSpan = element('span', '', labelText);
-    const input = field === 'instruction' || field === 'condition'
+    const input = ['instruction','indication','notes'].includes(field)
       ? document.createElement('textarea') : document.createElement('input');
     input.className = `medication-editor__${field}`;
     input.dataset.medicationField = field;
@@ -110,7 +158,7 @@
     input.value = item[field] == null ? '' : String(item[field]);
     input.required = required;
     input.autocomplete = 'off';
-    if (field === 'amount' || field === 'dose') input.inputMode = 'decimal';
+    if (field === 'dose') input.inputMode = 'decimal';
     if (options?.length) {
       const listId = `medication-${field}-${rowIndex}-${Math.random().toString(36).slice(2, 8)}`;
       input.setAttribute('list', listId);
@@ -122,6 +170,46 @@
     parent.append(label);
   }
 
+  function appendSelect(parent, { field, labelText, choices, value = '', rowIndex, onChange }) {
+    const label = element('label');
+    const select = document.createElement('select');
+    select.className = `medication-editor__${field}`;
+    select.dataset.medicationScheduleField = field;
+    select.id = `medication-${field}-${rowIndex}-${Math.random().toString(36).slice(2,8)}`;
+    choices.forEach((choice) => {
+      const [optionValue, optionLabel] = Array.isArray(choice) ? choice : [choice, choice || 'ไม่ระบุ'];
+      const option = document.createElement('option'); option.value = optionValue; option.textContent = optionLabel;
+      select.append(option);
+    });
+    select.value = value;
+    select.addEventListener('change', () => { select.closest('.medication-editor__row').dataset.scheduleDirty = 'true'; onChange?.(); });
+    label.append(element('span','',labelText), select); parent.append(label);
+  }
+
+  function appendStructuredSchedule(parent, item, rowIndex, onChange) {
+    const frequencyMatch = String(item.frequency || '').trim().match(/^(?:วันละ\s*)?([1-4])\s*ครั้ง$/u);
+    const frequency = frequencyMatch ? `${frequencyMatch[1]} ครั้ง` : '';
+    appendSelect(parent, { field:'frequency', labelText:'ใช้วันละ', choices:FREQUENCIES,
+      value:frequency, rowIndex, onChange });
+    appendSelect(parent, { field:'useCondition', labelText:'เงื่อนไขการใช้ยา',
+      choices:USE_CONDITIONS, value:item.useCondition || '', rowIndex, onChange });
+    const group = element('fieldset', 'medication-editor__day-periods');
+    group.append(element('legend','', 'ช่วงเวลาที่ใช้ยา — เลือกได้มากกว่า 1 ช่วงเวลา'));
+    const choices = element('div', 'medication-editor__day-period-options');
+    DAY_PERIODS.forEach(([value,label]) => {
+      const wrapper = element('label', 'medication-editor__day-period-option');
+      const input = document.createElement('input'); input.type='checkbox'; input.value=value;
+      input.dataset.medicationDayPeriod = value; input.checked=item.dayPeriods.includes(value);
+      input.addEventListener('change', () => { input.closest('.medication-editor__row').dataset.scheduleDirty='true'; onChange?.(); });
+      wrapper.append(input, document.createTextNode(label)); choices.append(wrapper);
+    });
+    group.append(choices); parent.append(group);
+    if (item.frequency && !frequencyMatch) parent.append(element('p','medication-editor__legacy-note',
+      `ความถี่เดิม: ${item.frequency} — ระบบจะคงข้อมูลเดิมไว้จนกว่าคุณจะเลือกความถี่ใหม่`));
+    if (item.timing) parent.append(element('p','medication-editor__legacy-note',
+      `เวลาใช้ยาเดิม: ${item.timing} — แสดงแยกจากช่วงเวลาและมื้ออาหารเพื่อไม่ตีความข้อมูลเดิมผิด`));
+  }
+
   function renderRows(container, items = [], { editable = true, onChange = null, confirmRemove = null } = {}) {
     if (!container) return;
     container.replaceChildren();
@@ -131,6 +219,12 @@
       row.className = 'medication-editor__row';
       row.dataset.medicationId = item.medicationId || '';
       row.dataset.stableMedicationId = item.stableMedicationId || '';
+      row.dataset.originalFrequency = item.frequency;
+      row.dataset.originalTiming = item.timing;
+      row.dataset.originalUseCondition = item.useCondition;
+      row.dataset.originalDayPeriods = JSON.stringify(item.dayPeriods);
+      row.dataset.legacyCondition = item.condition;
+      row.dataset.scheduleDirty = 'false';
       const legend = document.createElement('legend');
       legend.textContent = item.name || `ยา ${rowIndex + 1}`;
       row.appendChild(legend);
@@ -153,13 +247,16 @@
         'ข้อมูลเดิมนี้จะคงรูปแบบเดิมไว้จนกว่าคุณจะแก้ไขเอง'));
       FIELDS.filter((field) => field[4] === 'usage' && !['dose','unit'].includes(field[0]))
         .forEach((field) => appendField(usage, field, item, rowIndex, onChange));
+      appendStructuredSchedule(usage, item, rowIndex, onChange);
       row.append(usage);
       const advanced = element('details', 'medication-editor__advanced');
       advanced.append(element('summary', '', 'รายละเอียดเพิ่มเติม'));
       const advancedBody = element('div', 'medication-editor__advanced-body');
       FIELDS.filter((field) => field[4] === 'advanced').forEach((field) => appendField(advancedBody, field, item, rowIndex, onChange));
+      if (item.condition) advancedBody.append(element('p', 'medication-editor__legacy-note',
+        `ข้อมูลเดิม (ข้อบ่งใช้ / หมายเหตุ): ${item.condition}\nระบบจะเก็บข้อมูลนี้ตามเดิม และจะไม่ย้ายไปช่อง “ข้อบ่งใช้ยา” หรือ “หมายเหตุเพิ่มเติม” อัตโนมัติ`));
       advanced.append(advancedBody); row.append(advanced);
-      row.querySelectorAll('input,textarea').forEach((input) => { input.disabled = !editable; });
+      row.querySelectorAll('input,textarea,select').forEach((input) => { input.disabled = !editable; });
       if (editable) {
         const remove = element('button', 'btn btn-outline medication-editor__remove', 'ลบรายการ');
         remove.type = 'button'; remove.setAttribute('aria-label', `ลบยา ${rowIndex + 1}`);
@@ -199,8 +296,44 @@
     return [...container.querySelectorAll('.medication-editor__row')].map((row) => {
       const item = { medicationId:row.dataset.medicationId || null, stableMedicationId:row.dataset.stableMedicationId || null };
       row.querySelectorAll('[data-medication-field]').forEach((input) => { item[input.dataset.medicationField] = input.value.trim(); });
+      item.condition = row.dataset.legacyCondition || '';
+      if (row.dataset.scheduleDirty === 'true') {
+        item.frequency = row.querySelector('[data-medication-schedule-field="frequency"]')?.value || '';
+        item.useCondition = row.querySelector('[data-medication-schedule-field="useCondition"]')?.value || '';
+        item.dayPeriods = [...row.querySelectorAll('[data-medication-day-period]:checked')].map((input) => input.value);
+        item.timing = '';
+      } else {
+        item.frequency = row.dataset.originalFrequency || '';
+        item.timing = row.dataset.originalTiming || '';
+        item.useCondition = row.dataset.originalUseCondition || '';
+        try { item.dayPeriods = JSON.parse(row.dataset.originalDayPeriods || '[]'); } catch (_) { item.dayPeriods = []; }
+      }
       return item;
     }).filter((item) => includeBlank || item.name);
+  }
+
+  function scheduleConflict(item = {}) {
+    const match = String(item.frequency || '').trim().match(/^(?:วันละ\s*)?([1-4])\s*ครั้ง$/u);
+    const periods = Array.isArray(item.dayPeriods) ? item.dayPeriods.length : 0;
+    if (!match || !periods || item.useCondition === 'as_needed') return false;
+    return Number(match[1]) !== periods;
+  }
+
+  function validateSchedules(container) {
+    if (!container) return true;
+    container.querySelectorAll('.medication-editor__schedule-error').forEach((node) => node.remove());
+    const rows = [...container.querySelectorAll('.medication-editor__row')];
+    const items = collectRows(container, { includeBlank:true });
+    let valid = true;
+    items.forEach((item,index) => {
+      if (!scheduleConflict(item)) return;
+      valid = false;
+      const error = element('p','medication-editor__row-error medication-editor__schedule-error',
+        'จำนวนครั้งต่อวันไม่ตรงกับช่วงเวลาที่เลือก กรุณาตรวจสอบอีกครั้ง');
+      rows[index]?.querySelector('.medication-editor__day-periods')?.append(error);
+    });
+    if (!valid) rows[items.findIndex(scheduleConflict)]?.querySelector('[data-medication-schedule-field="frequency"]')?.focus();
+    return valid;
   }
 
   function showRowConflicts(container, conflicts = []) {
@@ -332,8 +465,9 @@
     return decisions;
   }
 
-  return Object.freeze({ FIELDS, FIELD_LABELS, MAX_ROWS, MAX_IMAGES, clean, doseLine, isLegacyDoseInstruction,
-    instructionLine, scheduleLine,
+  return Object.freeze({ FIELDS, FIELD_LABELS, DAY_PERIODS, USE_CONDITIONS, FREQUENCIES,
+    MAX_ROWS, MAX_IMAGES, clean, doseLine, isLegacyDoseInstruction,
+    instructionLine, scheduleLine, structuredScheduleLines, legacyTimingLine, medicationSummaryLines, scheduleConflict, validateSchedules,
     renderMedicationSummary, renderCards, renderRows, addRow, collectRows, showRowConflicts,
     proposedCompleteSet, imageFailureKind, imageFailureCopy, combineImageExtractions,
     renderProposalReview, collectProposalDecisions });

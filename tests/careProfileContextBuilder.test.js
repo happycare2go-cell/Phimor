@@ -29,7 +29,9 @@ async function seedClinicalData(careProfileId = 'CP-1') {
   });
   await db.MedicationSnapshots.insert({
     snapshot_id: 'SNAP-NEW', care_profile_id: careProfileId, recorded_at: '2026-08-20T00:00:00.000Z', source: 'family_manual',
-    items: [{ name: 'Metformin', dose: '500 mg หลังอาหาร', condition: 'เบาหวาน', imageBase64: 'nested-private-image' }],
+    items: [{ name: 'Metformin', strength:'500 mg', dose:'1', unit:'เม็ด', frequency:'2 ครั้ง',
+      use_condition:'after_meal', day_periods:['morning','evening'], indication:'เบาหวาน', notes:'ติดตามตามแผน',
+      timing:'เช้า-เย็น หลังอาหาร', condition:'ข้อมูลเดิม', imageBase64:'nested-private-image' }],
     source_image_base64: 'new-private-image', recorded_by: 'U-SECRET',
   });
   await db.Medications.insert({ medication_id: 'MED-1', care_profile_id: careProfileId, name: 'Historical drug', dose: 'old', created_by: 'U-SECRET' });
@@ -50,7 +52,7 @@ test('owner may build a minimized Care Profile summary', async () => {
   assert.equal(result.context.profile.patientName, 'คุณแม่สมใจ');
   assert.deepEqual(result.context.profile.chronicConditions, ['เบาหวาน', 'ความดันโลหิตสูง']);
   assert.equal(result.generatedAt, NOW);
-  assert.equal(result.dataVersion.contextSchema, 'care-profile-context-v1');
+  assert.equal(result.dataVersion.contextSchema, 'care-profile-context-v2');
 });
 
 test('active caregiver with view permission may build summary', async () => {
@@ -82,7 +84,9 @@ test('medication context uses current snapshot and excludes documents/images', a
   await seedClinicalData();
   const result = await buildCareProfileContext({ careProfileId: 'CP-1', requester: { lineUserId: 'U-OWNER' }, purpose: 'medication_summary', options: { now: NOW } });
   assert.equal(result.context.currentSnapshot.snapshotId, 'SNAP-NEW');
-  assert.deepEqual(result.context.medications, [{ name: 'Metformin', dose: '500 mg หลังอาหาร', condition: 'เบาหวาน', note: '', instruction: '' }]);
+  assert.deepEqual(result.context.medications, [{ name:'Metformin', strength:'500 mg', dose:'1', unit:'เม็ด',
+    frequency:'2 ครั้ง', timing:'เช้า-เย็น หลังอาหาร', useCondition:'after_meal', dayPeriods:['morning','evening'],
+    route:null, amount:null, indication:'เบาหวาน', notes:'ติดตามตามแผน', condition:'ข้อมูลเดิม', note:'', instruction:'' }]);
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /private-image|source_image_base64|imageBase64|raw_document/);
 });

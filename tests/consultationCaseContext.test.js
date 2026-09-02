@@ -30,7 +30,7 @@ function harness(overrides = {}) {
     pharmacistAccounts:{async requireActive(){return {pharmacistId:'PH-1',status:'active',licenseVerifiedAt:NOW};}},
     async authorize(input){calls.authorize+=1;assert.equal(input.lineUserId,'U-FAMILY');assert.equal(input.permission,'view');return {careProfile:PROFILE};},
     careProfiles:{async findOne(predicate){return predicate(PROFILE)?PROFILE:null;}},
-    async loadMedicationSnapshot(){calls.medications+=1;return {currentSnapshot:{snapshotId:'MEDS-1',recordedAt:NOW},medications:[{name:'Metformin',dose:'500 mg',instruction:'หลังอาหาร',condition:'เบาหวาน'}]};},
+    async loadMedicationSnapshot(){calls.medications+=1;return {currentSnapshot:{snapshotId:'MEDS-1',recordedAt:NOW},medications:[{name:'Metformin',strength:'500 mg',dose:'1',unit:'เม็ด',frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning','evening'],instruction:'หลังอาหาร',indication:'เบาหวาน',notes:'ติดตาม',condition:'ข้อมูลเดิม'}]};},
     appointments:{async findWhere(predicate){calls.appointments+=1;return [{appointment_id:'APT-1',care_profile_id:'CP-1',hospital:'รพ.ทดสอบ',datetime:'2026-08-30T10:00:00.000Z',reason_for_visit:'ติดตามยา',status:'active',emergency_phone:'0833333333'}].filter(predicate);}},
     async getLineProfile(){calls.line+=1;return {userId:'U-FAMILY',displayName:'ญาติผู้ดูแล',pictureUrl:'https://profile.line-scdn.net/test/avatar'};},
     now:()=>new Date(NOW),
@@ -44,6 +44,8 @@ test('assigned pharmacist receives separated LINE contact and minimized Care Pro
   assert.equal(result.contact.displayName,'ญาติผู้ดูแล');
   assert.equal(result.careProfile.patientName,'คุณยายทดสอบ');
   assert.equal(result.currentMedications[0].name,'Metformin');
+  assert.equal(result.currentMedications[0].indication,'เบาหวาน');
+  assert.deepEqual(result.currentMedications[0].dayPeriods,['morning','evening']);
   assert.equal(result.upcomingAppointments[0].hospital,'รพ.ทดสอบ');
   assert.equal(h.calls.authorize,1);
 });

@@ -372,8 +372,8 @@
     <div id="centerMedicationReadPane">
       <div id="centerMedicationCards" class="medication-editor__cards"></div>
       <div id="centerMedicationPrimaryActions" class="medication-editor__primary-actions" hidden>
-        <label class="btn btn-primary medication-editor__image-picker" for="centerMedicationImage">ถ่ายรูป / อัปโหลดฉลากยา<input type="file" id="centerMedicationImage" accept="image/*" capture="environment" multiple onchange="selectCenterMedicationImages(event)"></label>
-        <button class="btn btn-outline" type="button" id="centerMedicationManual" onclick="openCenterMedicationManual()">กรอกยาเอง</button>
+        <button class="btn btn-primary" type="button" id="centerMedicationManual" onclick="openCenterMedicationManual()">กรอกยาเอง</button>
+        <input type="file" id="centerMedicationImage" accept="image/*" capture="environment" multiple onchange="selectCenterMedicationImages(event)" hidden disabled aria-hidden="true">
       </div>
       <section id="centerMedicationImageSelection" class="medication-editor__image-selection" hidden>
         <p id="centerMedicationImageCount" class="medication-editor__image-count"></p>
@@ -674,7 +674,7 @@ async function viewCareProfile(residentId){
   const data = await api(`/api/residents/${residentId}/care-profile?centerId=${CENTER_ID}`);
   const p=data.profile, gender={female:'หญิง',male:'ชาย',other:'อื่น ๆ'}[p.gender]||'ไม่ระบุ';
   centerMedicationConditions=p.chronic_conditions||[];
-  const currentMeds=(data.currentMedication?.medications||[]).map(item=>`${esc(item.name)} ${esc(item.strength||'')} ${esc(item.dose||item.instruction||'')}`).join('<br>')||'ยังไม่มีรายการยาปัจจุบัน';
+  const currentMeds=(data.currentMedication?.medications||[]).map(item=>[item.name,...window.PhimorMedicationEditor.medicationSummaryLines(item)].map(esc).join(' · ')).join('<br>')||'ยังไม่มีรายการยาปัจจุบัน';
   const medHistory=(data.medicationHistory||[]).map(entry=>`${entry.snapshot?.recordedAt?new Date(entry.snapshot.recordedAt).toLocaleString('th-TH'):'ไม่ทราบเวลา'} · ${esc(entry.sourceLabel||'ข้อมูลในระบบ')}`).join('<br>')||'ยังไม่มีประวัติ';
   document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8">
     <b>${esc(p.patient_name)}</b><br>เพศ: ${gender}<br>กรุ๊ปเลือด: ${esc(p.blood_type||'ไม่ทราบ')}<br>
@@ -689,7 +689,7 @@ async function viewCareProfile(residentId){
 }
 async function viewClinicalSummary(residentId){
   const data=await api(`/api/residents/${residentId}/clinical-summary?centerId=${CENTER_ID}`), s=data.summary;
-  const meds=(s.currentMedications||[]).map(i=>`${esc(i.name||'-')} ${esc(i.dose||'')}`).join(', ')||'ไม่มีข้อมูล';
+  const meds=(s.currentMedications||[]).map(i=>[i.name||'-',...window.PhimorMedicationEditor.medicationSummaryLines(i)].map(esc).join(' · ')).join('<br>')||'ไม่มีข้อมูล';
   const appts=(s.upcomingAppointments||[]).map(a=>`${new Date(a.datetime).toLocaleString('th-TH')}: ${esc(a.hospital||'-')}`).join('<br>')||'ไม่มีนัด';
   document.getElementById('careProfileDetails').innerHTML=`<div style="font-size:13px;line-height:1.8"><b>${esc(s.patientName)}</b> · ห้อง ${esc(s.room||'-')} · กรุ๊ปเลือด ${esc(s.bloodType||'ไม่ทราบ')}<hr><div style="color:#9B1C1C"><b>🚨 แพ้ยา:</b> ${esc(s.drugAllergies||'ไม่มีข้อมูล')}<br><b>แพ้อาหาร:</b> ${esc(s.foodAllergies||'ไม่มีข้อมูล')}</div><b>โรคประจำตัว:</b> ${esc((s.chronicConditions||[]).join(', ')||'ไม่มีข้อมูล')}<br><b>ข้อจำกัดการเคลื่อนไหว:</b> ${esc(s.mobilityLimitations||'ไม่มีข้อมูล')}<br><b>💊 รายการยาปัจจุบัน:</b> ${meds}<br><b>📅 นัดที่จะถึง:</b><br>${appts}<br><b>📞 ฉุกเฉิน:</b> ${esc(s.emergencyContactName||'-')} ${esc(s.emergencyContactPhone||'')}</div>`;
   openModal('careProfileModal');
@@ -782,7 +782,7 @@ function setCenterMedicationBusy(busy){
   centerMedicationState.busy=busy;
   ['centerMedicationManual','centerMedicationExtract','centerMedicationAdd','centerMedicationSubmit','centerMedicationRecheck','centerMedicationClose'].forEach((id)=>{const node=document.getElementById(id);if(node)node.disabled=busy});
   const confirm=document.getElementById('centerMedicationReviewConfirm');if(confirm)confirm.disabled=busy||centerMedicationReviewNeedsRecheck;
-  const input=document.getElementById('centerMedicationImage');if(input)input.disabled=busy;
+  const input=document.getElementById('centerMedicationImage');if(input)input.disabled=true;
   const selector=document.getElementById('centerSelector');if(selector)selector.disabled=busy;
 }
 function renderCenterMedicationProposal(proposal){
@@ -841,6 +841,7 @@ async function confirmCenterMedicationReview(){
 }
 async function saveCenterMedicationManual(){
   if(centerMedicationState.busy||centerMedicationState.mode!=='edit')return;
+  if(!window.PhimorMedicationEditor.validateSchedules(document.getElementById('centerMedicationRows')))return toast('กรุณาตรวจสอบจำนวนครั้งและช่วงเวลาใช้ยา');
   const operation=beginCenterMedicationOperation(),items=collectCenterMedications();let confirmRemoveAll=false;
   if(!items.length){
     if(!centerMedicationState.items.length){centerMedicationOperation=null;return toast('กรุณากรอกชื่อยาอย่างน้อย 1 รายการ')}

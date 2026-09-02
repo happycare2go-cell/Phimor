@@ -397,8 +397,8 @@
       <p id="medicationCurrentStatus" class="medication-editor__status" role="status" aria-live="polite">กำลังโหลดรายการยาปัจจุบัน...</p>
       <div id="familyMedicationCards" class="medication-editor__cards"></div>
       <div id="familyMedicationPrimaryActions" class="medication-editor__primary-actions">
-        <label class="btn btn-primary medication-editor__image-picker" for="medImage">ถ่ายรูป / อัปโหลดฉลากยา<input type="file" id="medImage" accept="image/*" capture="environment" multiple onchange="selectFamilyMedicationImages(event)"></label>
-        <button type="button" class="btn btn-outline" id="familyMedicationManual" onclick="openFamilyMedicationManual()">กรอกยาเอง</button>
+        <button type="button" class="btn btn-primary" id="familyMedicationManual" onclick="openFamilyMedicationManual()">กรอกยาเอง</button>
+        <input type="file" id="medImage" accept="image/*" capture="environment" multiple onchange="selectFamilyMedicationImages(event)" hidden disabled aria-hidden="true">
       </div>
       <section id="familyMedicationImageSelection" class="medication-editor__image-selection" hidden aria-label="รูปฉลากยาที่เลือก">
         <p id="familyMedicationImageCount" class="medication-editor__image-count"></p>
@@ -407,7 +407,7 @@
         <p class="medication-editor__status">เลือกได้ไม่เกิน 4 รูป ระบบจะอ่านทีละรูปและยังไม่บันทึกจนกว่าคุณจะยืนยัน</p>
       </section>
       <section id="familyMedicationManualPanel" class="medication-editor__manual" hidden aria-labelledby="familyMedicationManualTitle">
-        <h4 id="familyMedicationManualTitle">ตรวจสอบและแก้ไขรายการยา</h4>
+        <h4 id="familyMedicationManualTitle">เพิ่ม / แก้ไขรายการยา</h4>
         <div id="familyMedicationRows" class="medication-editor__list"></div>
         <div class="medication-editor__toolbar"><button type="button" class="btn btn-outline" id="familyMedicationAdd" onclick="addFamilyMedicationRow()">+ เพิ่มยา</button></div>
         <p class="medication-editor__status">รายการที่ยืนยันจะเป็นข้อมูลยาปัจจุบันใน Care Profile และระบบจะเก็บประวัติเดิมไว้</p>
@@ -1311,7 +1311,7 @@ function updateFamilyMedicationSaveLabel(){const count=window.PhimorMedicationEd
 function setFamilyMedicationBusy(busy){
   ['familyMedicationSave','familyMedicationAdd','familyMedicationManual','familyMedicationExtract','medicationReviewRecheck'].forEach((id)=>{const node=document.getElementById(id);if(node)node.disabled=busy||!canManageFamilyMedication()});
   const confirm=document.getElementById('medicationReviewConfirm');if(confirm)confirm.disabled=busy||!canManageFamilyMedication()||medicationReviewNeedsRecheck;
-  document.getElementById('medImage').disabled=busy||!canManageFamilyMedication();
+  document.getElementById('medImage').disabled=true;
 }
 async function loadFamilyMedicationCurrent(){
   if(!currentProfile)return;
@@ -1374,6 +1374,7 @@ async function persistFamilyMedicationItems(operation,items,extra={}){
 }
 async function saveMedication(){
   if(!currentProfile||familyMedicationState.busy||familyMedicationState.mode!=='edit')return;
+  if(!window.PhimorMedicationEditor.validateSchedules(document.getElementById('familyMedicationRows')))return toast('กรุณาตรวจสอบจำนวนครั้งและช่วงเวลาใช้ยา');
   const operation=beginFamilyMedicationOperation();if(!operation)return;
   const items=window.PhimorMedicationEditor.collectRows(document.getElementById('familyMedicationRows'));
   let confirmRemoveAll=false;
@@ -1430,7 +1431,7 @@ async function loadHistory() {
   const labels={added:'เพิ่มยา',removed:'นำออกจากรายการยาปัจจุบัน',strength_changed:'ปรับขนาดยา',dose_changed:'ปรับปริมาณ',instruction_changed:'ปรับวิธีใช้',multiple_fields_changed:'ปรับข้อมูลหลายช่อง'};
   document.getElementById('historyList').innerHTML = data.items.length ? data.items.map(entry=>{
     const when=entry.snapshot?.recordedAt?new Date(entry.snapshot.recordedAt).toLocaleString('th-TH'):'ไม่ทราบเวลา';
-    if(entry.kind==='legacy_snapshot')return `<div class="appt-item"><div class="appt-h">รายการยาที่บันทึกครั้งนั้น · ${when}</div><div class="appt-d">${entry.medications.map(i=>`${esc(i.name)} ${esc(i.strength||'')} ${esc(i.dose||i.instruction||'')}`).join('<br>')}</div></div>`;
+    if(entry.kind==='legacy_snapshot')return `<div class="appt-item"><div class="appt-h">รายการยาที่บันทึกครั้งนั้น · ${when}</div><div class="appt-d">${entry.medications.map(i=>[i.name,...window.PhimorMedicationEditor.medicationSummaryLines(i)].map(esc).join(' · ')).join('<br>')}</div></div>`;
     return `<div class="appt-item"><div class="appt-h">${when} · ${esc(entry.sourceLabel||'ข้อมูลในระบบ')}</div><div class="appt-d">${entry.changes.map(change=>`${esc(change.current?.name||change.previous?.name||'ยา')} — ${labels[change.category]||'มีการเปลี่ยนแปลง'}`).join('<br>')}</div></div>`;
   }).join('') : '<div class="empty">ยังไม่มีประวัติรายการยา</div>';
   return data;

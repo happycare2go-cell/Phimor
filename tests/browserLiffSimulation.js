@@ -303,14 +303,13 @@ async function familyLabResultsJourney(browser) {
 }
 
 async function medicationManagementV2Journey(browser) {
-  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZB4sAAAAASUVORK5CYII=','base64');
   const profiles=[
     {profile:{care_profile_id:'CP-MED-OWNER',patient_name:'คุณแม่รายการยา',chronic_conditions:['ความดันโลหิตสูง']},familyRole:'owner',familyPermissions:['*'],canUseAi:false,upcomingAppointments:[]},
     {profile:{care_profile_id:'CP-MED-CARE',patient_name:'คุณพ่อผู้ดูแล',chronic_conditions:[]},familyRole:'caregiver',familyPermissions:['view','manage_medications'],canUseAi:false,upcomingAppointments:[]},
     {profile:{care_profile_id:'CP-MED-READ',patient_name:'คุณยายอ่านอย่างเดียว',chronic_conditions:[]},familyRole:'caregiver',familyPermissions:['view'],canUseAi:false,upcomingAppointments:[]},
   ];
   const state={snapshotId:'MS-1',versionNo:1,recordedAt:'2026-08-29T08:00:00Z',items:[
-    {medicationId:'MED-1',stableMedicationId:'RX-1',name:'Metformin',strength:'500 mg',dose:'1 เม็ด',instruction:'หลังอาหาร'},
+    {medicationId:'MED-1',stableMedicationId:'RX-1',name:'Metformin',strength:'500 mg',indication:'เบาหวาน',dose:'1',unit:'เม็ด',frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['morning','evening'],notes:'ติดตามตามแผน',instruction:'หลังอาหาร'},
     {medicationId:'MED-2',stableMedicationId:'RX-2',name:'Losartan',strength:'50 mg',dose:'รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน',instruction:'',amount:null,unit:null},
   ],puts:[],stale:false,proposalCalls:0};
   const page=await browser.newPage({viewport:{width:390,height:844}});
@@ -346,8 +345,11 @@ async function medicationManagementV2Journey(browser) {
   await page.locator('[data-family-destination="medications"]').first().click();
   await page.waitForFunction(()=>document.querySelectorAll('#familyMedicationCards .medication-editor__card').length===2);
   assert.match(await page.locator('#familyMedicationCards').textContent(),/Metformin/);
+  assert.match(await page.locator('#familyMedicationCards').textContent(),/ข้อบ่งใช้: เบาหวาน|เช้า \/ เย็น|หลังอาหาร|หมายเหตุเพิ่มเติม/);
   assert.match(await page.locator('#familyMedicationCards').textContent(),/รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน/);
   assert.doesNotMatch(await page.locator('#familyMedicationCards').textContent(),/ครั้งละ\s+รับประทานครั้งละ/);
+  assert.equal(await page.locator('#medImage').isDisabled(),true);
+  assert.equal(await page.locator('#medImage').isVisible(),false);
   await page.locator('#familyMedicationManual').click();
   await page.waitForFunction(()=>document.querySelectorAll('#familyMedicationRows .medication-editor__row').length===2);
   assert.equal(await page.locator('#familyMedicationRows [data-medication-field="name"]').nth(0).inputValue(),'Metformin');
@@ -359,15 +361,37 @@ async function medicationManagementV2Journey(browser) {
   await page.locator('#familyMedicationAdd').click();
   await page.locator('#familyMedicationRows [data-medication-field="name"]').nth(2).fill('Vitamin D');
   await page.locator('#familyMedicationRows [data-medication-field="strength"]').nth(2).fill('1000 IU');
+  await page.locator('#familyMedicationRows [data-medication-field="indication"]').nth(2).fill('ตามเอกสารยา');
+  await page.locator('#familyMedicationRows [data-medication-schedule-field="frequency"]').nth(2).selectOption('2 ครั้ง');
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-schedule-field="frequency"]').nth(2).locator('option').allTextContents().then((items)=>items.includes('เมื่อมีอาการ')),false);
+  await page.locator('#familyMedicationRows [data-medication-schedule-field="useCondition"]').nth(2).selectOption('before_meal');
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-schedule-field="useCondition"]').nth(2).inputValue(),'before_meal');
+  await page.locator('#familyMedicationRows [data-medication-schedule-field="useCondition"]').nth(2).selectOption('');
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-schedule-field="useCondition"]').nth(2).inputValue(),'');
+  await page.locator('#familyMedicationRows [data-medication-schedule-field="useCondition"]').nth(2).selectOption('after_meal');
+  for(const period of ['morning','noon','evening','bedtime'])await page.locator(`#familyMedicationRows [data-medication-day-period="${period}"]`).nth(2).check();
+  await page.locator('#familyMedicationRows [data-medication-day-period="noon"]').nth(2).uncheck();
+  await page.locator('#familyMedicationRows [data-medication-day-period="bedtime"]').nth(2).uncheck();
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-day-period="morning"]').nth(2).isChecked(),true);
+  assert.equal(await page.locator('#familyMedicationRows [data-medication-day-period="noon"]').nth(2).isChecked(),false);
   await page.locator('#familyMedicationRows .medication-editor__advanced summary').nth(2).click();
-  await page.locator('#familyMedicationRows [data-medication-field="condition"]').nth(2).scrollIntoViewIfNeeded();
-  const familyManualLayout=await page.locator('#familyMedicationManualPanel').evaluate((panel)=>{const footer=panel.querySelector('.medication-editor__inline-footer'),last=panel.querySelector('.medication-editor__row:last-child [data-medication-field="condition"]'),footerBox=footer.getBoundingClientRect(),lastBox=last.getBoundingClientRect();return{footerPosition:getComputedStyle(footer).position,nonOverlapping:lastBox.bottom<=footerBox.top+1,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth}});
+  await page.locator('#familyMedicationRows [data-medication-field="notes"]').nth(2).fill('หมายเหตุทดสอบ');
+  await page.locator('#familyMedicationRows [data-medication-field="notes"]').nth(2).scrollIntoViewIfNeeded();
+  const familyManualLayout=await page.locator('#familyMedicationManualPanel').evaluate((panel)=>{const footer=panel.querySelector('.medication-editor__inline-footer'),last=panel.querySelector('.medication-editor__row:last-child [data-medication-field="notes"]'),footerBox=footer.getBoundingClientRect(),lastBox=last.getBoundingClientRect();return{footerPosition:getComputedStyle(footer).position,nonOverlapping:lastBox.bottom<=footerBox.top+1,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,periodTarget:panel.querySelector('.medication-editor__day-period-option').getBoundingClientRect().height}});
   assert.equal(familyManualLayout.footerPosition,'static');assert.equal(familyManualLayout.nonOverlapping,true);assert.equal(familyManualLayout.overflow,true);
+  assert.ok(familyManualLayout.periodTarget>=44);
+  await page.locator('#familyMedicationRows [data-medication-day-period="evening"]').nth(2).uncheck();
+  const putsBeforeConflict=state.puts.length;await page.locator('#familyMedicationSave').click();
+  assert.equal(state.puts.length,putsBeforeConflict);assert.match(await page.locator('#familyMedicationRows .medication-editor__schedule-error').textContent(),/จำนวนครั้งต่อวันไม่ตรงกับช่วงเวลาที่เลือก/);
+  await page.locator('#familyMedicationRows [data-medication-day-period="evening"]').nth(2).check();
   await page.locator('#familyMedicationSave').click();
   await page.waitForFunction(()=>document.querySelectorAll('#familyMedicationCards .medication-editor__card').length===3);
   assert.equal(state.puts.at(-1).items.length,3);
   assert.equal(state.puts.at(-1).items[1].dose,'รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน');
   assert.equal(state.puts.at(-1).items[1].instruction,'');
+  assert.equal(state.puts.at(-1).items[1].timing||'','');
+  assert.equal(state.puts.at(-1).items[2].indication,'ตามเอกสารยา');
+  assert.deepEqual(state.puts.at(-1).items[2].dayPeriods,['morning','evening']);
   await page.locator('#familyMedicationCards .medication-editor__edit').nth(0).click();
   await page.waitForFunction(()=>document.querySelectorAll('#familyMedicationRows .medication-editor__row').length===3);
   await page.locator('#familyMedicationRows .medication-editor__remove').nth(2).click();
@@ -379,26 +403,6 @@ async function medicationManagementV2Journey(browser) {
   assert.equal(await page.locator('#familyMedicationRows .medication-editor__row').count(),3);
   await page.locator('#familyMedicationSave').click();
   await page.waitForFunction(()=>document.querySelector('#familyMedicationManualPanel').hidden);
-
-  await page.locator('#medImage').setInputFiles({name:'medication.png',mimeType:'image/png',buffer:png});
-  await page.locator('#familyMedicationExtract').click();
-  await page.waitForFunction(()=>document.querySelector('#medicationReviewModal').classList.contains('show'));
-  assert.match(await page.locator('#medicationReviewRows').textContent(),/ข้อมูลจากฉลาก/);
-  assert.match(await page.locator('#medicationReviewRows').textContent(),/ควรตรวจ/);
-  for(const detail of await page.locator('#medicationReviewRows .medication-editor__draft-edit').all())await detail.locator(':scope > summary').click();
-  await page.locator('#medicationReviewRows .medication-editor__advanced > summary').last().click();
-  const familyReviewLayout=await page.locator('#medicationReviewModal .medication-editor__sheet').evaluate((sheet)=>{const body=sheet.querySelector('.medication-editor__sheet-body'),footer=sheet.querySelector('.medication-editor__sheet-footer'),last=body.querySelector('.medication-editor__proposal:last-of-type [data-medication-field="condition"]');last.scrollIntoView({block:'end'});const bodyBox=body.getBoundingClientRect(),footerBox=footer.getBoundingClientRect(),lastBox=last.getBoundingClientRect();return{bodyOverflow:getComputedStyle(body).overflowY,bodyScrollable:body.scrollHeight>body.clientHeight,footerBelowBody:footerBox.top>=bodyBox.bottom-1,lastAboveFooter:lastBox.bottom<=footerBox.top+1,footerHeight:footerBox.height,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth,bodyBottom:bodyBox.bottom,footerTop:footerBox.top,lastBottom:lastBox.bottom,scrollTop:body.scrollTop,scrollHeight:body.scrollHeight,clientHeight:body.clientHeight}});
-  assert.equal(familyReviewLayout.bodyOverflow,'auto',JSON.stringify(familyReviewLayout));assert.equal(familyReviewLayout.bodyScrollable,true,JSON.stringify(familyReviewLayout));assert.equal(familyReviewLayout.footerBelowBody,true,JSON.stringify(familyReviewLayout));assert.equal(familyReviewLayout.lastAboveFooter,true,JSON.stringify(familyReviewLayout));assert.ok(familyReviewLayout.footerHeight>=44,JSON.stringify(familyReviewLayout));assert.equal(familyReviewLayout.overflow,true,JSON.stringify(familyReviewLayout));
-  await page.locator('#medicationReviewRows input[value="new"]').nth(0).check();
-  state.stale=true;const imageWritesBefore=state.puts.length;
-  await page.locator('#medicationReviewConfirm').click();
-  await page.waitForFunction(()=>document.querySelector('#medicationReviewLive').textContent.includes('รายการล่าสุดอีกครั้ง'));
-  assert.equal(state.puts.length,imageWritesBefore);assert.ok(state.proposalCalls>=3);
-  assert.equal(await page.locator('#medicationReviewModal').evaluate((node)=>node.classList.contains('show')),true);
-  await page.locator('#medicationReviewRows input[value="new"]').nth(0).check();
-  await page.locator('#medicationReviewConfirm').click();
-  await page.waitForFunction(()=>!document.querySelector('#medicationReviewModal').classList.contains('show'));
-  const merged=state.puts.at(-1).items;assert.equal(merged.find((item)=>item.name==='Metformin').strength,'850 mg');assert.ok(merged.some((item)=>item.name==='Losartan'));assert.ok(merged.some((item)=>item.name==='Aspirin'));
 
   await page.locator('#familyMedicationCards .medication-editor__edit').nth(0).click();
   await page.locator('#familyMedicationRows .medication-editor__advanced summary').nth(0).click();
@@ -443,16 +447,15 @@ async function medicationManagementV2Journey(browser) {
     if(role==='owner'){
       await centerPage.locator('#centerMedicationManual').click();for(let index=0;index<3;index+=1)await centerPage.locator('#centerMedicationAdd').click();
       await centerPage.locator('#centerMedicationRows .medication-editor__advanced summary').last().click();
-      const centerLayout=await centerPage.locator('#centerMedicationModal .medication-editor__sheet').evaluate((sheet)=>{const body=sheet.querySelector('.medication-editor__sheet-body'),footer=sheet.querySelector('.medication-editor__sheet-footer');body.scrollTop=body.scrollHeight;const bodyBox=body.getBoundingClientRect(),footerBox=footer.getBoundingClientRect(),last=body.querySelector('#centerMedicationRows .medication-editor__row:last-child [data-medication-field="condition"]'),lastBox=last.getBoundingClientRect();return{bodyOverflow:getComputedStyle(body).overflowY,bodyScrollable:body.scrollHeight>body.clientHeight,footerBelowBody:footerBox.top>=bodyBox.bottom-1,lastAboveFooter:lastBox.bottom<=footerBox.top+1,footerHeight:footerBox.height,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth}});
+      const centerLayout=await centerPage.locator('#centerMedicationModal .medication-editor__sheet').evaluate((sheet)=>{const body=sheet.querySelector('.medication-editor__sheet-body'),footer=sheet.querySelector('.medication-editor__sheet-footer');body.scrollTop=body.scrollHeight;const bodyBox=body.getBoundingClientRect(),footerBox=footer.getBoundingClientRect(),last=body.querySelector('#centerMedicationRows .medication-editor__row:last-child [data-medication-field="notes"]'),lastBox=last.getBoundingClientRect();return{bodyOverflow:getComputedStyle(body).overflowY,bodyScrollable:body.scrollHeight>body.clientHeight,footerBelowBody:footerBox.top>=bodyBox.bottom-1,lastAboveFooter:lastBox.bottom<=footerBox.top+1,footerHeight:footerBox.height,overflow:document.documentElement.scrollWidth<=document.documentElement.clientWidth}});
       assert.equal(centerLayout.bodyOverflow,'auto');assert.equal(centerLayout.bodyScrollable,true);assert.equal(centerLayout.footerBelowBody,true);assert.equal(centerLayout.lastAboveFooter,true);assert.ok(centerLayout.footerHeight>=44);assert.equal(centerLayout.overflow,true);
       await centerPage.locator('#centerMedicationFooter [data-medication-actions="edit"] .btn-outline').click();
     }
     if(role==='manager'){
-      await centerPage.locator('#centerMedicationImage').setInputFiles({name:'center-medication.png',mimeType:'image/png',buffer:png});await centerPage.locator('#centerMedicationExtract').click();
-      await centerPage.waitForFunction(()=>!document.querySelector('#centerMedicationReview').hidden);assert.equal(context.proposalCalls,2);context.makeStale();
-      await centerPage.locator('#centerMedicationReviewConfirm').click();await centerPage.waitForFunction(()=>document.querySelector('#centerMedicationReviewLive').textContent.includes('รายการล่าสุดอีกครั้ง'));assert.ok(context.proposalCalls>=3);
-      assert.equal(await centerPage.locator('#centerMedicationModal').evaluate((node)=>node.classList.contains('show')),true);await centerPage.locator('#centerMedicationReviewConfirm').click();
-      await centerPage.waitForFunction(()=>document.querySelector('#centerMedicationReview').hidden&&document.querySelectorAll('#centerMedicationCards .medication-editor__card').length===2);
+      assert.equal(await centerPage.locator('#centerMedicationImage').isDisabled(),true);assert.equal(await centerPage.locator('#centerMedicationImage').isVisible(),false);
+      await centerPage.locator('#centerMedicationManual').click();await centerPage.locator('#centerMedicationRows [data-medication-field="indication"]').fill('ความดันโลหิตสูง');
+      await centerPage.locator('#centerMedicationSubmit').click();await centerPage.waitForFunction(()=>document.querySelector('#centerMedicationReadPane')&&!document.querySelector('#centerMedicationReadPane').hidden);
+      assert.match(await centerPage.locator('#centerMedicationCards').textContent(),/ข้อบ่งใช้: ความดันโลหิตสูง/);
     }
     await centerPage.locator('#centerSelector').selectOption('CTR-MED-B');await centerPage.waitForFunction(()=>!document.querySelector('#centerMedicationModal').classList.contains('show'));assert.equal(await centerPage.locator('#centerSelector').inputValue(),'CTR-MED-B');
     assert.equal(await centerPage.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);await centerPage.close();

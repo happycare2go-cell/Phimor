@@ -48,7 +48,17 @@ function projectProfile(profile) {
 function projectMedication(item) {
   return {
     name: typeof item?.name === 'string' ? item.name : '',
+    strength: typeof item?.strength === 'string' ? item.strength : '',
     dose: typeof item?.dose === 'string' ? item.dose : '',
+    unit: typeof item?.unit === 'string' ? item.unit : null,
+    frequency: typeof item?.frequency === 'string' ? item.frequency : null,
+    timing: typeof item?.timing === 'string' ? item.timing : null,
+    useCondition: typeof item?.useCondition === 'string' ? item.useCondition : null,
+    dayPeriods: Array.isArray(item?.dayPeriods) ? [...item.dayPeriods] : [],
+    route: typeof item?.route === 'string' ? item.route : null,
+    amount: item?.amount ?? null,
+    indication: typeof item?.indication === 'string' ? item.indication : '',
+    notes: typeof item?.notes === 'string' ? item.notes : '',
     condition: typeof item?.condition === 'string' ? item.condition : '',
     note: typeof item?.note === 'string' ? item.note : '',
     instruction: typeof item?.instruction === 'string' ? item.instruction : '',

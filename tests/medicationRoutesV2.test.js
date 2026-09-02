@@ -40,6 +40,22 @@ test('Family current-set route writes reads and stale-conflicts authoritatively'
   assert.equal(stale.response.status,409);assert.equal(stale.body.errorCode,'MEDICATION_SNAPSHOT_STALE');
 });
 
+test('Family route round-trips structured schedule and rejects contradictory direct payload',async()=>{
+  await family();
+  const item={name:'Amlodipine',strength:'10 mg',indication:'ความดันโลหิตสูง',dose:'1',unit:'เม็ด',
+    frequency:'2 ครั้ง',useCondition:'after_meal',dayPeriods:['evening','morning'],notes:'ติดตามตามแผน'};
+  let result=await request('/api/care-profile/CP-1/medications/current',{method:'PUT',body:{items:[item]}});
+  assert.equal(result.response.status,201);
+  assert.deepEqual(result.body.medications[0].dayPeriods,['morning','evening']);
+  assert.equal(result.body.medications[0].useCondition,'after_meal');
+  const snapshot=result.body.currentSnapshot.snapshotId;
+  result=await request('/api/care-profile/CP-1/medications/current',{method:'PUT',body:{baseSnapshotId:snapshot,
+    items:[{...item,frequency:'3 ครั้ง'}]}});
+  assert.equal(result.response.status,422);
+  assert.equal(result.body.errorCode,'MEDICATION_SCHEDULE_CONFLICT');
+  assert.equal((await db.MedicationSnapshots.findAll()).length,1);
+});
+
 test('Family duplicate error identifies rows without returning medication clinical values',async()=>{
   await family();
   const result=await request('/api/care-profile/CP-1/medications/current',{method:'PUT',body:{items:[{name:'Aspirin',strength:'81 mg'},{name:' aspirin ',strength:'325 mg'}]}});
