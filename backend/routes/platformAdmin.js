@@ -144,6 +144,12 @@ function createPlatformAdminRouter() {
     }));
   }));
 
+  router.get('/integration-clients/:integrationClientId/control/mapping', platformAction(async (req, res) => {
+    res.json(await controlCenterServiceFor(req).mappingInspector({
+      integrationClientId:req.params.integrationClientId,
+    }));
+  }));
+
   router.get('/integration-identity-alerts', platformAction(async (req, res, service) => {
     res.json(await service.listIntegrationAlerts({
       integrationClientId:req.query.integrationClientId || null,

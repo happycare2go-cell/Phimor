@@ -1,5 +1,7 @@
 const {platformService}=require('./platformService');
 const {createIntegrationEventRepository}=require('./integrationEventRepository');
+const {createIntegrationAdapterRepository}=require('./integrationAdapterRepository');
+const {TARGET_FIELDS,TARGET_EVENT_TYPE}=require('../domain/integrationAdapter');
 
 const STAGE_DEFINITIONS=Object.freeze([
   ['receive','รับข้อมูล'],['validate','ตรวจรูปแบบข้อมูล'],['transform','แปลงข้อมูล'],
@@ -51,9 +53,34 @@ function flowForEvent(row){
     processedAt:row.processed_at||null,attemptCount:Number(row.attempt_count)||0,nextAttemptAt:row.next_attempt_at||null},
     attention:attentionFor(row),stages};
 }
+function locatorPath(locator){
+  if(locator?.kind==='object_path')return Array.isArray(locator.path)?locator.path.join('.'):'ไม่ทราบ';
+  if(locator?.kind==='array_match'){
+    const root=Array.isArray(locator.arrayPath)?locator.arrayPath.join('.'):'รายการ';
+    const field=String(locator.where?.field||'ชนิด');const value=String(locator.where?.equals||'').slice(0,80);
+    const tail=Array.isArray(locator.valuePath)?locator.valuePath.join('.'):'ค่า';
+    return `${root}[${field}=${value}].${tail}`;
+  }
+  return 'ไม่ทราบ';
+}
+const TRANSFORM_LABELS=Object.freeze({join_text:'รวมข้อความตามลำดับ',identifier:'รหัสอ้างอิง',text:'ข้อความ',number:'ตัวเลขมาตรฐาน',date:'วันที่มาตรฐาน',datetime:'วันเวลามาตรฐาน'});
+function mappingProjection(binding){
+  if(!binding)return{mappingMode:'canonical_contract',activeAdapter:null,mappings:[],message:'รับข้อมูลตาม PHIMOR canonical contract โดยไม่มี Adapter field mapping ที่ตั้งค่าไว้'};
+  const targets=new Map(TARGET_FIELDS.map((item)=>[item.id,item]));
+  const mappings=(Array.isArray(binding.mapping_rules)?binding.mapping_rules:[]).map((rule)=>{
+    const target=targets.get(rule.targetField);return{sourcePaths:(Array.isArray(rule.locators)?rule.locators:[]).map(locatorPath),
+      canonicalField:target?.id||String(rule.targetField||'unknown'),phimorLabel:target?.label||'ไม่ทราบข้อมูลปลายทาง',
+      section:target?.section||'ข้อมูลมาตรฐาน',required:Boolean(target?.required),
+      transformation:TRANSFORM_LABELS[rule.transform]||'ตามการตั้งค่า Adapter',state:target?'configured':'unknown'};
+  });
+  return{mappingMode:'adapter',activeAdapter:{displayName:binding.display_name||'Adapter',sourceSystem:binding.source_system_label||null,
+    targetEventType:binding.target_event_type||TARGET_EVENT_TYPE,version:Number(binding.version)||null,status:binding.version_status||null,
+    activatedAt:binding.activated_at||null},mappings,message:mappings.length?'การจับคู่ข้อมูลปัจจุบันจาก Adapter ที่เปิดใช้งาน':'Adapter นี้ไม่มีรายการจับคู่ที่ตรวจสอบได้'};
+}
 function createIntegrationControlCenterService(overrides={}){
   const platform=overrides.platformService||platformService;
   const events=overrides.eventRepository||createIntegrationEventRepository();
+  const adapters=overrides.adapterRepository||createIntegrationAdapterRepository();
   async function overview(input={}){
     const directory=await platform.listIntegrationClientDirectory({...input,view:input.view||'current',limit:Math.min(50,Math.max(1,Number(input.limit)||20))});
     const rows=await events.listLatestForClients(directory.items.map((item)=>item.integrationClientId));
@@ -62,7 +89,15 @@ function createIntegrationControlCenterService(overrides={}){
       displayName:client.displayName,clientStatus:client.status,...flowForEvent(latest.get(client.integrationClientId)||null)})),
       pagination:directory.pagination,refreshedAt:new Date().toISOString()};
   }
-  return{overview};
+  async function mappingInspector({integrationClientId}){
+    const clientId=String(integrationClientId||'').trim();
+    if(!clientId)throw Object.assign(new Error('กรุณาระบุระบบเชื่อมต่อ'),{code:'INTEGRATION_CLIENT_REQUIRED',status:400});
+    const client=await platform.inspectIntegrationClient(clientId);
+    const binding=await adapters.findActiveBinding(clientId,TARGET_EVENT_TYPE);
+    return{integrationClient:{integrationClientId:client.integrationClientId,displayName:client.displayName,
+      sourceSystem:client.sourceSystem,status:client.status},...mappingProjection(binding)};
+  }
+  return{overview,mappingInspector};
 }
 const integrationControlCenterService=createIntegrationControlCenterService();
-module.exports={STAGE_DEFINITIONS,ERROR_LABELS,safeReference,flowForEvent,createIntegrationControlCenterService,integrationControlCenterService};
+module.exports={STAGE_DEFINITIONS,ERROR_LABELS,TRANSFORM_LABELS,safeReference,flowForEvent,locatorPath,mappingProjection,createIntegrationControlCenterService,integrationControlCenterService};
