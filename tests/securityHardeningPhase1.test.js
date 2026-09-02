@@ -59,6 +59,7 @@ test('production webhook requires a valid LINE signature even when unsigned flag
 test('production insecure flags make readiness not-ready through safe issue codes only', async () => {
   const issues = unsafeRuntimeConfiguration({
     NODE_ENV:'production', ALLOW_INSECURE_LINE_HEADER:'true', ALLOW_UNSIGNED_LINE_WEBHOOK:'true',
+    PDF_DOWNLOAD_SECRET:'configured-test-secret',
   });
   assert.deepEqual(issues, ['INSECURE_LINE_HEADER_ENABLED', 'UNSIGNED_LINE_WEBHOOK_ENABLED']);
   const service = createReadinessService({
@@ -75,9 +76,10 @@ test('production insecure flags make readiness not-ready through safe issue code
 });
 
 test('readiness security configuration remains neutral in safe production and non-production modes', async () => {
-  assert.deepEqual(unsafeRuntimeConfiguration({ NODE_ENV:'production' }), []);
+  assert.deepEqual(unsafeRuntimeConfiguration({ NODE_ENV:'production', PDF_DOWNLOAD_SECRET:'configured' }), []);
   assert.deepEqual(unsafeRuntimeConfiguration({
     NODE_ENV:'production', ALLOW_INSECURE_LINE_HEADER:'false', ALLOW_UNSIGNED_LINE_WEBHOOK:'false',
+    PDF_DOWNLOAD_SECRET:'configured',
   }), []);
   assert.deepEqual(unsafeRuntimeConfiguration({
     NODE_ENV:'test', ALLOW_INSECURE_LINE_HEADER:'true', ALLOW_UNSIGNED_LINE_WEBHOOK:'true',
@@ -98,7 +100,7 @@ test('readiness security configuration remains neutral in safe production and no
     notificationHealth:async () => ({ pending:0 }),
     rateLimitHealth:async () => ({ available:true, shared:true }),
     plusPaymentHealth:async () => ({ available:true, configured:false }),
-    configurationIssues:() => unsafeRuntimeConfiguration({ NODE_ENV:'production' }),
+    configurationIssues:() => unsafeRuntimeConfiguration({ NODE_ENV:'production', PDF_DOWNLOAD_SECRET:'configured' }),
   });
   const result = await service.check();
   assert.strictEqual(result.ready, true);

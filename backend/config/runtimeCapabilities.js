@@ -57,6 +57,7 @@ function unsafeRuntimeConfiguration(env = process.env) {
   const issues = [];
   if (env.ALLOW_INSECURE_LINE_HEADER === 'true') issues.push('INSECURE_LINE_HEADER_ENABLED');
   if (env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true') issues.push('UNSIGNED_LINE_WEBHOOK_ENABLED');
+  if (!hasValue(env.PDF_DOWNLOAD_SECRET)) issues.push('PDF_DOWNLOAD_SECRET_MISSING');
   return issues;
 }
 

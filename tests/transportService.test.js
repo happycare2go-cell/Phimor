@@ -205,19 +205,9 @@ test('Care2Go: ผูกกลุ่มปฏิบัติการแล้�
   for (const expected of ['สาขาสุขุมวิท','สุขุมวิท 50','โรงพยาบาลกลาง','0812345678','2026-09-01']) assert.ok(serialized.includes(expected));
 });
 
-test('Care2Go: ญาติเลือกโดยตรงแล้วแจ้งกลุ่มแบบข้อมูลอย่างเดียว ไม่มีปุ่มรับงาน', async () => {
-  const { center, profile } = await setupLinkedProfile();
-  await db.Appointments.insert({ appointment_id:'A1', care_profile_id:profile.care_profile_id, hospital:'รพ.ทดสอบ', datetime:'2026-09-01T09:00:00+07:00' });
-  await transportService.bindCare2goOperationsGroup('G_CARE2GO', 'U_OPS');
-  const plan = await transportService.createTransportPlan({ appointmentId:'A1', careProfileId:profile.care_profile_id, centerId:center.center_id });
-  const requested = await transportService.familyRequestCare2go(plan.plan_id, 'U_FAMILY');
-  assert.strictEqual(requested.ok, true);
-  assert.strictEqual(requested.operationsNotified, true);
-  const sent = lineClient.getSentLog().find((s) => s.to === 'G_CARE2GO');
-  const serialized = JSON.stringify(sent.messages[0]);
-  assert.ok(serialized.includes('กรุณาโทรประสานผู้ติดต่อโดยตรง'));
-  assert.ok(!serialized.includes('care2go_ack'));
-  assert.ok(!serialized.includes('care2go_confirm'));
+test('Care2Go legacy direct-family and acknowledgement service surfaces are not publicly reachable', () => {
+  assert.strictEqual(transportService.familyRequestCare2go, undefined);
+  assert.strictEqual(transportService.care2goAcknowledge, undefined);
 });
 
 test('เกณฑ์ยอมรับข้อ 11, M2: ปิดบริการค่ารถ → ศูนย์เลือก "จัดการเอง" สำหรับรถไม่ได้', async () => {

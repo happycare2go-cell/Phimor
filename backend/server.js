@@ -51,6 +51,26 @@ const plusPaymentScheduler = createPlusPaymentSchedulerService();
 const plusPaymentRepository = createPlusPaymentRepository();
 
 const app = express();
+const ORDINARY_JSON_LIMIT = '256kb';
+const IMAGE_JSON_LIMIT = '10mb';
+const LARGE_JSON_ROUTE_PATTERNS = Object.freeze([
+  /^\/api\/care-profile\/[^/]+\/medications\/(?:current|image-proposal)$/,
+  /^\/api\/care-profile\/[^/]+\/medication-snapshots$/,
+  /^\/api\/residents\/[^/]+\/medications\/(?:current|image-proposal)$/,
+  /^\/api\/residents\/[^/]+\/medication-snapshots$/,
+]);
+
+function usesLargeJsonBody(req) {
+  if (!['POST', 'PUT'].includes(String(req.method || '').toUpperCase())) return false;
+  return LARGE_JSON_ROUTE_PATTERNS.some((pattern) => pattern.test(String(req.path || '')));
+}
+
+function createRouteAwareJsonParser({ ordinaryLimit = ORDINARY_JSON_LIMIT, imageLimit = IMAGE_JSON_LIMIT } = {}) {
+  const ordinaryParser = express.json({ limit:ordinaryLimit });
+  const imageParser = express.json({ limit:imageLimit });
+  return (req, res, next) => (usesLargeJsonBody(req) ? imageParser : ordinaryParser)(req, res, next);
+}
+
 app.locals.schedulerHealth = () => schedulerCoordinator.health();
 const readinessService = createReadinessService({
   pingDatabase:() => db.pingDatabase(),
@@ -90,7 +110,7 @@ app.use(cors({
 
 app.use(webhookRouter);
 app.use('/api/payments/omise/webhook', express.raw({ type:'application/json', limit:'256kb' }), omiseWebhookRouter);
-app.use(express.json({ limit: '10mb' }));
+app.use(createRouteAwareJsonParser());
 
 app.use('/api', async (req, res, next) => {
   const limit = process.env.NODE_ENV === 'test' ? 2000 : Number(process.env.API_RATE_LIMIT_PER_5_MINUTES || 300);
@@ -162,6 +182,11 @@ app.use((err, req, res, next) => {
     requestId:req.headers?.['x-request-id'], routeCategory:'interactive_api',
   });
   if (res.headersSent) return next(err);
+  if (err?.type === 'entity.too.large' || Number(err?.status) === 413) {
+    return res.status(413).json({
+      error:'payload_too_large', message:'ข้อมูลที่ส่งมีขนาดใหญ่เกินกำหนด',
+    });
+  }
   res.status(500).json({ error: 'internal_error', message: 'เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง' });
 });
 
@@ -235,3 +260,7 @@ module.exports.stopScheduler = stopScheduler;
 module.exports.schedulerReferenceDate = schedulerReferenceDate;
 module.exports.createBackendHttpServer = createBackendHttpServer;
 module.exports.schedulerCoordinator = schedulerCoordinator;
+module.exports.usesLargeJsonBody = usesLargeJsonBody;
+module.exports.createRouteAwareJsonParser = createRouteAwareJsonParser;
+module.exports.ORDINARY_JSON_LIMIT = ORDINARY_JSON_LIMIT;
+module.exports.IMAGE_JSON_LIMIT = IMAGE_JSON_LIMIT;

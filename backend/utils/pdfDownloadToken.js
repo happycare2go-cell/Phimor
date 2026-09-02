@@ -1,18 +1,51 @@
-const crypto = require('crypto');
-function secret() { return process.env.PDF_DOWNLOAD_SECRET || process.env.LINE_CHANNEL_SECRET || process.env.ADMIN_API_KEY; }
-function signPdfToken(payload) {
-  if (!secret()) throw new Error('PDF download secret is not configured');
-  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.createHmac('sha256', secret()).update(encoded).digest('base64url');
-  return encoded + '.' + signature;
+const crypto = require('node:crypto');
+
+const TOKEN_VERSION = 'v1';
+const ALGORITHM = 'aes-256-gcm';
+const IV_BYTES = 12;
+
+function configuredSecret(env = process.env) {
+  const value = env.PDF_DOWNLOAD_SECRET;
+  return typeof value === 'string' && value.trim() ? value : null;
 }
-function verifyPdfToken(token) {
-  if (!token || !secret()) return null;
-  const parts = String(token).split('.'); const encoded = parts[0]; const supplied = parts[1];
-  if (!encoded || !supplied) return null;
-  const expected = crypto.createHmac('sha256', secret()).update(encoded).digest('base64url');
-  const left = Buffer.from(supplied); const right = Buffer.from(expected);
-  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) return null;
-  try { const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); return payload.exp > Date.now() ? payload : null; } catch (_) { return null; }
+
+function encryptionKey(secretValue) {
+  return crypto.createHash('sha256').update(secretValue, 'utf8').digest();
 }
-module.exports = { signPdfToken, verifyPdfToken };
+
+function signPdfToken(payload, { secretValue = configuredSecret(), randomBytes = crypto.randomBytes } = {}) {
+  if (!secretValue) throw Object.assign(new Error('PDF download secret is not configured'), {
+    code:'PDF_DOWNLOAD_SECRET_MISSING',
+  });
+  const iv = randomBytes(IV_BYTES);
+  const cipher = crypto.createCipheriv(ALGORITHM, encryptionKey(secretValue), iv);
+  cipher.setAAD(Buffer.from(TOKEN_VERSION, 'utf8'));
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(payload), 'utf8'),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  return [TOKEN_VERSION, iv.toString('base64url'), ciphertext.toString('base64url'), tag.toString('base64url')].join('.');
+}
+
+function verifyPdfToken(token, { secretValue = configuredSecret(), now = Date.now } = {}) {
+  if (!token || !secretValue) return null;
+  const [version, encodedIv, encodedCiphertext, encodedTag, extra] = String(token).split('.');
+  if (version !== TOKEN_VERSION || !encodedIv || !encodedCiphertext || !encodedTag || extra !== undefined) return null;
+  try {
+    const iv = Buffer.from(encodedIv, 'base64url');
+    const ciphertext = Buffer.from(encodedCiphertext, 'base64url');
+    const tag = Buffer.from(encodedTag, 'base64url');
+    if (iv.length !== IV_BYTES || !ciphertext.length || tag.length !== 16) return null;
+    const decipher = crypto.createDecipheriv(ALGORITHM, encryptionKey(secretValue), iv);
+    decipher.setAAD(Buffer.from(TOKEN_VERSION, 'utf8'));
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+    const payload = JSON.parse(plaintext);
+    return Number(payload?.exp) > Number(now()) ? payload : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+module.exports = { signPdfToken, verifyPdfToken, configuredSecret, TOKEN_VERSION };

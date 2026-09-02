@@ -525,8 +525,8 @@ async function createBill({ centerId, careProfileId, appointmentId, items, creat
 }
 
 module.exports = {
-  createTransportPlan, launchTransportChoice, familyChooseSelf, familyRequestCenter, familyRequestCare2go, centerChoose, centerChangeChoice, getPendingFamilyPlans,
-  bindCare2goOperationsGroup, notifyCare2goOperations, care2goAcknowledge,
+  createTransportPlan, launchTransportChoice, familyChooseSelf, familyRequestCenter, centerChoose, centerChangeChoice, getPendingFamilyPlans,
+  bindCare2goOperationsGroup, notifyCare2goOperations,
   markCare2goUnavailable, getRateCard, updateRateCard, resolveBillContext, createBill, remindPendingFamilyChoices, notifyAppointmentChanged,
   transportPlanLockKey,
 };

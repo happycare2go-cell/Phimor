@@ -8,16 +8,39 @@
 const { CenterStaff, Centers, Residents, CareProfiles, CareProfileMembers } = require('../db');
 const { asyncHandler } = require('./asyncHandler');
 
-async function verifyLineIdToken(idToken) {
-  const clientId = process.env.LINE_LOGIN_CHANNEL_ID;
+const DEFAULT_LINE_VERIFY_TIMEOUT_MS = 5000;
+
+function lineVerifyTimeoutMs(env = process.env) {
+  const parsed = Number(env.LINE_VERIFY_TIMEOUT_MS);
+  return Number.isInteger(parsed) && parsed >= 250 && parsed <= 15000
+    ? parsed : DEFAULT_LINE_VERIFY_TIMEOUT_MS;
+}
+
+async function verifyLineIdToken(idToken, {
+  clientId = process.env.LINE_LOGIN_CHANNEL_ID,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = lineVerifyTimeoutMs(),
+  schedule = setTimeout,
+  cancel = clearTimeout,
+} = {}) {
   if (!idToken || !clientId) return null;
   const body = new URLSearchParams({ id_token: idToken, client_id: clientId });
-  const response = await fetch('https://api.line.me/oauth2/v2.1/verify', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body,
-  });
-  if (!response.ok) return null;
-  const claims = await response.json();
-  return claims.sub ? { lineUserId: claims.sub, claims } : null;
+  const controller = new AbortController();
+  const timer = schedule(() => controller.abort(), timeoutMs);
+  timer?.unref?.();
+  try {
+    const response = await fetchImpl('https://api.line.me/oauth2/v2.1/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body,
+      signal:controller.signal,
+    });
+    if (!response.ok) return null;
+    const claims = await response.json();
+    return claims?.sub ? { lineUserId: claims.sub, claims } : null;
+  } catch (_) {
+    return null;
+  } finally {
+    cancel(timer);
+  }
 }
 
 /** Production ต้องใช้ LINE ID Token; header ตรงอนุญาตเฉพาะ local/test ที่เปิด flag ชัดเจน */
@@ -137,4 +160,8 @@ async function centerCanAccessResident(centerId, residentId) {
   return resident.center_id === centerId && resident.status === 'active';
 }
 
-module.exports = { identify, verifyLineIdToken, insecureLineHeaderAllowed, requireAuth, requireCenterStaff, requireFamilyAccess, resolveCenterByGroup, centerCanAccessResident };
+module.exports = {
+  identify, verifyLineIdToken, lineVerifyTimeoutMs, DEFAULT_LINE_VERIFY_TIMEOUT_MS,
+  insecureLineHeaderAllowed, requireAuth, requireCenterStaff, requireFamilyAccess,
+  resolveCenterByGroup, centerCanAccessResident,
+};
