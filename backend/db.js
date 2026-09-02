@@ -77,17 +77,53 @@ const initTable = async (tableName) => {
 
 const findOneOrNull = (rows, predicate) => rows.find(predicate) || null;
 
+function safeJsonbField(field) {
+    const value = String(field || '');
+    if (!/^[a-z0-9_]+$/i.test(value)) throw new Error('INVALID_JSONB_FIELD');
+    return value;
+}
+
+function normalizeExplicitCriteria(criteria) {
+    if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria)
+        || (Object.getPrototypeOf(criteria) !== Object.prototype && Object.getPrototypeOf(criteria) !== null)) {
+        throw new Error('INVALID_JSONB_CRITERIA');
+    }
+    const entries = Object.entries(criteria);
+    if (!entries.length) throw new Error('EMPTY_JSONB_CRITERIA');
+    return entries.map(([field, value]) => {
+        const key = safeJsonbField(field);
+        if (value === null || value === undefined || !['string', 'number', 'boolean'].includes(typeof value)) {
+            throw new Error('INVALID_JSONB_CRITERIA_VALUE');
+        }
+        return [key, String(value)];
+    }).sort(([left], [right]) => left.localeCompare(right));
+}
+
+function recordMatchesExplicitCriteria(record, entries) {
+    return entries.every(([field, value]) => (
+        Object.hasOwn(record, field) && record[field] !== null && String(record[field]) === value
+    ));
+}
+
+function buildExplicitFieldQuery(tableName, criteria, { limitOne = false } = {}) {
+    const safeTable = String(tableName || '');
+    if (!/^[a-z0-9_]+$/i.test(safeTable)) throw new Error('INVALID_TABLE_NAME');
+    const entries = normalizeExplicitCriteria(criteria);
+    const predicates = entries.map(([field], index) => `data->>'${field}' = $${index + 1}`);
+    return {
+        sql:`SELECT data FROM "${safeTable}" WHERE ${predicates.join(' AND ')} ORDER BY created_at ASC, id ASC${limitOne ? ' LIMIT 1' : ''}`,
+        values:entries.map(([, value]) => value),
+        entries,
+    };
+}
+
 // ฟังก์ชันแปลงคำสั่งจัดการฐานข้อมูล ให้ทำงานเข้ากับระบบเก่าได้เป๊ะๆ
 const makeTable = (tableName) => {
     initPromises.push(initTable(tableName));
     if (isTest && !memoryTables.has(tableName)) memoryTables.set(tableName, []);
 
     const memory = () => memoryTables.get(tableName);
-    const safeField = (field) => {
-        const value = String(field || '');
-        if (!/^[a-z0-9_]+$/i.test(value)) throw new Error('INVALID_JSONB_FIELD');
-        return value;
-    };
+    const safeField = safeJsonbField;
 
     return {
         insert: async (data) => {
@@ -143,6 +179,20 @@ const makeTable = (tableName) => {
                 `SELECT data FROM "${tableName}" WHERE data->>'${key}' = $1 ORDER BY created_at ASC`,
                 [String(value)]
             );
+            return res.rows.map((row) => row.data);
+        },
+        findOneByFields: async (criteria) => {
+            const entries = normalizeExplicitCriteria(criteria);
+            if (isTest) return memory().find((record) => recordMatchesExplicitCriteria(record, entries)) || null;
+            const statement = buildExplicitFieldQuery(tableName, criteria, { limitOne:true });
+            const res = await query(statement.sql, statement.values);
+            return res.rows[0]?.data || null;
+        },
+        findWhereByFields: async (criteria) => {
+            const entries = normalizeExplicitCriteria(criteria);
+            if (isTest) return memory().filter((record) => recordMatchesExplicitCriteria(record, entries));
+            const statement = buildExplicitFieldQuery(tableName, criteria);
+            const res = await query(statement.sql, statement.values);
             return res.rows.map((row) => row.data);
         },
         update: async (predicate, patch) => {
@@ -381,6 +431,7 @@ module.exports = {
   acquireDatabaseClient,
   createDatabasePoolConfig, getDatabasePoolMetrics, safePoolErrorCode,
   findOneOrNull,
+  normalizeExplicitCriteria, recordMatchesExplicitCriteria, buildExplicitFieldQuery,
   DEFAULT_DATABASE_POOL_MAX, DEFAULT_DATABASE_POOL_CONNECTION_TIMEOUT_MS,
   databaseQuery: query,
 };

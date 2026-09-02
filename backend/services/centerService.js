@@ -527,27 +527,30 @@ async function reconcileAllCenterStaff() {
 }
 
 async function setActiveCenterForStaff(lineUserId, centerId) {
-  const membership = await CenterStaff.findOne((s) => s.line_user_id === lineUserId && s.center_id === centerId && (!s.status || s.status === 'active'));
+  const membershipRows = await CenterStaff.findWhereByFields({ line_user_id:lineUserId, center_id:centerId });
+  const membership = membershipRows.find(activeStaff) || null;
   if (!membership) return { ok: false, reason: 'ผู้ใช้ไม่มีสิทธิ์ในสาขานี้' };
-  const existing = await StaffContexts.findOne((c) => c.line_user_id === lineUserId);
+  const existing = await StaffContexts.findOneByFields({ line_user_id:lineUserId });
   if (existing) await StaffContexts.updateAll((c) => c.line_user_id === lineUserId, { center_id: centerId, selected_at: now() });
   else await StaffContexts.insert({ context_id: id('CTX'), line_user_id: lineUserId, center_id: centerId, selected_at: now() });
   return { ok: true };
 }
 
 async function getActiveCenterIdForStaff(lineUserId) {
-  const context = await StaffContexts.findOne((row) => row.line_user_id === lineUserId);
+  const context = await StaffContexts.findOneByFields({ line_user_id:lineUserId });
   if (!context?.center_id) return null;
-  const membership = await CenterStaff.findOne((row) => row.line_user_id === lineUserId
-    && row.center_id === context.center_id && (!row.status || row.status === 'active'));
+  const membershipRows = await CenterStaff.findWhereByFields({
+    line_user_id:lineUserId, center_id:context.center_id,
+  });
+  const membership = membershipRows.find(activeStaff) || null;
   return membership ? context.center_id : null;
 }
 
 async function listCentersByStaffUser(lineUserId) {
-  const memberships = await CenterStaff.findWhere((s) => s.line_user_id === lineUserId && (!s.status || s.status === 'active'));
+  const memberships = (await CenterStaff.findWhereByFields({ line_user_id:lineUserId })).filter(activeStaff);
   const centers = [];
   for (const membership of memberships) {
-    const center = await Centers.findOne((c) => c.center_id === membership.center_id && c.status === 'active');
+    const center = await Centers.findOneByFields({ center_id:membership.center_id, status:'active' });
     if (center && require('./subscriptionService').entitlement(center).allowed && membership.status !== 'revoked' && membership.status !== 'pending') centers.push({ ...center, role: membership.role });
   }
   return centers;
@@ -574,7 +577,7 @@ async function removeStaffFromGroup(groupId, lineUserId) {
     centerId:center.center_id, groupId, previousRoles:[...new Set(result.removable.map((member) => member.role))],
   });
   if (removed) {
-    const remaining = await CenterStaff.findWhere((s) => s.line_user_id === lineUserId);
+    const remaining = await CenterStaff.findWhereByFields({ line_user_id:lineUserId });
     if (remaining.length === 0) {
       const lineClient = require('../providers/lineClient');
       lineClient.unlinkRichMenuFromUser(lineUserId).catch((err) => logOperationalError(console.error, {
@@ -590,20 +593,20 @@ async function findCenterByStaffUser(lineUserId) {
   const centers = await listCentersByStaffUser(lineUserId);
   if (centers.length === 0) return null;
   if (centers.length === 1) return centers[0];
-  const context = await StaffContexts.findOne((c) => c.line_user_id === lineUserId);
+  const context = await StaffContexts.findOneByFields({ line_user_id:lineUserId });
   return centers.find((c) => c.center_id === context?.center_id) || null;
 }
 
 /** รายชื่อเจ้าของและผู้จัดการของศูนย์ — ใช้ส่งการ์ดยืนยันเข้าแชทส่วนตัวของแต่ละคน */
 async function listApprovers(centerId) {
-  return CenterStaff.findWhere((s) => s.center_id === centerId && ['owner', 'manager'].includes(s.role) && (!s.status || s.status === 'active'));
+  const rows = await CenterStaff.findWhereByFields({ center_id:centerId });
+  return rows.filter((s) => ['owner', 'manager'].includes(s.role) && activeStaff(s));
 }
 
 /** ตรวจว่าผู้ใช้มีสิทธิ์ยืนยันการ์ดของศูนย์นี้ไหม (เฉพาะเจ้าของและผู้จัดการ) */
 async function canApprove(centerId, lineUserId) {
-  const staff = await CenterStaff.findOne(
-    (s) => s.center_id === centerId && s.line_user_id === lineUserId && ['owner', 'manager'].includes(s.role) && (!s.status || s.status === 'active')
-  );
+  const rows = await CenterStaff.findWhereByFields({ center_id:centerId, line_user_id:lineUserId });
+  const staff = rows.find((s) => ['owner', 'manager'].includes(s.role) && activeStaff(s)) || null;
   return !!staff;
 }
 

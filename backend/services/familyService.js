@@ -113,17 +113,21 @@ async function acceptCaregiverInvite(token, lineUserId, identity = {}) {
 }
 
 async function canAccessProfile(careProfileId, lineUserId) {
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+  const profile = await CareProfiles.findOneByFields({ care_profile_id:careProfileId });
   if (!profile) return false;
   if (profile.owner_line_id === lineUserId) return true;
-  return !!await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === lineUserId && m.status === 'active');
+  return !!await CareProfileMembers.findOneByFields({
+    care_profile_id:careProfileId, line_user_id:lineUserId, status:'active',
+  });
 }
 
 async function hasPermission(careProfileId, lineUserId, permission) {
-  const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+  const profile = await CareProfiles.findOneByFields({ care_profile_id:careProfileId });
   if (!profile) return false;
   if (profile.owner_line_id === lineUserId) return true;
-  const member = await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === lineUserId && m.status === 'active');
+  const member = await CareProfileMembers.findOneByFields({
+    care_profile_id:careProfileId, line_user_id:lineUserId, status:'active',
+  });
   if (!member) return false;
   // Medication mutation is never inferred from membership alone. Existing
   // explicit grants remain valid; legacy rows without a permissions array keep

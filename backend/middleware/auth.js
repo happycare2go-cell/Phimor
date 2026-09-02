@@ -82,16 +82,17 @@ function requireCenterStaff(roles = ['owner', 'manager'], options = {}) {
     if (!centerId) {
       return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุศูนย์' });
     }
-    const staff = await CenterStaff.findOne(
-      (s) => s.center_id === centerId && s.line_user_id === req.user.lineUserId && roles.includes(s.role) && (!s.status || s.status === 'active')
-    );
+    const staffRows = await CenterStaff.findWhereByFields({
+      center_id:centerId, line_user_id:req.user.lineUserId,
+    });
+    const staff = staffRows.find((s) => roles.includes(s.role) && (!s.status || s.status === 'active')) || null;
     if (!staff) {
       if (options.maskUnauthorized) {
         return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูล' });
       }
       return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์จัดการศูนย์นี้' });
     }
-    const center = await Centers.findOne((c) => c.center_id === centerId);
+    const center = await Centers.findOneByFields({ center_id:centerId });
     const subscription = require('../services/subscriptionService').entitlement(center);
     if (!subscription.allowed) {
       const message = subscription.code === 'center_suspended'
@@ -128,11 +129,13 @@ function requireFamilyAccess() {
     if (!careProfileId) {
       return res.status(400).json({ error: 'bad_request', message: 'ไม่ระบุ Care Profile' });
     }
-    const profile = await CareProfiles.findOne((p) => p.care_profile_id === careProfileId);
+    const profile = await CareProfiles.findOneByFields({ care_profile_id:careProfileId });
     if (!profile) {
       return res.status(404).json({ error: 'not_found', message: 'ไม่พบข้อมูล' });
     }
-    const member = await CareProfileMembers.findOne((m) => m.care_profile_id === careProfileId && m.line_user_id === req.user.lineUserId && m.status === 'active');
+    const member = await CareProfileMembers.findOneByFields({
+      care_profile_id:careProfileId, line_user_id:req.user.lineUserId, status:'active',
+    });
     if (profile.owner_line_id !== req.user.lineUserId && !member) {
       return res.status(403).json({ error: 'forbidden', message: 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
     }
@@ -153,9 +156,9 @@ function requireFamilyAccess() {
  * และข้อ B5: จำหน่ายออกแล้วต้องเพิกถอนสิทธิ์ทันที
  */
 async function centerCanAccessResident(centerId, residentId) {
-  const center = await Centers.findOne((c) => c.center_id === centerId);
+  const center = await Centers.findOneByFields({ center_id:centerId });
   if (!require('../services/subscriptionService').entitlement(center).allowed) return false;
-  const resident = await Residents.findOne((r) => r.resident_id === residentId);
+  const resident = await Residents.findOneByFields({ resident_id:residentId });
   if (!resident) return false;
   return resident.center_id === centerId && resident.status === 'active';
 }
