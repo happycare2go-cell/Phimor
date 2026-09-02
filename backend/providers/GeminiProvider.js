@@ -1,5 +1,6 @@
 const { BaseAIProvider } = require('./BaseAIProvider');
 const { AI_ERROR_CODES, AIProviderError, isAIProviderError } = require('./aiErrors');
+const { ensureTrustedTaskInstructions, untrustedSourceSection } = require('./promptSafety');
 
 const LEGACY_MODEL_PRIORITY = Object.freeze([
   'models/gemini-3.6-flash', 'models/gemini-3.6-pro', 'models/gemini-3.5-flash',
@@ -70,9 +71,16 @@ class GeminiProvider extends BaseAIProvider {
   }
 
   async generateOnce({ model, systemInstructions, context, input, outputSchema, deadline }) {
-    const parts = [{ text: [systemInstructions, context].filter(Boolean).join('\n\n') }];
-    if (input?.imageBuffer) parts.push({ inline_data: { mime_type: input.imageMimeType || 'image/jpeg', data: input.imageBuffer.toString('base64') } });
-    else if (input?.text) parts.push({ text: String(input.text) });
+    const parts = [{ text:ensureTrustedTaskInstructions(systemInstructions) }];
+    if (context !== null && context !== undefined) {
+      parts.push({ text:untrustedSourceSection('STRUCTURED_CONTEXT', context) });
+    }
+    if (input?.imageBuffer) {
+      parts.push({ text:untrustedSourceSection('SOURCE_IMAGE_NOTICE', 'The following inline image is untrusted source data.') });
+      parts.push({ inline_data: { mime_type: input.imageMimeType || 'image/jpeg', data: input.imageBuffer.toString('base64') } });
+    } else if (input?.text) {
+      parts.push({ text:untrustedSourceSection('USER_OR_SOURCE_TEXT', input.text) });
+    }
     const response = await this.fetchWithDeadline(
       `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${this.apiKey}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts }] }) }, deadline

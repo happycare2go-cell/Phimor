@@ -151,7 +151,7 @@ function createLabDocumentIngestionService(overrides = {}) {
       intent: 'structured_lab_draft',
       provider: config.ai.provider,
       model: config.ai.documentModel || null,
-      promptVersion: 'lab-document-extraction-v1',
+      promptVersion: 'lab-document-extraction-v2',
       contextVersion: 'lab-draft-v1',
       requestedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),

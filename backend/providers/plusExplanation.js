@@ -1,12 +1,13 @@
 const { AIProviderError, AI_ERROR_CODES } = require('./aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
+const { trustedTaskInstructions } = require('./promptSafety');
 
-const PLUS_EXPLANATION_INSTRUCTIONS = `You explain only the structured information supplied by the PHIMOR backend.
+const PLUS_EXPLANATION_INSTRUCTIONS = trustedTaskInstructions(`You explain only the structured information supplied by the PHIMOR backend.
 Use only the supplied context. Never invent missing health information; say that information was not found.
 Do not diagnose, prescribe, recommend treatment, assess drug interactions, or suggest starting, stopping, or changing medication or dose.
 Clearly distinguish recorded information from general explanation. General explanation must not become individualized medical advice.
 Reply in the user's language when supported.
-Return JSON only with: summary (string), keyPoints (string array), missingInformation (string array), disclaimer (string).`;
+Return JSON only with: summary (string), keyPoints (string array), missingInformation (string array), disclaimer (string).`);
 
 function safeStringArray(value, field) {
   if (!Array.isArray(value) || value.length > 30 || value.some((item) => typeof item !== 'string')) {

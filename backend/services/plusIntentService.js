@@ -1,5 +1,6 @@
 const { AI_ERROR_CODES } = require('../providers/aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
+const { trustedTaskInstructions } = require('../providers/promptSafety');
 
 const ALLOWED_INTENTS = Object.freeze(['retrieve', 'summarize', 'compare', 'explain', 'prepare']);
 const ESCALATION_INTENTS = Object.freeze([
@@ -9,11 +10,11 @@ const ALL_INTENTS = new Set([...ALLOWED_INTENTS, ...ESCALATION_INTENTS]);
 const CLASSIFIER_CONFIDENCE_THRESHOLD = 0.8;
 const MAX_INTENT_TEXT_LENGTH = 4000;
 
-const INTENT_CLASSIFIER_INSTRUCTIONS = `Classify the user's intent only. Do not answer the question.
+const INTENT_CLASSIFIER_INSTRUCTIONS = trustedTaskInstructions(`Classify the user's intent only. Do not answer the question.
 Return JSON with intent, confidence, requiresEscalation, and reasonCode.
 Allowed intents: retrieve, summarize, compare, explain, prepare.
 Escalation intents: medication_advice, diagnosis, treatment, dose_change, stop_start_medication.
-When uncertain about diagnosis, treatment, dose, starting/stopping medication, suitability, or interactions, set requiresEscalation true.`;
+When uncertain about diagnosis, treatment, dose, starting/stopping medication, suitability, or interactions, set requiresEscalation true.`);
 
 const RULES = Object.freeze([
   { intent: 'stop_start_medication', patterns: [/หยุด\s*ยา/i, /เริ่ม\s*(กิน|ใช้)?\s*ยา/i, /(ควร|ต้อง|สามารถ).*(หยุด|เริ่ม).*(ยา)/i] },

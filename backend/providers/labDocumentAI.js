@@ -1,6 +1,7 @@
 const { AI_ERROR_CODES, AIProviderError } = require('./aiErrors');
+const { trustedTaskInstructions } = require('./promptSafety');
 
-const LAB_DOCUMENT_PROMPT = `คุณคือระบบสกัดข้อมูลจากเอกสารผลตรวจทางห้องปฏิบัติการภาษาไทย
+const LAB_DOCUMENT_PROMPT = trustedTaskInstructions(`คุณคือระบบสกัดข้อมูลจากเอกสารผลตรวจทางห้องปฏิบัติการภาษาไทย
 ตอบเป็น JSON เท่านั้น และคัดลอกเฉพาะข้อมูลที่เห็นชัดในเอกสาร ห้ามอธิบายผล ห้ามวินิจฉัย และห้ามเดา
 โครงสร้าง:
 {
@@ -24,7 +25,7 @@ const LAB_DOCUMENT_PROMPT = `คุณคือระบบสกัดข้อ
   }],
   "uncertainFields": ["ตำแหน่ง field ที่ต้องให้มนุษย์ตรวจ เช่น observations[0].sourceUnit"]
 }
-ห้ามสร้างหน่วย ช่วงอ้างอิง ธงผิดปกติ สิ่งส่งตรวจ วิธีตรวจ LOINC UCUM ค่า normal ค่า critical หรือ comparison key เมื่อไม่มีในเอกสาร ให้ใช้ null`;
+ห้ามสร้างหน่วย ช่วงอ้างอิง ธงผิดปกติ สิ่งส่งตรวจ วิธีตรวจ LOINC UCUM ค่า normal ค่า critical หรือ comparison key เมื่อไม่มีในเอกสาร ให้ใช้ null`);
 
 function invalid(message) {
   throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, message);

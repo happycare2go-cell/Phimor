@@ -1,6 +1,7 @@
 const { AI_ERROR_CODES, AIProviderError } = require('./aiErrors');
+const { trustedTaskInstructions } = require('./promptSafety');
 
-const DOCUMENT_PROMPT = `คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
+const DOCUMENT_PROMPT = trustedTaskInstructions(`คุณคือผู้เชี่ยวชาญด้านการอ่านเอกสารทางการแพทย์ภาษาไทย
     จัดประเภท subtype ตามเนื้อหา: ตารางผลตรวจเลือด/ปัสสาวะ/สิ่งส่งตรวจเป็น lab_report,
     รายการยาหรือซองยาเป็น medication, ใบนัดเป็น appointment, บันทึก/คำสั่งแพทย์เป็น doctor_note,
     เอกสารที่มีหลายประเภทเป็น mixed และเอกสารแพทย์อื่นเป็น other_medical
@@ -36,7 +37,7 @@ const DOCUMENT_PROMPT = `คุณคือผู้เชี่ยวชาญ�
         }
       ],
       "doctorNote": "คำสั่งแพทย์อื่นๆ (ถ้าไม่มีให้ตอบ null)"
-    }`;
+    }`);
 
 function invalid(message) { throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, message); }
 function nullableString(value, field) {

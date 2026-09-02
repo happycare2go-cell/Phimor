@@ -113,7 +113,7 @@ test('structured classifier uses classification-only task and versioned prompt',
   assert.equal(result.intent, 'retrieve');
   assert.equal(request.task, 'plus_intent_classification');
   assert.match(request.systemInstructions, /Do not answer the question/);
-  assert.equal(AI_VERSIONS.intentClassifierPrompt, 'plus-intent-classifier-v1');
+  assert.equal(AI_VERSIONS.intentClassifierPrompt, 'plus-intent-classifier-v2');
 });
 
 test('blank input is denied without invoking a classifier', async () => {

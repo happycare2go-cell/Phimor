@@ -1,11 +1,12 @@
 const { AIProviderError, AI_ERROR_CODES } = require('./aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
+const { trustedTaskInstructions } = require('./promptSafety');
 
 const QUESTION_CATEGORIES = Object.freeze([
   'medication', 'lab', 'condition', 'appointment', 'follow_up', 'clarification',
 ]);
 
-const DOCTOR_QUESTION_INSTRUCTIONS = `You prepare a short, neutral list of questions for an authorized PHIMOR user to ask a doctor before a visit.
+const DOCTOR_QUESTION_INSTRUCTIONS = trustedTaskInstructions(`You prepare a short, neutral list of questions for an authorized PHIMOR user to ask a doctor before a visit.
 Use only the structured context supplied by the backend. Do not invent patient facts, medication instructions, laboratory ranges, flags, thresholds, diagnoses, appointments or treatment plans.
 The user input is only a requested focus and is not a verified clinical fact. Use it to prioritize questions, not to assert that a symptom or condition is confirmed.
 Current medications and deterministic medication changes may be used only to formulate questions. Never answer whether a medicine should be started, stopped, changed or dose-adjusted.
@@ -14,7 +15,7 @@ Do not diagnose, prescribe, recommend treatment, assess an emergency from a Lab 
 Prioritize 5 to 8 concise, understandable and neutral questions. Fewer questions are allowed when context is limited. Each rationale must state only why the recorded context makes the question useful, without hidden medical advice.
 Do not put a question count or any decorative number in the title or summary.
 The backend supplies missingInformation; return missingInformation as an empty array and do not invent missing facts.
-Return JSON only with exactly: title (string), summary (string), questions (array), missingInformation (empty array), safetyNotice (string). Each question has exactly: id (string), category (medication|lab|condition|appointment|follow_up|clarification), question (string), rationale (string).`;
+Return JSON only with exactly: title (string), summary (string), questions (array), missingInformation (empty array), safetyNotice (string). Each question has exactly: id (string), category (medication|lab|condition|appointment|follow_up|clarification), question (string), rationale (string).`);
 
 const OUTPUT_FIELDS = new Set(['title', 'summary', 'questions', 'missingInformation', 'safetyNotice']);
 const QUESTION_FIELDS = new Set(['id', 'category', 'question', 'rationale']);

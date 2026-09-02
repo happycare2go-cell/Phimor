@@ -1,8 +1,9 @@
 const { AIProviderError, AI_ERROR_CODES } = require('./aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
 const { DOCTOR_VISIT_ITEM_KINDS } = require('../domain/doctorVisit');
+const { trustedTaskInstructions } = require('./promptSafety');
 
-const DOCTOR_VISIT_INSTRUCTIONS = `You organize a note entered by a family member or caregiver after a doctor visit.
+const DOCTOR_VISIT_INSTRUCTIONS = trustedTaskInstructions(`You organize a note entered by a family member or caregiver after a doctor visit.
 The note is user-recorded information, not an electronically verified doctor order. Never imply otherwise.
 Use only statements directly supported by the supplied sourceText. Do not diagnose, add treatment advice, invent what the doctor said, or add medication names, doses, appointments, laboratory tests, dates, intervals or instructions that are absent from sourceText.
 Every item.sourceSupport must be an exact, contiguous quotation copied from sourceText. Keep it short but sufficient.
@@ -16,7 +17,7 @@ summary is a concise attributed overview beginning with "ผู้บันท�
 items is an array of objects with exactly: id, kind, sourceSupport, summary, dueAt, uncertainty.
 kind must be doctor_guidance|medication_statement|lab_follow_up|next_appointment|test_or_monitoring|lifestyle_or_care_instruction|question_response|other.
 missingInformation is an array of short strings describing uncertainty without inventing values.
-reviewNotice must remind the human to compare the draft with the original note and source documents before confirmation.`;
+reviewNotice must remind the human to compare the draft with the original note and source documents before confirmation.`);
 
 const OUTPUT_FIELDS = new Set(['summary', 'items', 'missingInformation', 'reviewNotice']);
 const ITEM_FIELDS = new Set(['id', 'kind', 'sourceSupport', 'summary', 'dueAt', 'uncertainty']);

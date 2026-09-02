@@ -1,7 +1,8 @@
 const { AIProviderError, AI_ERROR_CODES } = require('./aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
+const { trustedTaskInstructions } = require('./promptSafety');
 
-const LAB_EXPLANATION_INSTRUCTIONS = `You assist an authorized PHIMOR Family user by explaining confirmed laboratory information.
+const LAB_EXPLANATION_INSTRUCTIONS = trustedTaskInstructions(`You assist an authorized PHIMOR Family user by explaining confirmed laboratory information.
 Use only the structured confirmed facts supplied by the backend. Draft, voided, raw-document and Pending Card data are never valid context.
 Explain generally what the named test measures and restate source-confirmed values in understandable language.
 Only describe a longitudinal direction when deterministicTrend.status is "available". Never override a non-comparable reason.
@@ -12,7 +13,7 @@ If sourceRangesDiffer is true, clearly state that the source ranges differ and c
 You may propose neutral questions for a healthcare professional. A human healthcare professional remains responsible for interpretation and care decisions.
 The backend will insert confirmedFacts itself; return confirmedFacts as an empty array and do not recreate patient facts.
 Return JSON only with exactly these fields:
-summary (string), testExplanation (string), confirmedFacts (empty array), trendExplanation (string or null), rangeCaveat (string or null), questionsForClinician (string array), safetyNotice (string), disclaimer (string), unavailableReason (string or null).`;
+summary (string), testExplanation (string), confirmedFacts (empty array), trendExplanation (string or null), rangeCaveat (string or null), questionsForClinician (string array), safetyNotice (string), disclaimer (string), unavailableReason (string or null).`);
 
 const OUTPUT_FIELDS = new Set([
   'summary', 'testExplanation', 'confirmedFacts', 'trendExplanation', 'rangeCaveat',
