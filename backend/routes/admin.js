@@ -55,7 +55,6 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
 
 router.get('/exceptions', asyncHandler(async (req, res) => {
   const exceptionService = req.app.locals.adminExceptionService || createAdminExceptionService({
-    notificationService:req.app.locals.notificationService || require('../services/notificationService'),
     schedulerHealth:req.app.locals.schedulerHealth || (() => ({ configuredJobs:0, jobs:{} })),
   });
   res.json(await exceptionService.listExceptions({
