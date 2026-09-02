@@ -362,43 +362,45 @@
   <div style="margin-top:14px"><button class="btn btn-outline" style="width:100%" onclick="closeModal('careProfileModal')">ปิด</button></div>
 </div></div>
 
-<div class="modal-bg" id="centerMedicationModal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="centerMedicationTitle">
-  <h3 id="centerMedicationTitle">รายการยาปัจจุบัน</h3>
-  <p id="centerMedicationHelp" class="medication-editor__status" role="status" aria-live="polite">กำลังโหลดรายการยาปัจจุบัน...</p>
-  <input type="hidden" id="centerMedicationResidentId">
-  <div id="centerMedicationCards" class="medication-editor__cards"></div>
-  <div id="centerMedicationPrimaryActions" class="medication-editor__primary-actions" hidden>
-    <label class="btn btn-primary medication-editor__image-picker" for="centerMedicationImage">ถ่ายรูป / อัปโหลดฉลากยา<input type="file" id="centerMedicationImage" accept="image/*" capture="environment" multiple onchange="selectCenterMedicationImages(event)"></label>
-    <button class="btn btn-outline" type="button" id="centerMedicationManual" onclick="openCenterMedicationManual()">กรอกยาเอง</button>
+<div class="modal-bg" id="centerMedicationModal"><div class="modal medication-editor__sheet" role="dialog" aria-modal="true" aria-labelledby="centerMedicationTitle">
+  <header class="medication-editor__sheet-header">
+    <h3 id="centerMedicationTitle">รายการยาปัจจุบัน</h3>
+    <p id="centerMedicationHelp" class="medication-editor__status" role="status" aria-live="polite">กำลังโหลดรายการยาปัจจุบัน...</p>
+    <input type="hidden" id="centerMedicationResidentId">
+  </header>
+  <div class="medication-editor__sheet-body">
+    <div id="centerMedicationReadPane">
+      <div id="centerMedicationCards" class="medication-editor__cards"></div>
+      <div id="centerMedicationPrimaryActions" class="medication-editor__primary-actions" hidden>
+        <label class="btn btn-primary medication-editor__image-picker" for="centerMedicationImage">ถ่ายรูป / อัปโหลดฉลากยา<input type="file" id="centerMedicationImage" accept="image/*" capture="environment" multiple onchange="selectCenterMedicationImages(event)"></label>
+        <button class="btn btn-outline" type="button" id="centerMedicationManual" onclick="openCenterMedicationManual()">กรอกยาเอง</button>
+      </div>
+      <section id="centerMedicationImageSelection" class="medication-editor__image-selection" hidden>
+        <p id="centerMedicationImageCount" class="medication-editor__image-count"></p>
+        <div id="centerMedicationImagePreviews" class="medication-editor__previews"></div>
+        <button class="btn btn-primary" type="button" id="centerMedicationExtract" onclick="extractCenterMedicationImages()">อ่านข้อมูลจากฉลาก</button>
+        <p class="medication-editor__status">เลือกได้ไม่เกิน 4 รูป ระบบจะอ่านทีละรูปและยังไม่บันทึกรายการยา</p>
+      </section>
+    </div>
+    <section id="centerMedicationManualPanel" class="medication-editor__manual" hidden>
+      <div id="centerMedicationRows" class="medication-editor__list"></div>
+      <button class="btn btn-outline" type="button" id="centerMedicationAdd" style="width:100%;min-height:44px" onclick="addCenterMedicationRow()">+ เพิ่มยา</button>
+      <p class="medication-editor__status">รายการที่ยืนยันจะเป็นข้อมูลยาปัจจุบันใน Care Profile ระบบจะสร้างฉบับใหม่และเก็บประวัติเดิมไว้</p>
+    </section>
+    <section id="centerMedicationReview" hidden>
+      <h4>ตรวจสอบข้อมูลจากฉลาก</h4>
+      <p class="medication-editor__draft-callout">ข้อมูลนี้อ่านมาจากรูปและยังไม่ได้บันทึก กรุณาตรวจสอบทุกครั้งก่อนยืนยัน</p>
+      <p id="centerMedicationBatchSummary" class="medication-editor__status"></p>
+      <div id="centerMedicationProposal"></div>
+      <p id="centerMedicationReviewLive" class="medication-editor__status" role="status" aria-live="polite"></p>
+      <button class="btn btn-outline" type="button" id="centerMedicationRecheck" onclick="recheckCenterMedicationReview()" hidden>ตรวจสอบรายการอีกครั้ง</button>
+    </section>
   </div>
-  <section id="centerMedicationImageSelection" class="medication-editor__image-selection" hidden>
-    <p id="centerMedicationImageCount" class="medication-editor__image-count"></p>
-    <div id="centerMedicationImagePreviews" class="medication-editor__previews"></div>
-    <button class="btn btn-primary" type="button" id="centerMedicationExtract" onclick="extractCenterMedicationImages()">อ่านข้อมูลจากฉลาก</button>
-    <p class="medication-editor__status">เลือกได้ไม่เกิน 4 รูป ระบบจะอ่านทีละรูปและยังไม่บันทึกรายการยา</p>
-  </section>
-  <section id="centerMedicationManualPanel" class="medication-editor__manual" hidden>
-    <div id="centerMedicationRows" class="medication-editor__list"></div>
-    <button class="btn btn-outline" type="button" id="centerMedicationAdd" style="width:100%;min-height:44px" onclick="addCenterMedicationRow()">+ เพิ่มยา</button>
-    <p class="medication-editor__status">รายการที่ยืนยันจะเป็นข้อมูลยาปัจจุบันใน Care Profile ระบบจะสร้างฉบับใหม่และเก็บประวัติเดิมไว้</p>
-    <div class="medication-editor__sticky-actions">
-      <button class="btn btn-outline" type="button" onclick="cancelCenterMedicationEdit()">ยกเลิก</button>
-      <button class="btn btn-primary" type="button" id="centerMedicationSubmit" onclick="saveCenterMedicationManual()">ยืนยันและบันทึก</button>
-    </div>
-  </section>
-  <section id="centerMedicationReview" hidden>
-    <h4>ตรวจสอบข้อมูลจากฉลาก</h4>
-    <p class="medication-editor__draft-callout">ข้อมูลนี้อ่านมาจากรูปและยังไม่ได้บันทึก กรุณาตรวจสอบทุกครั้งก่อนยืนยัน</p>
-    <p id="centerMedicationBatchSummary" class="medication-editor__status"></p>
-    <div id="centerMedicationProposal"></div>
-    <p id="centerMedicationReviewLive" class="medication-editor__status" role="status" aria-live="polite"></p>
-    <button class="btn btn-outline" type="button" id="centerMedicationRecheck" onclick="recheckCenterMedicationReview()" hidden>ตรวจสอบรายการอีกครั้ง</button>
-    <div class="medication-editor__sticky-actions">
-      <button class="btn btn-outline" type="button" onclick="cancelCenterMedicationReview()">ยกเลิก</button>
-      <button class="btn btn-primary" type="button" id="centerMedicationReviewConfirm" onclick="confirmCenterMedicationReview()">ยืนยันและบันทึก</button>
-    </div>
-  </section>
-  <button class="btn btn-outline" id="centerMedicationClose" style="width:100%;margin-top:12px" onclick="closeCenterMedication()">ปิด</button>
+  <footer id="centerMedicationFooter" class="medication-editor__sheet-footer">
+    <div data-medication-actions="read"><button class="btn btn-outline" id="centerMedicationClose" type="button" onclick="closeCenterMedication()">ปิด</button></div>
+    <div data-medication-actions="edit" hidden><button class="btn btn-outline" type="button" onclick="cancelCenterMedicationEdit()">ยกเลิก</button><button class="btn btn-primary" type="button" id="centerMedicationSubmit" onclick="saveCenterMedicationManual()">ยืนยันและบันทึก</button></div>
+    <div data-medication-actions="review" hidden><button class="btn btn-outline" type="button" onclick="cancelCenterMedicationReview()">ยกเลิก</button><button class="btn btn-primary" type="button" id="centerMedicationReviewConfirm" onclick="confirmCenterMedicationReview()">ยืนยันและบันทึก</button></div>
+  </footer>
 </div></div>
 
 <!-- ═══ FR-K1, K2: ตารางนัดของทุกผู้พักในศูนย์ + FR-L ชั้นที่ 2: รอศูนย์ตัดสินใจ ═══ -->
@@ -713,6 +715,13 @@ async function dischargeResident() {
   await loadResidents();
 }
 
+function setCenterMedicationSurface(mode){
+  document.getElementById('centerMedicationReadPane').hidden=mode!=='read';
+  document.getElementById('centerMedicationManualPanel').hidden=mode!=='edit';
+  document.getElementById('centerMedicationReview').hidden=mode!=='review';
+  document.querySelectorAll('#centerMedicationFooter [data-medication-actions]').forEach((actions)=>{actions.hidden=actions.dataset.medicationActions!==mode});
+  document.querySelector('#centerMedicationModal .medication-editor__sheet-body')?.scrollTo({top:0});
+}
 async function openCenterMedication(residentId){
   document.getElementById('centerMedicationResidentId').value=residentId;
   const centerId=CENTER_ID,generation=CENTER_CONTEXT_GENERATION;
@@ -721,9 +730,7 @@ async function openCenterMedication(residentId){
   document.getElementById('centerMedicationCards').replaceChildren();
   document.getElementById('centerMedicationRows').replaceChildren();
   document.getElementById('centerMedicationProposal').replaceChildren();
-  document.getElementById('centerMedicationPrimaryActions').hidden=true;
-  document.getElementById('centerMedicationManualPanel').hidden=true;
-  document.getElementById('centerMedicationReview').hidden=true;
+  document.getElementById('centerMedicationPrimaryActions').hidden=true;setCenterMedicationSurface('read');
   document.getElementById('centerMedicationHelp').textContent='กำลังโหลดรายการยาปัจจุบัน...';
   closeModal('careProfileModal'); openModal('centerMedicationModal');
   try{
@@ -736,23 +743,17 @@ async function openCenterMedication(residentId){
 }
 function renderCenterMedicationCurrent(){
   centerMedicationState.mode='read';
-  document.getElementById('centerMedicationCards').hidden=false;
+  setCenterMedicationSurface('read');document.getElementById('centerMedicationCards').hidden=false;
   document.getElementById('centerMedicationPrimaryActions').hidden=false;
-  document.getElementById('centerMedicationManualPanel').hidden=true;
-  document.getElementById('centerMedicationReview').hidden=true;
-  document.getElementById('centerMedicationClose').hidden=false;
   window.PhimorMedicationEditor.renderCards(document.getElementById('centerMedicationCards'),centerMedicationState.items,{editable:true,onEdit:openCenterMedicationManual});
   setCenterMedicationBusy(false);
 }
 function openCenterMedicationManual(focusIndex=null){
   if(centerMedicationState.busy)return;
   centerMedicationState.mode='edit';
-  document.getElementById('centerMedicationCards').hidden=true;
+  setCenterMedicationSurface('edit');document.getElementById('centerMedicationCards').hidden=true;
   document.getElementById('centerMedicationPrimaryActions').hidden=true;
   document.getElementById('centerMedicationImageSelection').hidden=true;
-  document.getElementById('centerMedicationManualPanel').hidden=false;
-  document.getElementById('centerMedicationReview').hidden=true;
-  document.getElementById('centerMedicationClose').hidden=true;
   const items=centerMedicationState.items.length?centerMedicationState.items:[{}];
   window.PhimorMedicationEditor.renderRows(document.getElementById('centerMedicationRows'),items,centerMedicationEditorOptions());
   updateCenterMedicationSaveLabel();
@@ -785,11 +786,8 @@ function setCenterMedicationBusy(busy){
   const selector=document.getElementById('centerSelector');if(selector)selector.disabled=busy;
 }
 function renderCenterMedicationProposal(proposal){
-  document.getElementById('centerMedicationCards').hidden=true;
+  setCenterMedicationSurface('review');document.getElementById('centerMedicationCards').hidden=true;
   document.getElementById('centerMedicationPrimaryActions').hidden=true;
-  document.getElementById('centerMedicationManualPanel').hidden=true;
-  document.getElementById('centerMedicationReview').hidden=false;
-  document.getElementById('centerMedicationClose').hidden=true;
   const result=window.PhimorMedicationEditor.renderProposalReview(document.getElementById('centerMedicationProposal'),proposal,{prefix:'center-med-choice',reviewByIndex:centerMedicationReviewByIndex,onDraftChange:()=>{centerMedicationReviewNeedsRecheck=true;document.getElementById('centerMedicationRecheck').hidden=false;document.getElementById('centerMedicationReviewConfirm').disabled=true;document.getElementById('centerMedicationReviewLive').textContent='แก้ไขข้อมูลแล้ว กรุณาตรวจสอบรายการอีกครั้งก่อนยืนยัน'}});
   centerMedicationReviewNeedsRecheck=result.ambiguous;
   document.getElementById('centerMedicationRecheck').hidden=!result.ambiguous;
@@ -816,15 +814,15 @@ async function extractCenterMedicationImages(){
   if(!centerMedicationSelectedImages.length||centerMedicationState.busy)return;
   const operation=beginCenterMedicationOperation(),selected=[...centerMedicationSelectedImages],results=[];setCenterMedicationBusy(true);
   try{
-    for(const entry of selected){try{const image=await normalizeCenterImageFile(entry.file);if(!isCenterMedicationOperationCurrent(operation))return;const result=await api(`/api/residents/${operation.residentId}/medications/image-proposal?centerId=${encodeURIComponent(operation.centerId)}`,{method:'POST',body:JSON.stringify(image)});results.push({ok:true,...result})}catch(_){results.push({ok:false})}}
+    for(const entry of selected){try{const image=await normalizeCenterImageFile(entry.file);if(!isCenterMedicationOperationCurrent(operation))return;const result=await api(`/api/residents/${operation.residentId}/medications/image-proposal?centerId=${encodeURIComponent(operation.centerId)}`,{method:'POST',body:JSON.stringify(image)});results.push({ok:true,...result})}catch(error){results.push({ok:false,errorCode:error?.errorCode||'invalid_image'})}}
     if(!isCenterMedicationOperationCurrent(operation))return;
-    const batch=window.PhimorMedicationEditor.combineImageExtractions(results);
-    if(!batch.extracted.length){document.getElementById('centerMedicationHelp').textContent='อ่านข้อมูลจากรูปนี้ไม่ได้ ลองถ่ายให้เห็นฉลากตรง ชัด และมีแสงเพียงพอ หรือกรอกข้อมูลเอง';centerMedicationOperation=null;return}
+    const batch=window.PhimorMedicationEditor.combineImageExtractions(results),failureSummary=batch.failures.map((failure)=>failure.message).join(' · ');
+    if(!batch.extracted.length){document.getElementById('centerMedicationHelp').textContent=failureSummary||'ไม่พบรายการยาที่อ่านได้จากรูปนี้ กรุณาตรวจสอบรูปหรือกรอกข้อมูลเอง';centerMedicationOperation=null;return}
     const proposal=await api(`/api/residents/${operation.residentId}/medications/draft-proposal?centerId=${encodeURIComponent(operation.centerId)}`,{method:'POST',body:JSON.stringify({items:batch.extracted})});
     if(!isCenterMedicationOperationCurrent(operation))return;
     if((proposal.baseSnapshotId||null)!==(operation.baseSnapshotId||null)){centerMedicationOperation=null;await openCenterMedication(operation.residentId);return toast('รายการยามีการเปลี่ยนแปลง กรุณาเริ่มอ่านรูปใหม่')}
     centerMedicationState.proposal=proposal;centerMedicationReviewByIndex=batch.reviewByIndex;renderCenterMedicationProposal(proposal);
-    document.getElementById('centerMedicationBatchSummary').textContent=`อ่านข้อมูลได้ ${batch.extracted.length} รายการ${batch.failedImages?` · มี ${batch.failedImages} รูปที่อ่านไม่ชัด กรุณาตรวจสอบหรือถ่ายใหม่`:''}${batch.truncated?' · แสดงสูงสุด 30 รายการ กรุณาตรวจสอบรูปที่เหลือแยกอีกครั้ง':''}`;
+    document.getElementById('centerMedicationBatchSummary').textContent=`อ่านข้อมูลได้ ${batch.extracted.length} รายการ${failureSummary?` · ${failureSummary}`:''}${batch.truncated?' · แสดงสูงสุด 30 รายการ กรุณาตรวจสอบรูปที่เหลือแยกอีกครั้ง':''}`;
     toast('อ่านข้อมูลจากฉลากแล้ว กรุณาตรวจสอบก่อนยืนยัน');
   }finally{setCenterMedicationBusy(false)}
 }

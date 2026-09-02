@@ -18,6 +18,7 @@
   const FIELD_LABELS = Object.freeze(Object.fromEntries(FIELDS.map(([field, label]) => [field, label])));
   const MAX_ROWS = 30;
   const MAX_IMAGES = 4;
+  const INPUT_IMAGE_ERRORS = new Set(['unsupported_image', 'invalid_image', 'image_too_large']);
 
   function clean(item = {}) {
     const output = { medicationId:item.medicationId || null, stableMedicationId:item.stableMedicationId || null };
@@ -237,11 +238,30 @@
     return complete;
   }
 
+  function imageFailureKind(result = {}) {
+    if (result.ok && result.imageStatus === 'no_medication_detected') return 'no_medication';
+    if (INPUT_IMAGE_ERRORS.has(result.errorCode)) return 'invalid_image';
+    if (result.errorCode === 'MEDICATION_EXTRACTION_UNAVAILABLE') return 'extraction_unavailable';
+    return 'unreadable';
+  }
+
+  function imageFailureCopy(failure = {}) {
+    const prefix = Number.isSafeInteger(failure.imageNumber) ? `รูปที่ ${failure.imageNumber}: ` : '';
+    if (failure.kind === 'extraction_unavailable') return `${prefix}ระบบอ่านฉลากชั่วคราวไม่ได้ กรุณาลองอีกครั้ง`;
+    if (failure.kind === 'no_medication') return `${prefix}ไม่พบรายการยาที่อ่านได้`;
+    if (failure.kind === 'invalid_image') return `${prefix}ไฟล์รูปไม่ถูกต้องหรือไม่รองรับ`;
+    return `${prefix}อ่านข้อมูลจากรูปนี้ไม่ได้`;
+  }
+
   function combineImageExtractions(results = []) {
-    const extracted = []; const reviewByIndex = {}; let failedImages = 0; let readableImages = 0;
-    results.slice(0, MAX_IMAGES).forEach((result) => {
+    const extracted = []; const reviewByIndex = {}; const failures = []; let readableImages = 0;
+    results.slice(0, MAX_IMAGES).forEach((result, imageIndex) => {
       const items = result?.ok && Array.isArray(result.extracted) ? result.extracted : [];
-      if (!items.length) { failedImages += 1; return; }
+      if (!items.length) {
+        const failure = { imageNumber:imageIndex + 1, kind:imageFailureKind(result), errorCode:result?.errorCode || null };
+        failures.push({ ...failure, message:imageFailureCopy(failure) });
+        return;
+      }
       readableImages += 1;
       const offset = extracted.length;
       items.forEach((item) => extracted.push(clean(item)));
@@ -251,7 +271,7 @@
           uncertainFields:(review.uncertainFields || []).filter((field) => FIELD_LABELS[field]) };
       });
     });
-    return { extracted:extracted.slice(0, MAX_ROWS), reviewByIndex, failedImages, readableImages,
+    return { extracted:extracted.slice(0, MAX_ROWS), reviewByIndex, failures, failedImages:failures.length, readableImages,
       totalImages:Math.min(results.length, MAX_IMAGES), truncated:extracted.length > MAX_ROWS };
   }
 
@@ -315,5 +335,6 @@
   return Object.freeze({ FIELDS, FIELD_LABELS, MAX_ROWS, MAX_IMAGES, clean, doseLine, isLegacyDoseInstruction,
     instructionLine, scheduleLine,
     renderMedicationSummary, renderCards, renderRows, addRow, collectRows, showRowConflicts,
-    proposedCompleteSet, combineImageExtractions, renderProposalReview, collectProposalDecisions });
+    proposedCompleteSet, imageFailureKind, imageFailureCopy, combineImageExtractions,
+    renderProposalReview, collectProposalDecisions });
 });

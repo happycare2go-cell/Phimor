@@ -7,6 +7,7 @@ process.env.PDF_DOWNLOAD_SECRET=process.env.PDF_DOWNLOAD_SECRET||'test-pdf-secre
 
 const db=require('../backend/db');
 const aiProvider=require('../backend/providers/aiProvider');
+const {AI_ERROR_CODES,AIProviderError}=require('../backend/providers/aiErrors');
 let server,baseUrl;
 
 before(async()=>{const app=require('../backend/server');server=http.createServer(app);await new Promise((resolve)=>server.listen(0,resolve));baseUrl=`http://127.0.0.1:${server.address().port}`});
@@ -103,6 +104,33 @@ test('one Family image may produce multiple review drafts without saving clinica
   assert.doesNotMatch(JSON.stringify(result.body),/hidden|providerSecret|aW1hZ2U/);
   assert.equal((await db.MedicationSnapshots.findAll()).length,0);
   assert.equal((await db.Medications.findAll()).length,0);
+});
+
+test('Family image provider failure returns safe extraction-unavailable response without raw details',async()=>{
+  await family();
+  aiProvider.setProviderForTests({generateStructured:async()=>{throw new AIProviderError(AI_ERROR_CODES.AI_RATE_LIMIT,'private provider response')}});
+  const result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  assert.equal(result.response.status,503);
+  assert.equal(result.body.error,'MEDICATION_EXTRACTION_UNAVAILABLE');
+  assert.match(result.body.message,/ระบบอ่านฉลากยาชั่วคราวไม่ได้/);
+  assert.doesNotMatch(JSON.stringify(result.body),/AI_RATE_LIMIT|private|aW1hZ2U/);
+  assert.equal((await db.MedicationSnapshots.findAll()).length,0);
+});
+
+test('invalid AI response and valid empty extraction remain distinct safe outcomes',async()=>{
+  await family();
+  aiProvider.setProviderForTests({generateStructured:async()=>({medications:'invalid',raw:'private provider response'})});
+  let result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  assert.equal(result.response.status,503);
+  assert.equal(result.body.error,'MEDICATION_EXTRACTION_UNAVAILABLE');
+  assert.doesNotMatch(JSON.stringify(result.body),/private|raw|aW1hZ2U/);
+  aiProvider.setProviderForTests({generateStructured:async()=>({medications:[]})});
+  result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  assert.equal(result.response.status,202);
+  assert.equal(result.body.imageStatus,'no_medication_detected');
+  assert.deepEqual(result.body.extracted,[]);
+  assert.match(result.body.message,/ไม่พบรายการยาที่อ่านได้จากรูปนี้/);
+  assert.equal((await db.MedicationSnapshots.findAll()).length,0);
 });
 
 test('combined image drafts are compared authoritatively and duplicate candidates require review',async()=>{

@@ -57,12 +57,13 @@ test('image proposal assembly preserves current medication and applies only expl
 test('one image can produce multiple drafts and multiple images combine with partial success', () => {
   const result=editor.combineImageExtractions([
     {ok:true,extracted:[{name:'A'},{name:'B'}],extractionReview:[{extractedIndex:0,state:'read',uncertainFields:[]},{extractedIndex:1,state:'review',uncertainFields:['dose']}]},
-    {ok:false},
+    {ok:false,errorCode:'MEDICATION_EXTRACTION_UNAVAILABLE'},
     {ok:true,extracted:[{name:'C'}],extractionReview:[{extractedIndex:0,state:'read',uncertainFields:[]}]},
   ]);
   assert.deepEqual(result.extracted.map((item)=>item.name),['A','B','C']);
   assert.equal(result.failedImages,1);
   assert.equal(result.readableImages,2);
+  assert.deepEqual(result.failures,[{imageNumber:2,kind:'extraction_unavailable',errorCode:'MEDICATION_EXTRACTION_UNAVAILABLE',message:'รูปที่ 2: ระบบอ่านฉลากชั่วคราวไม่ได้ กรุณาลองอีกครั้ง'}]);
   assert.equal(result.reviewByIndex[1].state,'review');
   assert.deepEqual(result.reviewByIndex[1].uncertainFields,['dose']);
 });
@@ -106,9 +107,27 @@ test('uncertainty, partial failures and duplicate comparison use safe human revi
   assert.match(editor.renderProposalReview.toString(),/คงข้อมูลปัจจุบัน/);
   assert.match(editor.renderProposalReview.toString(),/ใช้ข้อมูลจากฉลากใหม่/);
   for(const source of [family,center]){
-    assert.match(source,/มี \$\{batch\.failedImages\} รูปที่อ่านไม่ชัด/);
-    assert.match(source,/อ่านข้อมูลจากรูปนี้ไม่ได้/);
+    assert.match(source,/batch\.failures\.map/);
+    assert.match(source,/failureSummary/);
+    assert.match(source,/ไม่พบรายการยาที่อ่านได้/);
   }
+  assert.equal(editor.imageFailureCopy({imageNumber:2,kind:'no_medication'}),'รูปที่ 2: ไม่พบรายการยาที่อ่านได้');
+  assert.equal(editor.imageFailureCopy({imageNumber:2,kind:'extraction_unavailable'}),'รูปที่ 2: ระบบอ่านฉลากชั่วคราวไม่ได้ กรุณาลองอีกครั้ง');
+  assert.doesNotMatch(editor.imageFailureCopy({imageNumber:2,kind:'extraction_unavailable'}),/อ่านไม่ชัด/);
+});
+
+test('medication sheets use header, scrollable body and non-overlapping footer', () => {
+  assert.match(css,/\.modal\.medication-editor__sheet\{[^}]*display:flex[^}]*overflow:hidden/);
+  assert.match(css,/\.medication-editor__sheet-body\{[^}]*min-height:0[^}]*overflow-y:auto/);
+  assert.match(css,/\.medication-editor__sheet-footer\{[^}]*flex:0 0 auto[^}]*safe-area-inset-bottom/);
+  assert.match(css,/\.medication-editor__inline-footer\{position:static/);
+  assert.doesNotMatch(css,/medication-editor__sticky-actions/);
+  assert.doesNotMatch(css,/position:sticky;bottom:[^}]*medication/i);
+  assert.match(family,/modal medication-editor__sheet/);
+  assert.match(family,/medication-editor__sheet-body/);
+  assert.match(family,/medication-editor__sheet-footer/);
+  assert.match(center,/id="centerMedicationModal"><div class="modal medication-editor__sheet"/);
+  assert.match(center,/id="centerMedicationFooter" class="medication-editor__sheet-footer"/);
 });
 
 test('Family permission and Center relationship protections remain authoritative', () => {

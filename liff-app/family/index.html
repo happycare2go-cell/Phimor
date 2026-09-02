@@ -411,7 +411,7 @@
         <div id="familyMedicationRows" class="medication-editor__list"></div>
         <div class="medication-editor__toolbar"><button type="button" class="btn btn-outline" id="familyMedicationAdd" onclick="addFamilyMedicationRow()">+ เพิ่มยา</button></div>
         <p class="medication-editor__status">รายการที่ยืนยันจะเป็นข้อมูลยาปัจจุบันใน Care Profile และระบบจะเก็บประวัติเดิมไว้</p>
-        <div class="medication-editor__sticky-actions"><button type="button" class="btn btn-outline" onclick="cancelFamilyMedicationEdit()">ยกเลิก</button><button class="btn btn-primary" id="familyMedicationSave" onclick="saveMedication()">ยืนยันและบันทึก</button></div>
+        <div class="medication-editor__inline-footer"><button type="button" class="btn btn-outline" onclick="cancelFamilyMedicationEdit()">ยกเลิก</button><button class="btn btn-primary" id="familyMedicationSave" onclick="saveMedication()">ยืนยันและบันทึก</button></div>
       </section>
       <button type="button" class="btn btn-outline family-inline-action" onclick="openFamilyDestination('history')">ดูประวัติยาและส่งออก PDF</button>
     </div>
@@ -533,17 +533,19 @@
   </div>
 </div>
 
-<div class="modal-bg" id="medicationReviewModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="medicationReviewTitle" aria-describedby="medicationReviewDescription">
-  <h3 id="medicationReviewTitle">ตรวจสอบข้อมูลจากฉลาก</h3>
-  <p id="medicationReviewDescription" class="medication-editor__draft-callout">ข้อมูลนี้อ่านมาจากรูปและยังไม่ได้บันทึก กรุณาตรวจสอบทุกครั้งก่อนยืนยัน</p>
-  <p id="medicationReviewBatchSummary" class="medication-editor__status"></p>
-  <div id="medicationReviewRows"></div>
-  <div id="medicationReviewLive" class="medication-editor__status" role="status" aria-live="polite"></div>
-  <div class="medication-editor__review-actions">
-    <button type="button" class="btn btn-outline" onclick="closeMedicationReview()">ยกเลิก</button>
+<div class="modal-bg" id="medicationReviewModal" aria-hidden="true"><div class="modal medication-editor__sheet" role="dialog" aria-modal="true" aria-labelledby="medicationReviewTitle" aria-describedby="medicationReviewDescription">
+  <header class="medication-editor__sheet-header"><h3 id="medicationReviewTitle">ตรวจสอบข้อมูลจากฉลาก</h3></header>
+  <div class="medication-editor__sheet-body">
+    <p id="medicationReviewDescription" class="medication-editor__draft-callout">ข้อมูลนี้อ่านมาจากรูปและยังไม่ได้บันทึก กรุณาตรวจสอบทุกครั้งก่อนยืนยัน</p>
+    <p id="medicationReviewBatchSummary" class="medication-editor__status"></p>
+    <div id="medicationReviewRows"></div>
+    <div id="medicationReviewLive" class="medication-editor__status" role="status" aria-live="polite"></div>
     <button type="button" class="btn btn-outline" id="medicationReviewRecheck" onclick="recheckMedicationReview()" hidden>ตรวจสอบรายการอีกครั้ง</button>
-    <button class="btn btn-primary" id="medicationReviewConfirm" onclick="confirmMedicationReview()">ยืนยันและบันทึก</button>
   </div>
+  <footer class="medication-editor__sheet-footer">
+    <button type="button" class="btn btn-outline" onclick="closeMedicationReview()">ยกเลิก</button>
+    <button class="btn btn-primary" id="medicationReviewConfirm" onclick="confirmMedicationReview()">ยืนยันและบันทึก</button>
+  </footer>
 </div></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -1396,10 +1398,10 @@ function clearFamilyMedicationImages(){medicationSelectedImages=[];medicationIma
 async function extractFamilyMedicationImages(){
   if(!medicationSelectedImages.length||familyMedicationState.busy)return;
   const operation=beginFamilyMedicationOperation();if(!operation)return;const selected=[...medicationSelectedImages];familyMedicationState.busy=true;setFamilyMedicationBusy(true);const results=[];
-  try{for(const entry of selected){try{const image=await normalizeImageFile(entry.file);if(!isMedicationOperationCurrent(operation))return;const result=await api(`/api/care-profile/${operation.careProfileId}/medications/image-proposal`,{method:'POST',body:JSON.stringify(image)});results.push({ok:true,...result})}catch(_){results.push({ok:false})}}
+  try{for(const entry of selected){try{const image=await normalizeImageFile(entry.file);if(!isMedicationOperationCurrent(operation))return;const result=await api(`/api/care-profile/${operation.careProfileId}/medications/image-proposal`,{method:'POST',body:JSON.stringify(image)});results.push({ok:true,...result})}catch(error){results.push({ok:false,errorCode:error?.errorCode||'invalid_image'})}}
     if(!isMedicationOperationCurrent(operation))return;
-    const batch=window.PhimorMedicationEditor.combineImageExtractions(results);if(!batch.extracted.length){document.getElementById('medicationCurrentStatus').textContent='อ่านข้อมูลจากรูปนี้ไม่ได้ ลองถ่ายให้เห็นฉลากตรง ชัด และมีแสงเพียงพอ หรือกรอกข้อมูลเอง';document.getElementById('medicationCurrentStatus').dataset.state='error';medicationOperation=null;return}
-    const proposal=await api(`/api/care-profile/${operation.careProfileId}/medications/draft-proposal`,{method:'POST',body:JSON.stringify({items:batch.extracted})});if(!isMedicationOperationCurrent(operation))return;if((proposal.baseSnapshotId||null)!==(operation.baseSnapshotId||null)){medicationOperation=null;await loadFamilyMedicationCurrent();return toast('รายการยามีการเปลี่ยนแปลง กรุณาเริ่มอ่านรูปใหม่')};familyMedicationState.proposal=proposal;medicationReviewByIndex=batch.reviewByIndex;renderFamilyMedicationProposal(proposal);document.getElementById('medicationReviewBatchSummary').textContent=`อ่านข้อมูลได้ ${batch.extracted.length} รายการ${batch.failedImages?` · มี ${batch.failedImages} รูปที่อ่านไม่ชัด กรุณาตรวจสอบหรือถ่ายใหม่`:''}${batch.truncated?' · แสดงสูงสุด 30 รายการ กรุณาตรวจสอบรูปที่เหลือแยกอีกครั้ง':''}`;openMedicationReview();toast('อ่านข้อมูลจากฉลากแล้ว กรุณาตรวจสอบก่อนยืนยัน')
+    const batch=window.PhimorMedicationEditor.combineImageExtractions(results),failureSummary=batch.failures.map((failure)=>failure.message).join(' · ');if(!batch.extracted.length){document.getElementById('medicationCurrentStatus').textContent=failureSummary||'ไม่พบรายการยาที่อ่านได้จากรูปนี้ กรุณาตรวจสอบรูปหรือกรอกข้อมูลเอง';document.getElementById('medicationCurrentStatus').dataset.state='error';medicationOperation=null;return}
+    const proposal=await api(`/api/care-profile/${operation.careProfileId}/medications/draft-proposal`,{method:'POST',body:JSON.stringify({items:batch.extracted})});if(!isMedicationOperationCurrent(operation))return;if((proposal.baseSnapshotId||null)!==(operation.baseSnapshotId||null)){medicationOperation=null;await loadFamilyMedicationCurrent();return toast('รายการยามีการเปลี่ยนแปลง กรุณาเริ่มอ่านรูปใหม่')};familyMedicationState.proposal=proposal;medicationReviewByIndex=batch.reviewByIndex;renderFamilyMedicationProposal(proposal);document.getElementById('medicationReviewBatchSummary').textContent=`อ่านข้อมูลได้ ${batch.extracted.length} รายการ${failureSummary?` · ${failureSummary}`:''}${batch.truncated?' · แสดงสูงสุด 30 รายการ กรุณาตรวจสอบรูปที่เหลือแยกอีกครั้ง':''}`;openMedicationReview();toast('อ่านข้อมูลจากฉลากแล้ว กรุณาตรวจสอบก่อนยืนยัน')
   }finally{familyMedicationState.busy=false;setFamilyMedicationBusy(false)}
 }
 function clearMedicationForm(){clearFamilyMedicationImages()}

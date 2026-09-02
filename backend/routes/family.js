@@ -333,7 +333,7 @@ router.post('/care-profile/:careProfileId/medications/image-proposal', requireFa
     });
     res.status(202).json({ status:'draft_requires_confirmation', imageStatus:draft.status,
       extractionReview:draft.review, ...proposal,
-      message:proposal.extracted.length ? 'กรุณาตรวจสอบการเปลี่ยนแปลงก่อนบันทึก' : 'ไม่พบรายการยาที่นำมาเสนอ กรุณาตรวจภาพหรือกรอกข้อมูลเอง' });
+      message:proposal.extracted.length ? 'กรุณาตรวจสอบการเปลี่ยนแปลงก่อนบันทึก' : 'ไม่พบรายการยาที่อ่านได้จากรูปนี้ กรุณาตรวจสอบรูปหรือกรอกข้อมูลเอง' });
   } catch (error) {
     if (error instanceof medicationImageDraftService.MedicationImageDraftError) {
       return res.status(error.status).json({ error:error.code, message:error.message });
