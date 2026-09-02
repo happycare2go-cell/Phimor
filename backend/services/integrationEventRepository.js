@@ -57,5 +57,15 @@ function createIntegrationEventRepository({queryFn=databaseQuery}={}){const one=
         notification_intent_status,attempt_count,created_at,updated_at,processed_at
         FROM integration_event_inbox ${where.length?`WHERE ${where.join(' AND ')}`:''}
         ORDER BY updated_at DESC,integration_event_id DESC LIMIT $${p.length}`,p);},
+    listLatestForClients(integrationClientIds=[]){const ids=[...new Set((integrationClientIds||[]).map(String).filter(Boolean))].slice(0,100);
+      if(!ids.length)return Promise.resolve([]);
+      return many(`SELECT DISTINCT ON (integration_client_id)
+        integration_event_id,integration_client_id,event_type,status,resident_id,care_profile_id,
+        canonical_resource_type,canonical_resource_id,pending_reason,last_error_code,
+        verified_line_group_id,group_reconciliation_status,notification_intent_status,
+        attempt_count,next_attempt_at,created_at,updated_at,processed_at
+        FROM integration_event_inbox
+        WHERE integration_client_id = ANY($1::varchar[])
+        ORDER BY integration_client_id,updated_at DESC,integration_event_id DESC`,[ids]);},
   };}
 module.exports={createIntegrationEventRepository};

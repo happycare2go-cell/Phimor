@@ -45,6 +45,7 @@
     unresolvedEventPolicy:{ ignore:'ตีตกและไม่เก็บข้อมูล', pending_subject_mapping:'เก็บไว้ให้ผู้ดูแลจับคู่ภายหลัง' },
     familyGroupRequirement:{ required_before_ingest:'ต้องมี', optional_for_ingest:'ไม่บังคับ' },
   });
+  const FLOW_STATE_LABELS=Object.freeze({completed:'เสร็จแล้ว',current:'กำลังดำเนินการ',waiting:'รอดำเนินการ',attention:'ต้องตรวจ',failed:'ไม่สำเร็จ',not_applicable:'ไม่เกี่ยวข้อง',unknown:'ไม่ทราบ'});
   const safeArray = (value, limit = 250) => (Array.isArray(value) ? value.slice(0, limit) : []);
   const safeText = (value, fallback = '') => (typeof value === 'string' && value.trim() ? value.trim() : fallback);
   const formatDate = (value) => {
@@ -91,6 +92,10 @@
   const buildIntegrationDirectoryRequest = ({ search = '', status = '', view = 'current', page = 1, limit = 20 } = {}) => ({
     path:`/api/admin/platform/integration-clients?${new URLSearchParams({search,status,view,page:String(page),limit:String(limit)}).toString()}`,
     options:{ method:'GET' },
+  });
+  const buildIntegrationOverviewRequest=({search='',status='',view='current',page=1,limit=20}={})=>({
+    path:`/api/admin/platform/integration-control/overview?${new URLSearchParams({search,status,view,page:String(page),limit:String(limit)}).toString()}`,
+    options:{method:'GET'},
   });
   const buildCenterScopeRequest = (integrationClientId, centerId, allowed) => ({
     path:`/api/admin/platform/integration-clients/${encodeURIComponent(integrationClientId)}/centers/${encodeURIComponent(centerId)}`,
@@ -182,7 +187,7 @@
     const oneTimeSecret = createOneTimeSecretState();
     const state = {
       activeTab:'capabilities', loading:false, error:null, organizations:[], centers:[],
-      capabilities:new Map(), integrations:[], pending:[], operational:[], identityAlerts:[], mapping:null, feedback:null,
+      capabilities:new Map(), integrations:[], integrationFlows:new Map(), pending:[], operational:[], identityAlerts:[], mapping:null, feedback:null,
       integrationSearch:'', integrationStatus:'', integrationView:'current', integrationPage:1,
       integrationPagination:{page:1,limit:20,total:0,totalPages:0}, detail:null, wizard:null,
       availableTabs:tabs.map((tab) => tab.dataset.careOpsTab), loadedTabs:new Set(),
@@ -274,6 +279,19 @@
     function statusBadge(status) {
       const descriptor = CLIENT_STATUS_LABELS[status] || [status || 'ไม่ทราบสถานะ', ''];
       return element('span', `care-ops__status${descriptor[1] ? ` care-ops__status--${descriptor[1]}` : ''}`, descriptor[0]);
+    }
+    function renderFlowStages(flow){
+      const list=element('ol','care-ops__flow');
+      safeArray(flow?.stages,20).forEach((item)=>{const row=element('li',`care-ops__flow-stage care-ops__flow-stage--${safeText(item.state,'unknown')}`);row.append(element('span','care-ops__flow-marker',''),element('span','care-ops__flow-label',safeText(item.label,'ไม่ทราบขั้นตอน')),element('span','care-ops__flow-state',FLOW_STATE_LABELS[item.state]||FLOW_STATE_LABELS.unknown));list.append(row)});
+      return list;
+    }
+    function openFlowDetail(client,flow){
+      const dialog=ensureDialog('integrationFlowDialog','สถานะการไหลของข้อมูล');const {live,body}=dialogParts(dialog);live.textContent='';live.className='care-ops__dialog-live';
+      const header=element('section','care-ops__detail-section');header.append(element('h3','',client.displayName||'ระบบเชื่อมต่อ'),element('p','care-ops__meta',flow?.latestEvent?`${flow.latestEvent.safeReference||'ไม่มีรหัสอ้างอิง'} · อัปเดต ${formatDate(flow.latestEvent.latestMeaningfulAt)}`:'ยังไม่พบเหตุการณ์จากระบบนี้'));
+      if(flow?.attention)header.append(element('div','care-ops__flow-attention',`ต้องตรวจ: ${flow.attention.reason}`));
+      const stages=element('section','care-ops__detail-section');stages.append(element('h3','','ขั้นตอนล่าสุด'),renderFlowStages(flow));
+      const proof=element('p','care-ops__meta','สถานะอ้างอิงจากข้อมูลที่ backend บันทึกไว้เท่านั้น “สร้างคิวแล้ว” ไม่ได้หมายความว่า LINE ส่งถึงผู้รับแล้ว');
+      body.replaceChildren(header,stages,proof);openDialog(dialog);
     }
     function renderReadiness(readiness) {
       const box = element('div', 'care-ops__readiness');
@@ -593,7 +611,7 @@
       header.append(search.label);if(statusFilter)header.append(statusFilter.label);if(!archived)header.append(button('+ เพิ่มระบบเชื่อมต่อ',openCreateClient,''));
       const list=element('div','care-ops__list');
       if(!state.integrations.length)list.append(element('div','care-ops__empty',archived?'ยังไม่มีประวัติการเชื่อมต่อที่ตรงกับเงื่อนไข':'ไม่พบระบบเชื่อมต่อที่ตรงกับเงื่อนไข'));
-      state.integrations.forEach((client)=>{const card=itemCard(client.displayName||client.clientCode||'Integration',`${client.organizationName||'ไม่ระบุ Organization'} · ${client.clientCode}`);card.append(statusBadge(client.status));const grid=element('div','care-ops__integration-grid');const values=[['Source system',client.sourceSystem||'-'],[archived?'ศูนย์ที่เคยอนุญาต':'ศูนย์ที่อนุญาต',String(client.allowedCenterCount||0)],[archived?'Event scopes เดิม':'Event ที่อนุญาต',String(client.allowedEventCount||0)],['ใช้ล่าสุด',client.lastUsedAt?formatDate(client.lastUsedAt):'ยังไม่เคยใช้'],['Mapping',`ศูนย์ ${client.mappingReadiness?.activeCenters||0} · ผู้พัก ${client.mappingReadiness?.mappedResidents||0}`],['คำเตือน',String(client.warningCount||0)]];if(archived)values.splice(4,0,['เพิกถอนเมื่อ',formatDate(client.revokedAt)]);else values.splice(3,0,['Credential พร้อมใช้',String(client.activeCredentialCount||0)]);values.forEach(([label,value])=>{const box=element('div');box.append(element('strong','',label),element('div','care-ops__meta',value));grid.append(box)});const readiness=element('p','care-ops__meta',archived?'สถานะ: เพิกถอนแล้ว':`ความพร้อม: ${client.readiness?.label||'ตั้งค่ายังไม่ครบ'}`);const actions=element('div','care-ops__actions');actions.append(button(archived?'ดูรายละเอียด':'จัดการระบบเชื่อมต่อ',()=>openIntegrationDetail(client.integrationClientId),''));card.append(grid,readiness,actions);list.append(card)});
+      state.integrations.forEach((client)=>{const card=itemCard(client.displayName||client.clientCode||'Integration',`${client.organizationName||'ไม่ระบุ Organization'} · ${client.clientCode}`);card.append(statusBadge(client.status));const grid=element('div','care-ops__integration-grid');const values=[['Source system',client.sourceSystem||'-'],[archived?'ศูนย์ที่เคยอนุญาต':'ศูนย์ที่อนุญาต',String(client.allowedCenterCount||0)],[archived?'Event scopes เดิม':'Event ที่อนุญาต',String(client.allowedEventCount||0)],['ใช้ล่าสุด',client.lastUsedAt?formatDate(client.lastUsedAt):'ยังไม่เคยใช้'],['Mapping',`ศูนย์ ${client.mappingReadiness?.activeCenters||0} · ผู้พัก ${client.mappingReadiness?.mappedResidents||0}`],['คำเตือน',String(client.warningCount||0)]];if(archived)values.splice(4,0,['เพิกถอนเมื่อ',formatDate(client.revokedAt)]);else values.splice(3,0,['Credential พร้อมใช้',String(client.activeCredentialCount||0)]);values.forEach(([label,value])=>{const box=element('div');box.append(element('strong','',label),element('div','care-ops__meta',value));grid.append(box)});const readiness=element('p','care-ops__meta',archived?'สถานะ: เพิกถอนแล้ว':`ความพร้อม: ${client.readiness?.label||'ตั้งค่ายังไม่ครบ'}`);const actions=element('div','care-ops__actions');const flow=state.integrationFlows.get(client.integrationClientId);if(!archived&&flow){const flowBox=element('section','care-ops__flow-card');flowBox.append(element('h4','','เส้นทางข้อมูลล่าสุด'),element('p','care-ops__meta',flow.latestEvent?`${flow.latestEvent.safeReference||'ไม่มีรหัสอ้างอิง'} · ${formatDate(flow.latestEvent.latestMeaningfulAt)}`:'ยังไม่พบเหตุการณ์'));flowBox.append(renderFlowStages(flow));if(flow.attention)flowBox.append(element('div','care-ops__flow-attention',`ต้องตรวจ: ${flow.attention.reason}`));card.append(flowBox);actions.append(button('ตรวจสอบรายละเอียด',()=>openFlowDetail(client,flow),'secondary'));}actions.append(button(archived?'ดูรายละเอียด':'จัดการระบบเชื่อมต่อ',()=>openIntegrationDetail(client.integrationClientId),''));card.append(grid,readiness,actions);list.append(card)});
       search.control.addEventListener('change',()=>{state.integrationSearch=search.control.value.slice(0,120);state.integrationPage=1;load({tabs:['integrations']})});
       if(statusFilter)statusFilter.control.addEventListener('change',()=>{state.integrationStatus=statusFilter.control.value;state.integrationPage=1;load({tabs:['integrations']})});
       const page=state.integrationPagination||{page:1,totalPages:0,total:0};
@@ -751,12 +769,14 @@
       const token = ++generation; state.loading = true; state.error = null; render();
       try {
         const directoryLimit=requested.includes('integrations')?20:100;
-        const [foundationResult, pendingResult, operationalResult, alertResult, integrationResult] = await Promise.all([
+        const overviewDescriptor=buildIntegrationOverviewRequest({search:state.integrationSearch,status:state.integrationStatus,view:state.integrationView,page:state.integrationPage,limit:directoryLimit});
+        const [foundationResult, pendingResult, operationalResult, alertResult, integrationResult, overviewResult] = await Promise.all([
           fetchFoundation ? request(`/api/admin/platform/operations-foundation?includeCapabilities=${needsCapabilities?'1':'0'}&limit=200&centerLimit=500`, { method:'GET' }) : Promise.resolve(null),
           needsPending ? request('/api/admin/platform/pending-subjects?limit=100', { method:'GET' }) : Promise.resolve(null),
           needsOperational ? request('/api/admin/platform/integration-events/status?limit=100', { method:'GET' }) : Promise.resolve(null),
           needsAlerts ? request('/api/admin/platform/integration-identity-alerts?limit=100', { method:'GET' }) : Promise.resolve(null),
           needsIntegrations ? send(buildIntegrationDirectoryRequest({search:requested.includes('integrations')?state.integrationSearch:'',status:requested.includes('integrations')?state.integrationStatus:'',view:requested.includes('integrations')?state.integrationView:'current',page:requested.includes('integrations')?state.integrationPage:1,limit:directoryLimit})) : Promise.resolve(null),
+          requested.includes('integrations')&&state.integrationView==='current'?send(overviewDescriptor):Promise.resolve(null),
         ]);
         const organizations = fetchFoundation ? safeArray(foundationResult?.organizations) : state.organizations;
         const organizationNames=new Map(organizations.map((item)=>[item.organizationId,item.displayName]));
@@ -768,6 +788,8 @@
         const integrations = needsIntegrations ? safeArray(integrationResult?.items) : state.integrations;
         if (token !== generation) return { ignored:true, stale:true };
         Object.assign(state, { organizations, centers, integrations, loading:false, error:null });
+        if(overviewResult)state.integrationFlows=new Map(safeArray(overviewResult.items).map((item)=>[item.integrationClientId,item]));
+        else if(requested.includes('integrations'))state.integrationFlows=new Map();
         if(fetchFoundation){state.foundationLoaded=true;state.foundationBounded=foundationResult?.bounded||null;if(needsCapabilities)state.foundationCapabilitiesLoaded=true;}
         if(needsIntegrations&&integrationResult?.pagination)state.integrationPagination=integrationResult.pagination;
         if (capabilityGroups) state.capabilities = new Map(capabilityGroups);
@@ -798,7 +820,7 @@
   return { CAPABILITY_LABELS, SUPPORTED_EVENT_TYPES, CLIENT_STATUS_LABELS, GROUP_LABELS, IDENTITY_POLICY_LABELS,
     EVENT_STATUS_LABELS, REJECTION_REASON_LABELS, buildResidentOptionsRequest, buildMappingRequest,
     buildCapabilityRequest, buildReconcileRequest, normalizeClientCode, buildCreateClientRequest,
-    buildClientStatusRequest, buildIntegrationDirectoryRequest, buildCenterScopeRequest, buildEventScopeRequest, buildCredentialRequest,
+    buildClientStatusRequest, buildIntegrationDirectoryRequest, buildIntegrationOverviewRequest, buildCenterScopeRequest, buildEventScopeRequest, buildCredentialRequest,
     buildCenterMappingListRequest, buildCenterMappingRequest, buildDeactivateCenterMappingRequest,
     buildSubjectMappingListRequest, buildSubjectMappingRequest, buildDeactivateSubjectMappingRequest,
     buildIdentityPolicyRequest, buildAlertStatusRequest,ADAPTER_EVENT_TYPE,buildAdapterCaptureRequest,

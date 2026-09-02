@@ -3,6 +3,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { platformService: defaultPlatformService } = require('../services/platformService');
 const { integrationEventService: defaultIntegrationEventService } = require('../services/integrationEventService');
 const { integrationAdapterService: defaultIntegrationAdapterService } = require('../services/integrationAdapterService');
+const { integrationControlCenterService: defaultIntegrationControlCenterService } = require('../services/integrationControlCenterService');
 const { PlatformError } = require('../domain/platform');
 
 function serviceFor(req) {
@@ -15,6 +16,10 @@ function eventServiceFor(req) {
 
 function adapterServiceFor(req) {
   return req.app.locals.integrationAdapterService || defaultIntegrationAdapterService;
+}
+
+function controlCenterServiceFor(req) {
+  return req.app.locals.integrationControlCenterService || defaultIntegrationControlCenterService;
 }
 
 function actorFor(req) {
@@ -129,6 +134,13 @@ function createPlatformAdminRouter() {
       centerId:req.query.centerId || null,
       groupStatus:req.query.groupStatus || null,
       limit:req.query.limit,
+    }));
+  }));
+
+  router.get('/integration-control/overview', platformAction(async (req, res) => {
+    res.json(await controlCenterServiceFor(req).overview({
+      search:req.query.search,status:req.query.status,view:req.query.view,
+      page:req.query.page,limit:req.query.limit,
     }));
   }));
 
