@@ -24,6 +24,14 @@ function safeReference(value,prefix='เหตุการณ์'){
   const text=String(value||'').trim();return text?`${prefix} ••••${text.slice(-6)}`:null;
 }
 function stage(key,state,detail=null){const definition=STAGE_DEFINITIONS.find(([id])=>id===key);return{key,label:definition?.[1]||key,state,detail};}
+function failureStageFor(row){
+  if(row.last_error_code==='CENTER_MAPPING_NOT_FOUND')return'center';
+  if(['SUBJECT_MAPPING_NOT_FOUND','RESIDENT_MAPPING_INVALID'].includes(row.last_error_code))return'resident';
+  if(row.last_error_code==='CARE_PROFILE_RELATIONSHIP_INVALID')return'care_profile';
+  if(row.last_error_code==='GROUP_RECONCILIATION_BLOCKED')return'family_destination';
+  if(['INVALID_FINALIZED_RECORD','TEMPORARY_PROCESSING_UNAVAILABLE','PROCESSING_RETRY_EXHAUSTED'].includes(row.last_error_code))return'persistence';
+  return row.resident_id?'persistence':'resident';
+}
 function attentionFor(row){
   if(row.pending_reason==='subject_mapping')return{stage:'resident',reason:'ยังไม่พบผู้พักที่ตรงกับข้อมูลจากระบบภายนอก'};
   if(row.group_reconciliation_status==='group_binding_missing')return{stage:'family_destination',reason:'ยังไม่ได้ผูกปลายทางครอบครัว'};
@@ -31,7 +39,7 @@ function attentionFor(row){
   if(row.notification_intent_status==='enqueue_failed')return{stage:'notification',reason:'สร้างคิวการแจ้งเตือนไม่สำเร็จ'};
   if(row.notification_delivery_status==='retrying')return{stage:'notification',reason:'การแจ้งเตือนยังส่งไม่สำเร็จและระบบกำลังลองใหม่'};
   if(row.notification_delivery_status==='dead_letter')return{stage:'notification',reason:'ระบบหยุดลองส่งการแจ้งเตือนแล้ว'};
-  if(['rejected','retrying','dead'].includes(row.status))return{stage:row.resident_id?'persistence':'resident',reason:ERROR_LABELS[row.last_error_code]||'เหตุการณ์นี้ต้องตรวจสอบเพิ่มเติม'};
+  if(['rejected','retrying','dead'].includes(row.status))return{stage:failureStageFor(row),reason:ERROR_LABELS[row.last_error_code]||'เหตุการณ์นี้ต้องตรวจสอบเพิ่มเติม'};
   return null;
 }
 function flowForEvent(row){
@@ -39,15 +47,16 @@ function flowForEvent(row){
   const isDaily=row.event_type==='care.daily_report.finalized';const processed=row.status==='processed';
   const pendingSubject=row.status==='pending'&&row.pending_reason==='subject_mapping';
   const terminalFailure=['rejected','dead'].includes(row.status);const processing=['received','processing','retrying'].includes(row.status);
+  const failureStage=terminalFailure?failureStageFor(row):null;
   const group=row.group_reconciliation_status;const notification=row.notification_intent_status;const delivery=row.notification_delivery_status;
   const stages=[
     stage('receive','completed','ระบบบันทึกเหตุการณ์แล้ว'),
     stage('validate','completed','ผ่านการตรวจ canonical envelope ก่อนบันทึก inbox'),
     stage('transform','unknown','event ไม่ได้เก็บ Adapter version ที่ใช้ จึงยืนยันย้อนหลังไม่ได้'),
-    stage('center','completed','มี Center ที่ backend อนุญาตและบันทึกไว้'),
-    stage('resident',row.resident_id?'completed':pendingSubject?'attention':terminalFailure?'failed':processing?'current':'unknown',row.resident_id?'เชื่อมผู้พักแล้ว':pendingSubject?'รอผู้ดูแลเชื่อมผู้พัก':'ยังตรวจสอบไม่ได้'),
-    stage('care_profile',row.care_profile_id?'completed':pendingSubject?'waiting':terminalFailure?'unknown':processing?'waiting':'unknown',row.care_profile_id?'เชื่อม Care Profile แล้ว':'ยังไม่มีหลักฐานการเชื่อม'),
-    stage('persistence',processed&&row.canonical_resource_id?'completed':terminalFailure?'failed':pendingSubject?'waiting':processing?'current':'unknown',processed&&row.canonical_resource_id?'บันทึกข้อมูลมาตรฐานแล้ว':terminalFailure?'บันทึกข้อมูลไม่สำเร็จ':'กำลังรอประมวลผล'),
+    stage('center',failureStage==='center'?'failed':'completed',failureStage==='center'?(ERROR_LABELS[row.last_error_code]||'ระบุศูนย์ไม่สำเร็จ'):'มี Center ที่ backend อนุญาตและบันทึกไว้'),
+    stage('resident',row.resident_id?'completed':pendingSubject?'attention':failureStage==='resident'?'failed':processing?'current':'unknown',row.resident_id?'เชื่อมผู้พักแล้ว':pendingSubject?'รอผู้ดูแลเชื่อมผู้พัก':failureStage==='resident'?(ERROR_LABELS[row.last_error_code]||'จับคู่ผู้พักไม่สำเร็จ'):'ยังตรวจสอบไม่ได้'),
+    stage('care_profile',row.care_profile_id?'completed':pendingSubject?'waiting':failureStage==='care_profile'?'failed':processing?'waiting':'unknown',row.care_profile_id?'เชื่อม Care Profile แล้ว':failureStage==='care_profile'?(ERROR_LABELS[row.last_error_code]||'เชื่อม Care Profile ไม่สำเร็จ'):'ยังไม่มีหลักฐานการเชื่อม'),
+    stage('persistence',processed&&row.canonical_resource_id?'completed':failureStage==='persistence'?'failed':pendingSubject||terminalFailure?'waiting':processing?'current':'unknown',processed&&row.canonical_resource_id?'บันทึกข้อมูลมาตรฐานแล้ว':failureStage==='persistence'?'บันทึกข้อมูลไม่สำเร็จ':'กำลังรอประมวลผล'),
     stage('family_destination',!isDaily?'not_applicable':!processed?'waiting':group==='group_binding_missing'||group==='group_binding_mismatch'?'attention':(row.family_destination_verified||row.verified_line_group_id)?'completed':'unknown',!isDaily?'เหตุการณ์นี้ไม่ส่งรายงานครอบครัว':(row.family_destination_verified||row.verified_line_group_id)?'พบปลายทางที่ผ่านการตรวจสอบแล้ว':group==='group_binding_missing'?'ยังไม่ได้ผูกปลายทางครอบครัว':group==='group_binding_mismatch'?'ปลายทางไม่ตรงกัน':'ยังตรวจสอบไม่ได้'),
     stage('notification',!isDaily?'not_applicable':!processed?'waiting':delivery==='sent'?'completed':delivery==='dead_letter'?'failed':delivery==='retrying'?'attention':['pending','sending'].includes(delivery)||notification==='queued'||notification==='duplicate'?'current':['recipient_missing','held_group_missing','held_group_mismatch'].includes(notification)?'attention':notification==='enqueue_failed'?'failed':notification==='not_applicable'?'not_applicable':'unknown',!isDaily?'เหตุการณ์นี้ไม่มีการแจ้งครอบครัว':delivery==='sent'?'ผู้ให้บริการรับคำขอส่งแล้ว แต่ไม่มีหลักฐานว่าส่งถึงผู้รับปลายทาง':delivery==='dead_letter'?'ระบบหยุดลองส่งแล้ว':delivery==='retrying'?'ระบบกำลังลองส่งใหม่':notification==='queued'?'สร้างคิวแล้ว แต่ยังไม่ใช่หลักฐานว่าส่งถึงผู้รับ':notification==='duplicate'?'มีคิวของรายการนี้อยู่แล้ว':notification==='enqueue_failed'?'สร้างคิวไม่สำเร็จ':'ยังตรวจสอบสถานะการส่งไม่ได้'),
   ];

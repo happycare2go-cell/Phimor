@@ -185,3 +185,40 @@ test('history UI contracts are read-only, paginated, and expose no recovery requ
   const detail=ui.buildIntegrationHistoryDetailRequest('IEVT/A');assert.equal(detail.path,'/api/admin/platform/integration-control/history/IEVT%2FA');assert.equal(detail.options.method,'GET');
   const source=require('node:fs').readFileSync(require('node:path').resolve(__dirname,'../liff-app/system-admin/care-operations-ui.js'),'utf8');assert.match(source,/ประวัติเหตุการณ์/);assert.match(source,/ไม่มีคำสั่งส่งซ้ำ/);assert.doesNotMatch(source,/integration-control\/history[^\n]+method:'(?:POST|PUT|PATCH|DELETE)'/);
 });
+
+test('synthetic cross-flow matrix highlights only the stage supported by persisted evidence',()=>{
+  const stageState=(flow,key)=>flow.stages.find((item)=>item.key===key)?.state;
+  const success=historyProjection({...baseRow,notification_delivery_status:'sent',delivery_attempts:1,provider_acceptance:'accepted'},{detail:true});
+  assert.equal(success.problemStage,null);assert.equal(stageState({stages:success.detail.stages},'persistence'),'completed');assert.equal(stageState({stages:success.detail.stages},'notification'),'completed');
+  assert.match(success.notification.providerStateLabel,/ผู้ให้บริการรับคำขอส่งแล้ว/);assert.doesNotMatch(JSON.stringify(success),/ส่งถึงผู้รับแล้ว/);
+
+  const rejected=historyProjection({...baseRow,status:'rejected',resident_id:null,care_profile_id:null,canonical_resource_id:null,last_error_code:'INVALID_FINALIZED_RECORD',notification_intent_status:null,notification_delivery_status:null},{detail:true});
+  assert.equal(rejected.problemStage,'persistence');assert.equal(stageState({stages:rejected.detail.stages},'persistence'),'failed');assert.match(rejected.nextOperatorAction,/ตรวจรหัสสาเหตุ/);
+
+  const noCenterRecord=flowForEvent(null);assert.equal(noCenterRecord.latestEvent,null);assert.equal(stageState(noCenterRecord,'receive'),'waiting');assert.notEqual(stageState(noCenterRecord,'center'),'completed');
+  const unresolved=flowForEvent({...baseRow,status:'pending',resident_id:null,care_profile_id:null,canonical_resource_id:null,pending_reason:'subject_mapping',processed_at:null,notification_intent_status:null,verified_line_group_id:null});
+  assert.equal(unresolved.attention.stage,'resident');assert.equal(stageState(unresolved,'resident'),'attention');assert.notEqual(stageState(unresolved,'persistence'),'completed');
+
+  const missingProfile=historyProjection({...baseRow,status:'rejected',care_profile_id:null,canonical_resource_id:null,last_error_code:'CARE_PROFILE_RELATIONSHIP_INVALID',notification_intent_status:null,notification_delivery_status:null},{detail:true});
+  assert.equal(missingProfile.problemStage,'care_profile');assert.equal(stageState({stages:missingProfile.detail.stages},'care_profile'),'failed');assert.equal(stageState({stages:missingProfile.detail.stages},'persistence'),'waiting');
+  const missingDestination=historyProjection({...baseRow,verified_line_group_id:null,family_destination_verified:false,group_reconciliation_status:'group_binding_missing',notification_intent_status:'held_group_missing'},{detail:true});
+  assert.equal(missingDestination.problemStage,'family_destination');assert.equal(missingDestination.familyDestination.state,'attention');assert.match(missingDestination.nextOperatorAction,/GroupBinding/);
+  for(const delivery of ['retrying','dead_letter']){const item=historyProjection({...baseRow,notification_delivery_status:delivery,delivery_attempts:delivery==='retrying'?2:5},{detail:true});assert.equal(item.problemStage,'notification');assert.match(item.nextOperatorAction,/งานต้องตรวจ/);}
+
+  const legacy=historyProjection({integration_event_id:'IEVT-LEGACY-000001',integration_client_id:'INT-LEGACY',event_type:'care.daily_report.finalized',status:'processed',created_at:'2026-09-01T01:00:00Z'},{detail:true});
+  assert.equal(stageState({stages:legacy.detail.stages},'transform'),'unknown');assert.equal(stageState({stages:legacy.detail.stages},'persistence'),'unknown');assert.equal(legacy.identity.residentState,'unknown');assert.equal(legacy.familyDestination.state,'unknown');assert.equal(legacy.detail.technical.adapterEvidence,'unavailable_for_event');
+  assert.equal(legacy.detail.technical.idempotencyEvidence,'event_id_unique_but_duplicate_receipt_count_not_persisted');
+});
+
+test('synthetic identity ambiguity and HHS-equivalent resolution never mislabel field mapping or LINE delivery',()=>{
+  const ambiguous=identityProjection({row_id:'ALERT-SYNTHETIC-000001',row_kind:'ambiguity',mapping_status:'ambiguous',candidate_count:2,external_center_id:'SYNTH-CENTER',external_resident_id:'SYNTH-SUBJECT'});
+  assert.equal(ambiguous.mappingStatus,'ambiguous');assert.equal(ambiguous.resident.state,'unresolved');assert.equal(ambiguous.careProfile.state,'unresolved');
+
+  const before=flowForEvent({...baseRow,integration_event_id:'IEVT-SYNTHETIC-BEFORE',status:'pending',resident_id:null,care_profile_id:null,canonical_resource_id:null,pending_reason:'subject_mapping',processed_at:null,verified_line_group_id:null,group_reconciliation_status:null,notification_intent_status:null});
+  assert.equal(before.attention.stage,'resident');assert.equal(before.stages.find((item)=>item.key==='transform').state,'unknown');assert.equal(before.stages.find((item)=>item.key==='notification').state,'waiting');
+  assert.doesNotMatch(JSON.stringify(before),/จับคู่ field ไม่สำเร็จ|LINE ล้มเหลว/);
+
+  const after=flowForEvent({...baseRow,integration_event_id:'IEVT-SYNTHETIC-AFTER',notification_delivery_status:'pending',delivery_attempts:0});
+  assert.equal(after.attention,null);assert.equal(after.stages.find((item)=>item.key==='resident').state,'completed');assert.equal(after.stages.find((item)=>item.key==='care_profile').state,'completed');assert.equal(after.stages.find((item)=>item.key==='family_destination').state,'completed');assert.equal(after.stages.find((item)=>item.key==='notification').state,'current');
+  assert.match(after.stages.find((item)=>item.key==='notification').detail,/ยังไม่ใช่หลักฐานว่าส่งถึงผู้รับ/);
+});
