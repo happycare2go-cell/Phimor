@@ -16,6 +16,7 @@ const accessService = require('../services/accessService');
 const groupBindingService = require('../services/groupBindingService');
 const medicationCurrentSetService = require('../services/medicationCurrentSetService');
 const medicationChangeHistoryService = require('../services/medicationChangeHistoryService');
+const medicationImageDraftService = require('../services/medicationImageDraftService');
 
 function platformServiceFor(req) {
   return req.app.locals.platformService || defaultPlatformService;
@@ -342,12 +343,28 @@ router.put('/residents/:residentId/medications/current', requireCenterStaff(['ow
 router.post('/residents/:residentId/medications/image-proposal', requireCenterStaff(['owner','manager']), asyncHandler(async (req, res) => {
   const context = await medicationResidentContext(req);
   if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
-  const image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
-  if (!image.ok) return res.status(image.status).json({ error:image.error, message:image.message });
-  const parsed = await require('../providers/aiProvider').interpretDocument(image.buffer, image.mimeType);
+  try {
+    const draft = await medicationImageDraftService.extractImage(req.body);
+    const proposal = await medicationCurrentSetService.proposeImageMerge({
+      careProfileId:context.profile.care_profile_id, extractedItems:draft.items,
+      requester:centerMedicationRequester(req),
+    });
+    res.status(202).json({ status:'draft_requires_confirmation', imageStatus:draft.status,
+      extractionReview:draft.review, ...proposal });
+  } catch (error) {
+    if (error instanceof medicationImageDraftService.MedicationImageDraftError) {
+      return res.status(error.status).json({ error:error.code, message:error.message });
+    }
+    return medicationError(res, error);
+  }
+}));
+
+router.post('/residents/:residentId/medications/draft-proposal', requireCenterStaff(['owner','manager']), asyncHandler(async (req, res) => {
+  const context = await medicationResidentContext(req);
+  if (!context) return res.status(404).json({ error:'not_linked', message:'ไม่พบผู้พักที่เชื่อม Care Profile ในสาขานี้' });
   try {
     const proposal = await medicationCurrentSetService.proposeImageMerge({
-      careProfileId:context.profile.care_profile_id, extractedItems:parsed.medications || [],
+      careProfileId:context.profile.care_profile_id, extractedItems:req.body.items,
       requester:centerMedicationRequester(req),
     });
     res.status(202).json({ status:'draft_requires_confirmation', ...proposal });

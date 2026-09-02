@@ -20,11 +20,40 @@ test('classifier routes an explicit Lab report to the dedicated subtype', () => 
   assert.equal(validateDocumentResult(medical({ documentSubtype: 'lab_report' })).documentSubtype, 'lab_report');
 });
 
-test('legacy medication, appointment and doctor-note results retain their existing flow', () => {
-  assert.equal(validateDocumentResult(medical({ medications: [{ name: 'Metformin', dose: '500 mg' }] })).documentSubtype, 'medication');
+test('legacy medication response remains valid without inventing enriched clinical values', () => {
+  const result = validateDocumentResult(medical({ medications: [{
+    name:'ยาความดัน', dose:'รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน', condition:'',
+  }] }));
+  assert.equal(result.documentSubtype, 'medication');
+  assert.equal(result.medications[0].name, 'ยาความดัน');
+  assert.equal(result.medications[0].dose, 'รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน');
+  for (const field of ['strength','unit','frequency','timing','instruction','route','amount','condition']) {
+    assert.equal(result.medications[0][field], '');
+  }
+  assert.deepEqual(result.medications[0].uncertainFields, []);
+});
+
+test('enriched V2 medication response preserves complete amount and per-dose unit separately', () => {
+  const medication = {
+    name:'ยาน้ำ', strength:'100 mg/5 mL', dose:'5', unit:'มล.', frequency:'วันละ 1 ครั้ง',
+    timing:'ก่อนนอน', instruction:'รับประทานครั้งละ 5 มล. วันละ 1 ครั้ง ก่อนนอน',
+    route:'รับประทาน', amount:'1 ขวด', condition:'', uncertainFields:['strength'],
+  };
+  const result = validateDocumentResult(medical({ documentSubtype:'medication', medications:[medication] }));
+  assert.deepEqual(result.medications[0], medication);
+});
+
+test('appointment, doctor-note and mixed document contracts remain unchanged', () => {
   assert.equal(validateDocumentResult(medical({ appointment: { hospital: 'รพ.', datetime: null } })).documentSubtype, 'appointment');
   assert.equal(validateDocumentResult(medical({ doctorNote: 'ติดตามอาการ' })).documentSubtype, 'doctor_note');
-  assert.equal(validateDocumentResult(medical({ documentSubtype: 'mixed' })).documentSubtype, 'mixed');
+  const mixed = validateDocumentResult(medical({
+    documentSubtype:'mixed', appointment:{hospital:'รพ.',datetime:null},
+    medications:[{name:'Metformin',dose:'1 เม็ด',condition:''}], doctorNote:'ติดตามอาการ',
+  }));
+  assert.equal(mixed.documentSubtype, 'mixed');
+  assert.deepEqual(mixed.appointment, { hospital:'รพ.', datetime:null });
+  assert.equal(mixed.doctorNote, 'ติดตามอาการ');
+  assert.equal(mixed.medications[0].name, 'Metformin');
   assert.match(DOCUMENT_PROMPT, /บันทึก\/คำสั่งแพทย์เป็น doctor_note/);
   assert.doesNotMatch(DOCUMENT_PROMPT, /ถ้าไม่ใช่ใบนัด ซองยา หรือผลตรวจ ให้ตอบ unrelated/);
 });

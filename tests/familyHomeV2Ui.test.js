@@ -210,19 +210,21 @@ test('profile switch clearing covers clinical module output and generated links 
 });
 
 test('medication extraction and confirmation are pinned to immutable profile context', () => {
-  const save = functionSource('saveMedication', 'isMedicationOperationCurrent');
-  assert.match(save, /const profileId=currentProfile\.profile\.care_profile_id/);
-  assert.match(save, /careProfileId:profileId/);
-  assert.match(save, /generation:DASHBOARD_GENERATION/);
-  assert.match(save, /baseSnapshotId:familyMedicationState\.baseSnapshotId/);
-  assert.match(save, /isMedicationOperationCurrent\(operation\)/);
-  assert.match(save, /`\/api\/care-profile\/\$\{operation\.careProfileId\}\/medications\/image-proposal`/);
+  const begin = functionSource('beginFamilyMedicationOperation', 'isMedicationOperationCurrent');
+  assert.match(begin, /const profileId=currentProfile\.profile\.care_profile_id/);
+  assert.match(begin, /careProfileId:profileId/);
+  assert.match(begin, /generation:DASHBOARD_GENERATION/);
+  assert.match(begin, /baseSnapshotId:familyMedicationState\.baseSnapshotId/);
+  const extraction = functionSource('extractFamilyMedicationImages', 'clearMedicationForm');
+  assert.match(extraction, /isMedicationOperationCurrent\(operation\)/);
+  assert.match(extraction, /`\/api\/care-profile\/\$\{operation\.careProfileId\}\/medications\/image-proposal`/);
+  assert.match(extraction, /medications\/draft-proposal/);
   const confirm = functionSource('confirmMedicationReview', 'persistFamilyMedicationItems');
   assert.match(confirm, /const operation=medicationOperation/);
   assert.match(confirm, /if\(!isMedicationOperationCurrent\(operation\)\)/);
   assert.match(confirm, /persistFamilyMedicationItems\(operation/);
   assert.doesNotMatch(confirm, /currentProfile\.profile\.care_profile_id/);
-  const persist = functionSource('persistFamilyMedicationItems', 'clearMedicationForm');
+  const persist = functionSource('persistFamilyMedicationItems', 'saveMedication');
   assert.match(persist, /operation\.careProfileId/);
   assert.match(persist, /baseSnapshotId:operation\.baseSnapshotId/);
   assert.match(persist, /MEDICATION_SNAPSHOT_STALE/);

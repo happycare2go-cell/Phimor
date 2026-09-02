@@ -7,7 +7,7 @@ const {
   getCurrentMedicationSnapshot, getMedicationInstructions,
 } = require('../backend/services/medicationRetrievalService');
 const {
-  normalizeMedication, compareMedicationSnapshots,
+  normalizeMedication, parseDoseAndInstruction, compareMedicationSnapshots,
 } = require('../backend/services/medicationDiffService');
 
 test.beforeEach(() => db.resetAll());
@@ -160,6 +160,15 @@ test('diff reports instruction changes separately from dose', async () => {
   );
   assert.equal(result.doseChanged.length, 0);
   assert.equal(result.instructionChanged.length, 1);
+});
+
+test('dispensed amount is not reinterpreted as per-administration dose', () => {
+  const result = parseDoseAndInstruction({
+    dose: '1', unit: 'เม็ด', amount: '30', frequency: 'วันละ 1 ครั้ง', timing: 'ก่อนนอน',
+  });
+  assert.equal(result.dose, '1');
+  assert.doesNotMatch(result.dose, /30/);
+  assert.equal(result.instruction, 'วันละ 1 ครั้ง | ก่อนนอน');
 });
 
 test('unit spelling, Unicode, case and whitespace normalization produce unchanged result', async () => {

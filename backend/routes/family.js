@@ -9,6 +9,7 @@ const privacyService = require('../services/privacyService');
 const healthHistoryService = require('../services/careProfileHealthHistoryService');
 const medicationCurrentSetService = require('../services/medicationCurrentSetService');
 const medicationChangeHistoryService = require('../services/medicationChangeHistoryService');
+const medicationImageDraftService = require('../services/medicationImageDraftService');
 const { CareProfiles, CareProfileMembers } = require('../db');
 
 const PDF_LINK_TTL_MS = 5 * 60 * 1000;
@@ -324,16 +325,31 @@ router.put('/care-profile/:careProfileId/medications/current', requireFamilyAcce
 
 router.post('/care-profile/:careProfileId/medications/image-proposal', requireFamilyAccess(), asyncHandler(async (req, res) => {
   if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_medications')) return res.status(403).json({ error:'forbidden' });
-  const image = require('../utils/imageUpload').decodeMedicalImage(req.body.imageBase64, req.body.imageMimeType);
-  if (!image.ok) return res.status(image.status).json({ error:image.error, message:image.message });
-  const parsed = await require('../providers/aiProvider').interpretDocument(image.buffer, image.mimeType);
   try {
+    const draft = await medicationImageDraftService.extractImage(req.body);
     const proposal = await medicationCurrentSetService.proposeImageMerge({
-      careProfileId:req.params.careProfileId, extractedItems:parsed.medications || [],
+      careProfileId:req.params.careProfileId, extractedItems:draft.items,
       requester:familyMedicationRequester(req),
     });
-    res.status(202).json({ status:'draft_requires_confirmation', ...proposal,
+    res.status(202).json({ status:'draft_requires_confirmation', imageStatus:draft.status,
+      extractionReview:draft.review, ...proposal,
       message:proposal.extracted.length ? 'กรุณาตรวจสอบการเปลี่ยนแปลงก่อนบันทึก' : 'ไม่พบรายการยาที่นำมาเสนอ กรุณาตรวจภาพหรือกรอกข้อมูลเอง' });
+  } catch (error) {
+    if (error instanceof medicationImageDraftService.MedicationImageDraftError) {
+      return res.status(error.status).json({ error:error.code, message:error.message });
+    }
+    return medicationError(res, error);
+  }
+}));
+
+router.post('/care-profile/:careProfileId/medications/draft-proposal', requireFamilyAccess(), asyncHandler(async (req, res) => {
+  if (!req.familyPermissions.includes('*') && !req.familyPermissions.includes('manage_medications')) return res.status(403).json({ error:'forbidden' });
+  try {
+    const proposal = await medicationCurrentSetService.proposeImageMerge({
+      careProfileId:req.params.careProfileId, extractedItems:req.body.items,
+      requester:familyMedicationRequester(req),
+    });
+    res.status(202).json({ status:'draft_requires_confirmation', ...proposal });
   } catch (error) { return medicationError(res, error); }
 }));
 

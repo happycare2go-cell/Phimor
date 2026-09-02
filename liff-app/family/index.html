@@ -395,11 +395,24 @@
     <div class="card family-section-anchor" id="medicationEntryCard">
       <h3>รายการยาปัจจุบัน</h3>
       <p id="medicationCurrentStatus" class="medication-editor__status" role="status" aria-live="polite">กำลังโหลดรายการยาปัจจุบัน...</p>
-      <div id="familyMedicationRows" class="medication-editor__list"></div>
-      <div class="medication-editor__toolbar"><button type="button" class="btn btn-outline" id="familyMedicationAdd" onclick="addFamilyMedicationRow()">+ เพิ่มยา</button></div>
-      <label for="medImage">ถ่าย/อัปโหลดรูปใบรายการยาเพื่อเสนอการเปลี่ยนแปลง</label><input type="file" id="medImage" accept="image/*" capture="environment">
-      <p class="medication-editor__status">ยาที่ไม่พบในรูปจะยังคงอยู่ การลบยาต้องทำโดยกด “ลบรายการ” เท่านั้น</p>
-      <div style="margin-top:12px"><button class="btn btn-primary" id="familyMedicationSave" onclick="saveMedication()">บันทึกรายการยาปัจจุบัน</button></div>
+      <div id="familyMedicationCards" class="medication-editor__cards"></div>
+      <div id="familyMedicationPrimaryActions" class="medication-editor__primary-actions">
+        <label class="btn btn-primary medication-editor__image-picker" for="medImage">ถ่ายรูป / อัปโหลดฉลากยา<input type="file" id="medImage" accept="image/*" capture="environment" multiple onchange="selectFamilyMedicationImages(event)"></label>
+        <button type="button" class="btn btn-outline" id="familyMedicationManual" onclick="openFamilyMedicationManual()">กรอกยาเอง</button>
+      </div>
+      <section id="familyMedicationImageSelection" class="medication-editor__image-selection" hidden aria-label="รูปฉลากยาที่เลือก">
+        <p id="familyMedicationImageCount" class="medication-editor__image-count"></p>
+        <div id="familyMedicationImagePreviews" class="medication-editor__previews"></div>
+        <button type="button" class="btn btn-primary" id="familyMedicationExtract" onclick="extractFamilyMedicationImages()">อ่านข้อมูลจากฉลาก</button>
+        <p class="medication-editor__status">เลือกได้ไม่เกิน 4 รูป ระบบจะอ่านทีละรูปและยังไม่บันทึกจนกว่าคุณจะยืนยัน</p>
+      </section>
+      <section id="familyMedicationManualPanel" class="medication-editor__manual" hidden aria-labelledby="familyMedicationManualTitle">
+        <h4 id="familyMedicationManualTitle">ตรวจสอบและแก้ไขรายการยา</h4>
+        <div id="familyMedicationRows" class="medication-editor__list"></div>
+        <div class="medication-editor__toolbar"><button type="button" class="btn btn-outline" id="familyMedicationAdd" onclick="addFamilyMedicationRow()">+ เพิ่มยา</button></div>
+        <p class="medication-editor__status">รายการที่ยืนยันจะเป็นข้อมูลยาปัจจุบันใน Care Profile และระบบจะเก็บประวัติเดิมไว้</p>
+        <div class="medication-editor__sticky-actions"><button type="button" class="btn btn-outline" onclick="cancelFamilyMedicationEdit()">ยกเลิก</button><button class="btn btn-primary" id="familyMedicationSave" onclick="saveMedication()">ยืนยันและบันทึก</button></div>
+      </section>
       <button type="button" class="btn btn-outline family-inline-action" onclick="openFamilyDestination('history')">ดูประวัติยาและส่งออก PDF</button>
     </div>
   </div>
@@ -521,13 +534,15 @@
 </div>
 
 <div class="modal-bg" id="medicationReviewModal" aria-hidden="true"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="medicationReviewTitle" aria-describedby="medicationReviewDescription">
-  <h3 id="medicationReviewTitle">ตรวจสอบข้อมูลจากรูปก่อนบันทึก</h3>
-  <p id="medicationReviewDescription" style="font-size:12px;color:var(--gray)">เลือกว่าจะคงข้อมูลเดิมหรือใช้ข้อมูลจากรูป ระบบจะไม่ลบยาที่ไม่ปรากฏในรูปและยังไม่บันทึกจนกดยืนยัน</p>
+  <h3 id="medicationReviewTitle">ตรวจสอบข้อมูลจากฉลาก</h3>
+  <p id="medicationReviewDescription" class="medication-editor__draft-callout">ข้อมูลนี้อ่านมาจากรูปและยังไม่ได้บันทึก กรุณาตรวจสอบทุกครั้งก่อนยืนยัน</p>
+  <p id="medicationReviewBatchSummary" class="medication-editor__status"></p>
   <div id="medicationReviewRows"></div>
   <div id="medicationReviewLive" class="medication-editor__status" role="status" aria-live="polite"></div>
-  <div style="display:flex;gap:8px;margin-top:14px">
-    <button class="btn btn-outline" onclick="closeMedicationReview()">ยกเลิก</button>
-    <button class="btn btn-primary" id="medicationReviewConfirm" onclick="confirmMedicationReview()">ใช้รายการที่เลือกและบันทึก</button>
+  <div class="medication-editor__review-actions">
+    <button type="button" class="btn btn-outline" onclick="closeMedicationReview()">ยกเลิก</button>
+    <button type="button" class="btn btn-outline" id="medicationReviewRecheck" onclick="recheckMedicationReview()" hidden>ตรวจสอบรายการอีกครั้ง</button>
+    <button class="btn btn-primary" id="medicationReviewConfirm" onclick="confirmMedicationReview()">ยืนยันและบันทึก</button>
   </div>
 </div></div>
 
@@ -557,9 +572,12 @@ let SHARE_TOKEN = new URLSearchParams(location.search).get('shareToken');
 let CENTER_LINK_OPEN_ERROR = '';
 let OPENED_ACCESS_REQUEST_ID = null;
 let INVITE_SUBMISSION_ACTIVE = false;
-let medicationDraftImage = null;
+let medicationSelectedImages = [];
+let medicationImagePreviewUrls = [];
+let medicationReviewByIndex = {};
+let medicationReviewNeedsRecheck = false;
 let medicationOperation = null;
-let familyMedicationState = { baseSnapshotId:null, items:[], proposal:null, busy:false };
+let familyMedicationState = { baseSnapshotId:null, items:[], proposal:null, busy:false, mode:'read' };
 let PLUS_UI = null;
 let PLUS_PAYMENT_UI = null;
 let CONSULTATION_UI = null;
@@ -974,8 +992,9 @@ function clearProfileScopedUi({returnHome=true}={}){
   LAST_FAMILY_BINDING_TEXT='';LAST_CAREGIVER_INVITE_TEXT='';LAST_PDF_LINKS=null;
   document.getElementById('pdfDownloadPanel').style.display='none';
   closeMedicationReview();clearMedicationForm();
-  familyMedicationState={baseSnapshotId:null,items:[],proposal:null,busy:false};
+  familyMedicationState={baseSnapshotId:null,items:[],proposal:null,busy:false,mode:'read'};
   document.getElementById('familyMedicationRows')?.replaceChildren();
+  document.getElementById('familyMedicationCards')?.replaceChildren();
   if(returnHome)activateView('home');
 }
 function renderProfileAnchor(){
@@ -1246,39 +1265,12 @@ async function saveAppointment() {
     button.disabled=false;button.textContent='บันทึกนัด';
   }
 }
-async function saveMedication() {
-  if (!currentProfile) return toast('ยังไม่มีโปรไฟล์');
-  if(familyMedicationState.busy)return;
+function beginFamilyMedicationOperation(){
+  if(!currentProfile)return null;
   const profileId=currentProfile.profile.care_profile_id;
-  if(familyMedicationState.profileId!==profileId)await loadFamilyMedicationCurrent();
-  const operation=window.PhimorMedicationOperation.create({
-    careProfileId:profileId,
-    generation:DASHBOARD_GENERATION,
-    baseSnapshotId:familyMedicationState.baseSnapshotId,
-    profileConditions:currentProfile.profile.chronic_conditions||[],
-  });
-  medicationOperation=operation;
-  const file = document.getElementById('medImage').files[0];
-  const items=window.PhimorMedicationEditor.collectRows(document.getElementById('familyMedicationRows'));
-  if (!items.length && !file) {
-    const confirmed=await askConfirm('ลบยาทั้งหมด','ยืนยันลบยาทั้งหมดออกจากรายการยาปัจจุบัน ประวัติเดิมจะยังคงอยู่','ลบยาทั้งหมด');
-    if(!confirmed){medicationOperation=null;return;}
-  }
-  let image = null;
-  try { image = file ? await normalizeImageFile(file) : null; }
-  catch(e) { medicationOperation=null;return toast(e.message || 'ไม่สามารถเตรียมรูปได้'); }
-  if(!isMedicationOperationCurrent(operation))return {ignored:true,stale:true};
-  if(file){
-    familyMedicationState.busy=true;setFamilyMedicationBusy(true);
-    try{
-      const result=await api(`/api/care-profile/${operation.careProfileId}/medications/image-proposal`,{method:'POST',body:JSON.stringify(image)});
-      if(!isMedicationOperationCurrent(operation))return {ignored:true,stale:true};
-      medicationDraftImage=image;familyMedicationState.proposal=result;renderFamilyMedicationProposal(result);
-      openMedicationReview();
-      return toast('AI อ่านรูปแล้ว กรุณาเลือกรายการก่อนบันทึก');
-    }finally{familyMedicationState.busy=false;setFamilyMedicationBusy(false)}
-  }
-  await persistFamilyMedicationItems(operation,items,{confirmRemoveAll:items.length===0,source:'family_manual'});
+  const operation=window.PhimorMedicationOperation.create({careProfileId:profileId,generation:DASHBOARD_GENERATION,
+    baseSnapshotId:familyMedicationState.baseSnapshotId,profileConditions:currentProfile.profile.chronic_conditions||[]});
+  medicationOperation=operation;return operation;
 }
 function isMedicationOperationCurrent(operation){
   return window.PhimorMedicationOperation.matches(operation,{
@@ -1286,15 +1278,38 @@ function isMedicationOperationCurrent(operation){
     careProfileId:currentProfile?.profile?.care_profile_id,
   });
 }
+function renderFamilyMedicationCurrent(){
+  const canManage=canManageFamilyMedication();
+  const cards=document.getElementById('familyMedicationCards');cards.hidden=false;
+  document.getElementById('familyMedicationManualPanel').hidden=true;
+  document.getElementById('familyMedicationPrimaryActions').hidden=!canManage;
+  window.PhimorMedicationEditor.renderCards(cards,familyMedicationState.items,{editable:canManage,onEdit:openFamilyMedicationManual});
+  familyMedicationState.mode='read';
+}
+function openFamilyMedicationManual(focusIndex=null){
+  if(!canManageFamilyMedication())return;
+  const items=familyMedicationState.items.length?familyMedicationState.items:[{}];
+  familyMedicationState.mode='edit';document.getElementById('familyMedicationCards').hidden=true;
+  document.getElementById('familyMedicationPrimaryActions').hidden=true;document.getElementById('familyMedicationImageSelection').hidden=true;
+  document.getElementById('familyMedicationManualPanel').hidden=false;
+  window.PhimorMedicationEditor.renderRows(document.getElementById('familyMedicationRows'),items,familyMedicationEditorOptions());
+  updateFamilyMedicationSaveLabel();
+  const rows=document.querySelectorAll('#familyMedicationRows .medication-editor__row');
+  rows[Number.isInteger(focusIndex)?focusIndex:Math.max(0,rows.length-1)]?.querySelector('[data-medication-field="name"]')?.focus();
+}
+function cancelFamilyMedicationEdit(){document.getElementById('familyMedicationRows').replaceChildren();renderFamilyMedicationCurrent()}
 function addFamilyMedicationRow(){
   const box=document.getElementById('familyMedicationRows');
   if(!window.PhimorMedicationEditor.addRow(box,{}, familyMedicationEditorOptions()))toast('บันทึกยาได้ไม่เกิน 30 รายการ');
+  updateFamilyMedicationSaveLabel();
 }
 function canManageFamilyMedication(){const permissions=currentProfile?.familyPermissions||[];return permissions.includes('*')||permissions.includes('manage_medications')}
-function familyMedicationEditorOptions(){return {editable:canManageFamilyMedication(),confirmRemove:()=>askConfirm('ลบรายการยา','ยืนยันนำรายการนี้ออกจากรายการยาปัจจุบัน ประวัติเดิมจะยังคงอยู่','ลบรายการ')}}
+function familyMedicationEditorOptions(){return {editable:canManageFamilyMedication(),onChange:updateFamilyMedicationSaveLabel,confirmRemove:()=>askConfirm('ลบรายการยา','ยืนยันนำรายการนี้ออกจากรายการยาปัจจุบัน ประวัติเดิมจะยังคงอยู่','ลบรายการ')}}
+function updateFamilyMedicationSaveLabel(){const count=window.PhimorMedicationEditor.collectRows(document.getElementById('familyMedicationRows')).length;document.getElementById('familyMedicationSave').textContent=count?`ยืนยันและบันทึก ${count} รายการ`:'ยืนยันและบันทึก'}
 function setFamilyMedicationBusy(busy){
-  document.getElementById('familyMedicationSave').disabled=busy||!canManageFamilyMedication();
-  document.getElementById('familyMedicationAdd').disabled=busy||!canManageFamilyMedication();
+  ['familyMedicationSave','familyMedicationAdd','familyMedicationManual','familyMedicationExtract','medicationReviewRecheck'].forEach((id)=>{const node=document.getElementById(id);if(node)node.disabled=busy||!canManageFamilyMedication()});
+  const confirm=document.getElementById('medicationReviewConfirm');if(confirm)confirm.disabled=busy||!canManageFamilyMedication()||medicationReviewNeedsRecheck;
+  document.getElementById('medImage').disabled=busy||!canManageFamilyMedication();
 }
 async function loadFamilyMedicationCurrent(){
   if(!currentProfile)return;
@@ -1302,69 +1317,92 @@ async function loadFamilyMedicationCurrent(){
   const status=document.getElementById('medicationCurrentStatus');status.textContent='กำลังโหลดรายการยาปัจจุบัน...';status.dataset.state='loading';
   const result=await api(`/api/care-profile/${profileId}/medications/current`);
   if(generation!==DASHBOARD_GENERATION||profileId!==currentProfile?.profile?.care_profile_id)return {ignored:true,stale:true};
-  familyMedicationState={profileId,generation,baseSnapshotId:result.currentSnapshot?.snapshotId||null,items:result.medications||[],proposal:null,busy:false};
-  window.PhimorMedicationEditor.renderRows(document.getElementById('familyMedicationRows'),familyMedicationState.items,familyMedicationEditorOptions());
+  familyMedicationState={profileId,generation,baseSnapshotId:result.currentSnapshot?.snapshotId||null,items:result.medications||[],proposal:null,busy:false,mode:'read'};
+  document.getElementById('familyMedicationRows').replaceChildren();renderFamilyMedicationCurrent();
   status.textContent=result.currentSnapshot?`อัปเดตล่าสุด ${new Date(result.currentSnapshot.recordedAt).toLocaleString('th-TH')} · ${result.currentSnapshot.sourceLabel||'ข้อมูลในระบบ'}`:'ยังไม่มีรายการยาปัจจุบัน';status.dataset.state='ready';
-  document.getElementById('familyMedicationAdd').hidden=!canManageFamilyMedication();
-  document.getElementById('familyMedicationSave').hidden=!canManageFamilyMedication();
   setFamilyMedicationBusy(false);return result;
 }
 function renderFamilyMedicationProposal(proposal){
-  const box=document.getElementById('medicationReviewRows');box.replaceChildren();let ambiguous=false;
-  const labels={NEW:'ยาใหม่',CHANGED_STRENGTH:'ขนาดยาเปลี่ยน',CHANGED_INSTRUCTION:'วิธีใช้เปลี่ยน',CHANGED_MULTIPLE_FIELDS:'หลายช่องเปลี่ยน',UNCHANGED:'ข้อมูลตรงกับรายการปัจจุบัน',AMBIGUOUS:'ระบุตัวตนยาไม่ชัดเจน'};
-  (proposal.proposals||[]).forEach((item,index)=>{
-    const card=document.createElement('section');card.className='medication-editor__proposal'+(item.ambiguous?' medication-editor__proposal--ambiguous':'');card.dataset.extractedIndex=item.extractedIndex==null?'':String(item.extractedIndex);
-    const title=document.createElement('h4');title.textContent=labels[item.classification]||item.classification;card.appendChild(title);
-    if(item.current){const old=document.createElement('p');old.textContent=`ข้อมูลเดิม: ${item.current.name} ${item.current.strength||''} ${item.current.dose||item.current.instruction||''}`.trim();card.appendChild(old)}
-    if(item.extracted){const fresh=document.createElement('p');fresh.textContent=`ข้อมูลจากรูป: ${item.extracted.name} ${item.extracted.strength||''} ${item.extracted.dose||item.extracted.instruction||''}`.trim();card.appendChild(fresh)}
-    if(item.ambiguous){ambiguous=true;const warning=document.createElement('p');warning.textContent='กรุณาแก้รายการในรูปแล้วลองใหม่ ระบบจะไม่เดาหรือรวมยาให้อัตโนมัติ';card.appendChild(warning)}
-    else if(item.classification!=='UNCHANGED'){
-      const choices=document.createElement('div');choices.className='medication-editor__proposal-options';
-      const name=`med-choice-${index}`,oldLabel=document.createElement('label'),newLabel=document.createElement('label');
-      oldLabel.innerHTML=`<input type="radio" name="${name}" value="current" ${item.classification==='NEW'?'':'checked'}> ${item.classification==='NEW'?'ไม่เพิ่ม':'ใช้ข้อมูลเดิม'}`;
-      newLabel.innerHTML=`<input type="radio" name="${name}" value="new" ${item.classification==='NEW'?'checked':''}> ${item.classification==='NEW'?'เพิ่มยา':'ใช้ข้อมูลจากรูป'}`;
-      choices.append(oldLabel,newLabel);card.appendChild(choices);
-    }
-    box.appendChild(card);
-  });
-  document.getElementById('medicationReviewConfirm').disabled=ambiguous;
-  document.getElementById('medicationReviewLive').textContent=ambiguous?'พบรายการที่ไม่ชัดเจน ยังไม่สามารถยืนยันได้':'ยาปัจจุบันที่ไม่อยู่ในรูปจะถูกเก็บไว้';
+  const result=window.PhimorMedicationEditor.renderProposalReview(document.getElementById('medicationReviewRows'),proposal,{prefix:'med-choice',reviewByIndex:medicationReviewByIndex,onDraftChange:()=>{medicationReviewNeedsRecheck=true;document.getElementById('medicationReviewRecheck').hidden=false;document.getElementById('medicationReviewConfirm').disabled=true;document.getElementById('medicationReviewLive').textContent='แก้ไขข้อมูลแล้ว กรุณาตรวจสอบรายการอีกครั้งก่อนยืนยัน'}});
+  medicationReviewNeedsRecheck=result.ambiguous;document.getElementById('medicationReviewRecheck').hidden=!result.ambiguous;
+  document.getElementById('medicationReviewConfirm').disabled=result.ambiguous;
+  document.getElementById('medicationReviewConfirm').textContent=`ยืนยันและบันทึก ${proposal.extracted?.length||0} รายการ`;
+  document.getElementById('medicationReviewLive').textContent=result.ambiguous?'พบรายการที่อาจซ้ำกัน กรุณาตรวจสอบ/แก้ไข แล้วตรวจรายการอีกครั้ง':'ยาปัจจุบันที่ไม่อยู่ในรูปจะถูกเก็บไว้';
 }
 function openMedicationReview(){const modal=document.getElementById('medicationReviewModal');medicationReviewFocusOrigin=document.activeElement;modal.classList.add('show');modal.setAttribute('aria-hidden','false');requestAnimationFrame(()=>document.getElementById('medicationReviewConfirm')?.focus({preventScroll:true}))}
-function closeMedicationReview(){ const modal=document.getElementById('medicationReviewModal');modal.classList.remove('show');modal.setAttribute('aria-hidden','true'); medicationDraftImage=null;familyMedicationState.proposal=null;medicationOperation=null;document.getElementById('medicationReviewRows').replaceChildren();const origin=medicationReviewFocusOrigin;medicationReviewFocusOrigin=null;if(origin?.isConnected)setTimeout(()=>origin.focus(),0); }
+function closeMedicationReview(){ const modal=document.getElementById('medicationReviewModal');modal.classList.remove('show');modal.setAttribute('aria-hidden','true');familyMedicationState.proposal=null;medicationReviewByIndex={};medicationReviewNeedsRecheck=false;medicationOperation=null;document.getElementById('medicationReviewRows').replaceChildren();clearFamilyMedicationImages();const origin=medicationReviewFocusOrigin;medicationReviewFocusOrigin=null;if(origin?.isConnected)setTimeout(()=>origin.focus(),0); }
 document.addEventListener('keydown',(event)=>{const modal=document.getElementById('medicationReviewModal');if(!modal?.classList.contains('show'))return;if(event.key==='Escape'&&!familyMedicationState.busy){event.preventDefault();closeMedicationReview();return}if(event.key!=='Tab')return;const focusable=[...modal.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex]:not([tabindex="-1"])')].filter((node)=>node.offsetParent!==null);if(!focusable.length)return;const first=focusable[0],last=focusable[focusable.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}});
+async function recheckMedicationReview(){
+  const operation=medicationOperation,proposal=familyMedicationState.proposal;if(!isMedicationOperationCurrent(operation)||!proposal)return;
+  familyMedicationState.busy=true;setFamilyMedicationBusy(true);
+  try{const refreshed=await api(`/api/care-profile/${operation.careProfileId}/medications/draft-proposal`,{method:'POST',body:JSON.stringify({items:proposal.extracted})});if(!isMedicationOperationCurrent(operation))return;if((refreshed.baseSnapshotId||null)!==(operation.baseSnapshotId||null)){closeMedicationReview();await loadFamilyMedicationCurrent();return toast('รายการยามีการเปลี่ยนแปลง กรุณาเริ่มตรวจใหม่')};familyMedicationState.proposal=refreshed;medicationReviewNeedsRecheck=false;renderFamilyMedicationProposal(refreshed)}finally{familyMedicationState.busy=false;setFamilyMedicationBusy(false)}
+}
 async function confirmMedicationReview(){
   const operation=medicationOperation;
   if(!isMedicationOperationCurrent(operation)){closeMedicationReview();return {ignored:true,stale:true};}
   const proposal=familyMedicationState.proposal;if(!proposal)return;
-  const decisions={};document.querySelectorAll('#medicationReviewRows .medication-editor__proposal').forEach(card=>{const index=card.dataset.extractedIndex;if(index!==''){decisions[index]=card.querySelector('input[type=radio]:checked')?.value||'current'}});
+  if(medicationReviewNeedsRecheck)return;
+  const decisions=window.PhimorMedicationEditor.collectProposalDecisions(document.getElementById('medicationReviewRows'));
   const items=window.PhimorMedicationEditor.proposedCompleteSet(proposal,decisions);
-  const result=await persistFamilyMedicationItems(operation,items,{source:'image_ai',imageBase64:medicationDraftImage?.imageBase64||null,imageMimeType:medicationDraftImage?.imageMimeType||null});
+  if(!items.length&&!familyMedicationState.items.length){closeMedicationReview();toast('ยังไม่มีรายการยาที่เลือกบันทึก');return {noChange:true};}
+  const result=await persistFamilyMedicationItems(operation,items,{source:'image_ai',extractedItems:proposal.extracted});
   if(!result?.ignored)closeMedicationReview();
 }
 async function persistFamilyMedicationItems(operation,items,extra={}){
   familyMedicationState.busy=true;setFamilyMedicationBusy(true);
   try{
-    const result=await api(`/api/care-profile/${operation.careProfileId}/medications/current`,{method:'PUT',body:JSON.stringify({items,baseSnapshotId:operation.baseSnapshotId,confirmRemoveAll:extra.confirmRemoveAll===true,source:extra.source,imageBase64:extra.imageBase64||null,mutationId:`family-medication-${Date.now()}-${Math.random().toString(36).slice(2)}`})});
+    const result=await api(`/api/care-profile/${operation.careProfileId}/medications/current`,{method:'PUT',body:JSON.stringify({items,baseSnapshotId:operation.baseSnapshotId,confirmRemoveAll:extra.confirmRemoveAll===true,source:extra.source,mutationId:`family-medication-${Date.now()}-${Math.random().toString(36).slice(2)}`})});
     if(!isMedicationOperationCurrent(operation))return {ignored:true,stale:true};
-    medicationOperation=null;document.getElementById('medImage').value='';await loadFamilyMedicationCurrent();
-    toast(result.noChange?'รายการยาตรงกับข้อมูลปัจจุบัน ไม่มีการเปลี่ยนแปลง':'บันทึกรายการยาปัจจุบันแล้ว');return result;
+    medicationOperation=null;clearFamilyMedicationImages();await loadFamilyMedicationCurrent();
+    toast(result.noChange?'รายการยาตรงกับข้อมูลปัจจุบัน ไม่มีการเปลี่ยนแปลง':`บันทึกรายการยาแล้ว · รายการยาปัจจุบัน ${result.medications?.length||0} รายการ`);return result;
   }catch(error){
     if(error.errorCode==='MEDICATION_SNAPSHOT_STALE'&&isMedicationOperationCurrent(operation)){
-      const staleImage=extra.source==='image_ai'&&extra.imageBase64?{imageBase64:extra.imageBase64,imageMimeType:extra.imageMimeType}:null;
+      const staleDrafts=extra.source==='image_ai'&&extra.extractedItems?.length?extra.extractedItems:null;
       document.getElementById('medicationCurrentStatus').textContent='รายการยามีการเปลี่ยนแปลง กำลังโหลดข้อมูลล่าสุด';document.getElementById('medicationCurrentStatus').dataset.state='error';
       await loadFamilyMedicationCurrent();
-      if(staleImage&&operation.careProfileId===currentProfile?.profile?.care_profile_id){
+      if(staleDrafts&&operation.careProfileId===currentProfile?.profile?.care_profile_id){
         const refreshedOperation=window.PhimorMedicationOperation.create({careProfileId:operation.careProfileId,generation:DASHBOARD_GENERATION,baseSnapshotId:familyMedicationState.baseSnapshotId,profileConditions:currentProfile.profile.chronic_conditions||[]});
-        const refreshed=await api(`/api/care-profile/${operation.careProfileId}/medications/image-proposal`,{method:'POST',body:JSON.stringify(staleImage)});
-        if(refreshedOperation.generation===DASHBOARD_GENERATION&&refreshedOperation.careProfileId===currentProfile?.profile?.care_profile_id){medicationOperation=refreshedOperation;medicationDraftImage=staleImage;familyMedicationState.proposal=refreshed;renderFamilyMedicationProposal(refreshed);document.getElementById('medicationReviewLive').textContent='รายการยามีการเปลี่ยนแปลงแล้ว กรุณาตรวจข้อเสนอจากรูปกับรายการล่าสุดอีกครั้ง'}
+        const refreshed=await api(`/api/care-profile/${operation.careProfileId}/medications/draft-proposal`,{method:'POST',body:JSON.stringify({items:staleDrafts})});
+        if(refreshedOperation.generation===DASHBOARD_GENERATION&&refreshedOperation.careProfileId===currentProfile?.profile?.care_profile_id){medicationOperation=refreshedOperation;familyMedicationState.proposal=refreshed;renderFamilyMedicationProposal(refreshed);openMedicationReview();document.getElementById('medicationReviewLive').textContent='รายการยามีการเปลี่ยนแปลงแล้ว กรุณาตรวจข้อเสนอจากรูปกับรายการล่าสุดอีกครั้ง'}
       }
     }
     if(error.errorCode==='DUPLICATE_MEDICATION_IDENTITY'&&isMedicationOperationCurrent(operation))window.PhimorMedicationEditor.showRowConflicts(document.getElementById('familyMedicationRows'),error.details?.conflicts||[]);
     throw error;
   }finally{familyMedicationState.busy=false;setFamilyMedicationBusy(false)}
 }
-function clearMedicationForm(){ document.getElementById('medImage').value=''; }
+async function saveMedication(){
+  if(!currentProfile||familyMedicationState.busy||familyMedicationState.mode!=='edit')return;
+  const operation=beginFamilyMedicationOperation();if(!operation)return;
+  const items=window.PhimorMedicationEditor.collectRows(document.getElementById('familyMedicationRows'));
+  let confirmRemoveAll=false;
+  if(!items.length){
+    if(!familyMedicationState.items.length){medicationOperation=null;return toast('กรุณากรอกชื่อยาอย่างน้อย 1 รายการ')}
+    confirmRemoveAll=await askConfirm('ลบยาทั้งหมด','ยืนยันลบยาทั้งหมดออกจากรายการยาปัจจุบัน ประวัติเดิมจะยังคงอยู่','ลบยาทั้งหมด');if(!confirmRemoveAll){medicationOperation=null;return}
+  }
+  await persistFamilyMedicationItems(operation,items,{confirmRemoveAll,source:'family_manual'});
+}
+function selectFamilyMedicationImages(event){
+  const files=[...(event.target.files||[])];event.target.value='';let rejected=0;
+  for(const file of files){const key=`${file.name}:${file.size}:${file.lastModified}`;if(medicationSelectedImages.some((item)=>item.key===key))continue;if(medicationSelectedImages.length>=window.PhimorMedicationEditor.MAX_IMAGES){rejected+=1;continue}if((file.type&&!file.type.startsWith('image/'))||file.size>20*1024*1024){rejected+=1;continue}medicationSelectedImages.push({key,file})}
+  renderFamilyMedicationImages();if(rejected)toast('เลือกได้ไม่เกิน 4 รูป และแต่ละรูปต้องเป็นไฟล์ภาพไม่เกิน 20 MB');
+}
+function renderFamilyMedicationImages(){
+  medicationImagePreviewUrls.forEach((url)=>URL.revokeObjectURL(url));medicationImagePreviewUrls=[];
+  const panel=document.getElementById('familyMedicationImageSelection'),previews=document.getElementById('familyMedicationImagePreviews');previews.replaceChildren();
+  panel.hidden=!medicationSelectedImages.length;document.getElementById('familyMedicationImageCount').textContent=`เลือกรูปแล้ว ${medicationSelectedImages.length} รูป`;
+  medicationSelectedImages.forEach((entry,index)=>{const wrapper=document.createElement('div');wrapper.className='medication-editor__preview';const url=URL.createObjectURL(entry.file);medicationImagePreviewUrls.push(url);const image=document.createElement('img');image.src=url;image.alt=`รูปฉลากยาที่เลือก ${index+1}`;const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label',`นำรูปที่ ${index+1} ออก`);remove.onclick=()=>{medicationSelectedImages.splice(index,1);renderFamilyMedicationImages()};wrapper.append(image,remove);previews.append(wrapper)});
+}
+function clearFamilyMedicationImages(){medicationSelectedImages=[];medicationImagePreviewUrls.forEach((url)=>URL.revokeObjectURL(url));medicationImagePreviewUrls=[];const input=document.getElementById('medImage');if(input)input.value='';const panel=document.getElementById('familyMedicationImageSelection');if(panel)panel.hidden=true;document.getElementById('familyMedicationImagePreviews')?.replaceChildren()}
+async function extractFamilyMedicationImages(){
+  if(!medicationSelectedImages.length||familyMedicationState.busy)return;
+  const operation=beginFamilyMedicationOperation();if(!operation)return;const selected=[...medicationSelectedImages];familyMedicationState.busy=true;setFamilyMedicationBusy(true);const results=[];
+  try{for(const entry of selected){try{const image=await normalizeImageFile(entry.file);if(!isMedicationOperationCurrent(operation))return;const result=await api(`/api/care-profile/${operation.careProfileId}/medications/image-proposal`,{method:'POST',body:JSON.stringify(image)});results.push({ok:true,...result})}catch(_){results.push({ok:false})}}
+    if(!isMedicationOperationCurrent(operation))return;
+    const batch=window.PhimorMedicationEditor.combineImageExtractions(results);if(!batch.extracted.length){document.getElementById('medicationCurrentStatus').textContent='อ่านข้อมูลจากรูปนี้ไม่ได้ ลองถ่ายให้เห็นฉลากตรง ชัด และมีแสงเพียงพอ หรือกรอกข้อมูลเอง';document.getElementById('medicationCurrentStatus').dataset.state='error';medicationOperation=null;return}
+    const proposal=await api(`/api/care-profile/${operation.careProfileId}/medications/draft-proposal`,{method:'POST',body:JSON.stringify({items:batch.extracted})});if(!isMedicationOperationCurrent(operation))return;if((proposal.baseSnapshotId||null)!==(operation.baseSnapshotId||null)){medicationOperation=null;await loadFamilyMedicationCurrent();return toast('รายการยามีการเปลี่ยนแปลง กรุณาเริ่มอ่านรูปใหม่')};familyMedicationState.proposal=proposal;medicationReviewByIndex=batch.reviewByIndex;renderFamilyMedicationProposal(proposal);document.getElementById('medicationReviewBatchSummary').textContent=`อ่านข้อมูลได้ ${batch.extracted.length} รายการ${batch.failedImages?` · มี ${batch.failedImages} รูปที่อ่านไม่ชัด กรุณาตรวจสอบหรือถ่ายใหม่`:''}${batch.truncated?' · แสดงสูงสุด 30 รายการ กรุณาตรวจสอบรูปที่เหลือแยกอีกครั้ง':''}`;openMedicationReview();toast('อ่านข้อมูลจากฉลากแล้ว กรุณาตรวจสอบก่อนยืนยัน')
+  }finally{familyMedicationState.busy=false;setFamilyMedicationBusy(false)}
+}
+function clearMedicationForm(){clearFamilyMedicationImages()}
 async function normalizeImageFile(file){
   if(file.type && !file.type.startsWith('image/'))throw new Error('กรุณาเลือกไฟล์รูปภาพ');
   if(file.size>20*1024*1024)throw new Error('รูปต้นฉบับใหญ่เกิน 20 MB');

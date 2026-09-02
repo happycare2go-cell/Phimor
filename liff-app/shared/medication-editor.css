@@ -1,1 +1,62 @@
-.medication-editor__list{display:grid;gap:12px;margin:12px 0}.medication-editor__row{min-width:0;margin:0;padding:12px;border:1px solid #dbe3ef;border-radius:12px;background:#fff;display:grid;gap:10px}.medication-editor__row legend{padding:0 6px;font-weight:700;color:var(--navy,#1c2b64);overflow-wrap:anywhere}.medication-editor__row label{display:grid;gap:5px;min-width:0;font-size:13px;color:var(--gray,#667085)}.medication-editor__row input,.medication-editor__row textarea{width:100%;min-width:0;box-sizing:border-box}.medication-editor__row textarea{min-height:76px;resize:vertical}.medication-editor__row :focus-visible,.medication-editor__proposal :focus-visible{outline:3px solid rgba(222,177,78,.78);outline-offset:2px}.medication-editor__row [aria-invalid="true"]{border-color:#b42318}.medication-editor__row-error{margin:0;color:#9b1c1c;font-size:12px;line-height:1.5}.medication-editor__remove{min-height:44px}.medication-editor__toolbar{display:flex;gap:8px;flex-wrap:wrap}.medication-editor__toolbar .btn{min-height:44px}.medication-editor__status{font-size:12px;color:var(--gray,#667085);line-height:1.6}.medication-editor__status[data-state="error"]{color:#9b1c1c}.medication-editor__proposal{border:1px solid #dbe3ef;border-radius:12px;padding:12px;margin:10px 0;overflow-wrap:anywhere}.medication-editor__proposal h4{margin:0 0 6px;color:var(--navy,#1c2b64)}.medication-editor__proposal-options{display:grid;gap:8px;margin-top:8px}.medication-editor__proposal-options label{min-height:44px;display:flex;align-items:center;gap:8px}.medication-editor__proposal--ambiguous{border-color:#b42318;background:#fff5f4}.medication-editor__empty{color:var(--gray,#667085)}#medicationReviewConfirm,#centerMedicationSubmit{min-height:44px}@media(max-width:480px){.medication-editor__row{padding:10px}.medication-editor__toolbar{display:grid;grid-template-columns:1fr}.medication-editor__toolbar .btn{width:100%}}
+.medication-editor__list,.medication-editor__cards{display:grid;gap:12px;margin:12px 0;min-width:0}
+.medication-editor__card,.medication-editor__row{min-width:0;margin:0;padding:14px;border:1px solid #dbe3ef;border-radius:16px;background:#fff;display:grid;gap:10px;overflow-wrap:anywhere}
+.medication-editor__summary{display:grid;gap:7px;min-width:0}
+.medication-editor__summary-heading{display:grid;gap:2px}
+.medication-editor__summary-heading strong{font-size:17px;color:var(--navy,#1c2b64)}
+.medication-editor__summary-heading span{font-weight:700;color:#344054}
+.medication-editor__usage,.medication-editor__instruction,.medication-editor__card-details{margin:0;white-space:pre-line;line-height:1.55;color:#344054}
+.medication-editor__instruction,.medication-editor__card-details{font-size:13px;color:var(--gray,#667085)}
+.medication-editor__edit{justify-self:start;min-height:44px}
+.medication-editor__empty{padding:22px 14px;text-align:center;border:1px dashed #cbd5e1;border-radius:16px;color:var(--gray,#667085)}
+.medication-editor__empty strong{display:block;color:#344054;font-size:17px}
+.medication-editor__empty p{margin:7px 0 0;line-height:1.5}
+.medication-editor__row legend{padding:0 6px;font-weight:700;color:var(--navy,#1c2b64);overflow-wrap:anywhere}
+.medication-editor__section{display:grid;gap:10px;padding:2px 0 10px;border-bottom:1px solid #eef1f5}
+.medication-editor__section h4{margin:0;color:#344054;font-size:15px}
+.medication-editor__row label{display:grid;gap:5px;min-width:0;font-size:13px;color:var(--gray,#667085)}
+.medication-editor__row input,.medication-editor__row textarea{width:100%;min-width:0;box-sizing:border-box;min-height:44px}
+.medication-editor__row textarea{min-height:88px;resize:vertical}
+.medication-editor__dose-group{display:grid;grid-template-columns:minmax(0,1fr) minmax(92px,.45fr);gap:8px}
+.medication-editor__dose-group--legacy{grid-template-columns:minmax(0,1fr)}
+.medication-editor__legacy-note{margin:0;color:#566778;font-size:.82rem;line-height:1.5}
+.medication-editor__advanced{border:1px solid #dbe3ef;border-radius:12px;padding:0 12px}
+.medication-editor__advanced summary,.medication-editor__draft-edit>summary{display:flex;align-items:center;min-height:44px;font-weight:700;cursor:pointer;color:#475467}
+.medication-editor__advanced-body{display:grid;gap:10px;padding:0 0 12px}
+.medication-editor__row :focus-visible,.medication-editor__proposal :focus-visible,.medication-editor__image-picker :focus-visible{outline:3px solid rgba(222,177,78,.78);outline-offset:2px}
+.medication-editor__row [aria-invalid="true"]{border-color:#b42318}
+.medication-editor__row-error,.medication-editor__uncertain{margin:0;color:#9b1c1c;font-size:12px;line-height:1.5}
+.medication-editor__remove{min-height:44px}
+.medication-editor__toolbar,.medication-editor__primary-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.medication-editor__toolbar .btn,.medication-editor__primary-actions .btn,.medication-editor__image-picker{min-height:44px}
+.medication-editor__image-picker{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.medication-editor__image-picker input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.medication-editor__image-selection{display:grid;gap:10px;margin:12px 0;padding:12px;border:1px solid #dbe3ef;border-radius:14px;background:#f8fafc}
+.medication-editor__image-selection[hidden],.medication-editor__manual[hidden]{display:none}
+.medication-editor__image-count{margin:0;color:#344054;font-weight:700}
+.medication-editor__previews{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.medication-editor__preview{position:relative;min-width:0}
+.medication-editor__preview img{display:block;width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;border:1px solid #dbe3ef}
+.medication-editor__preview button{position:absolute;top:3px;right:3px;min-width:44px;min-height:44px;border:0;border-radius:999px;background:#fff;color:#9b1c1c;box-shadow:0 1px 4px rgba(0,0,0,.24)}
+.medication-editor__status{font-size:12px;color:var(--gray,#667085);line-height:1.6}
+.medication-editor__status[data-state="error"]{color:#9b1c1c}
+.medication-editor__status[data-state="success"]{color:#176b3a}
+.medication-editor__draft-callout{padding:11px;border-radius:12px;background:#fff8e7;color:#6f4b00;line-height:1.55}
+.medication-editor__proposal{border:1px solid #dbe3ef;border-radius:14px;padding:12px;margin:10px 0;overflow-wrap:anywhere;display:grid;gap:9px}
+.medication-editor__comparison-label{font-size:12px;font-weight:700;color:#667085}
+.medication-editor__proposal-options{display:grid;gap:8px}
+.medication-editor__proposal-options label{min-height:44px;display:flex;align-items:center;gap:8px}
+.medication-editor__proposal--ambiguous{border-color:#b42318;background:#fff5f4}
+.medication-editor__read-state{justify-self:start;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;background:#e9f8ef;color:#176b3a}
+.medication-editor__read-state--review{background:#fff1d6;color:#7a4d00}
+.medication-editor__draft-edit{border-top:1px solid #eef1f5}
+.medication-editor__draft-fields .medication-editor__row{margin-top:8px;padding:10px}
+.medication-editor__sticky-actions{position:sticky;bottom:calc(var(--phimor-mobile-nav-height,72px) + env(safe-area-inset-bottom));z-index:4;display:grid;grid-template-columns:minmax(0,.45fr) minmax(0,1fr);gap:8px;margin:14px -4px -4px;padding:10px 4px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(255,255,255,.4),#fff 20%)}
+.medication-editor__sticky-actions .btn,#medicationReviewConfirm,#centerMedicationSubmit,#medicationReviewRecheck,#centerMedicationRecheck{min-height:44px}
+.medication-editor__review-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;position:sticky;bottom:0;padding:10px 0 calc(4px + env(safe-area-inset-bottom));background:#fff}
+@media(max-width:480px){
+  .medication-editor__card,.medication-editor__row{padding:12px}
+  .medication-editor__toolbar,.medication-editor__primary-actions{display:grid;grid-template-columns:1fr}
+  .medication-editor__toolbar .btn,.medication-editor__primary-actions .btn,.medication-editor__image-picker{width:100%}
+  .medication-editor__previews{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .medication-editor__review-actions{grid-template-columns:1fr}
+}

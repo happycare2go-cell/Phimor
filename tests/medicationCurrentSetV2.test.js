@@ -192,6 +192,34 @@ test('no-op complete set does not create duplicate snapshot', async () => {
   assert.equal((await db.MedicationSnapshots.findAll()).length, 1);
 });
 
+test('legacy image directions stored in dose survive open-and-save unchanged', async () => {
+  await familyProfile();
+  const legacy = {
+    name:'ยาความดัน', strength:'',
+    dose:'รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง ก่อนนอน', instruction:'',
+    amount:null, unit:null, frequency:null, timing:null, route:null, condition:'',
+  };
+  const first = await save([legacy]);
+  assert.equal(first.medications[0].dose, legacy.dose);
+  assert.equal(first.medications[0].instruction, '');
+  const noChange = await save([legacy], { baseSnapshotId:first.currentSnapshot.snapshotId });
+  assert.equal(noChange.noChange, true);
+  assert.equal(noChange.medications[0].dose, legacy.dose);
+  assert.equal(noChange.medications[0].instruction, '');
+  assert.equal((await db.MedicationSnapshots.findAll()).length, 1);
+});
+
+test('changing only total dispensed amount is not classified as a dose change', () => {
+  const result = medicationService.medicationSetDiff(
+    [baseItem({ dose:'5', unit:'มล.', amount:'1 ขวด' })],
+    [baseItem({ dose:'5', unit:'มล.', amount:'2 ขวด' })],
+  );
+  assert.equal(result.changes.length, 1);
+  assert.equal(result.changes[0].category, 'multiple_fields_changed');
+  assert.deepEqual(result.changes[0].changedFields, ['amount']);
+  assert.notEqual(result.changes[0].category, 'dose_changed');
+});
+
 test('family owner and explicitly delegated caregiver can manage', async () => {
   await familyProfile();
   await db.CareProfileMembers.insert({ member_id:'CM-1', care_profile_id:'CP-1', line_user_id:'U-CARE', status:'active',

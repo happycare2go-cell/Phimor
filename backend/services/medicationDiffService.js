@@ -40,10 +40,13 @@ function extractNameAndStrength(item) {
 }
 
 function parseDoseAndInstruction(item) {
-  const structuredDose = item.amount !== null && item.amount !== undefined
-    ? `${normalizeText(item.amount)} ${normalizeUnits(item.unit)}`.trim() : '';
+  // `dose` is the amount used per administration. `amount` is the total
+  // dispensed quantity and is compared separately by the current-set service.
+  // Mixing them here can make a label with "ครั้งละ 1 เม็ด / ได้รับ 30 เม็ด"
+  // appear to have a dose of 30 tablets.
+  const structuredDose = normalizeUnits(item.dose);
   const structuredInstruction = [item.frequency, item.timing, item.route].some((value) => value !== null && value !== undefined && String(value).trim());
-  if (structuredDose || structuredInstruction) {
+  if (structuredInstruction) {
     return {
       dose: structuredDose || normalizeUnits(item.dose),
       instruction: [item.frequency, item.timing, item.route].map(normalizeUnits).filter(Boolean).join(' | '),

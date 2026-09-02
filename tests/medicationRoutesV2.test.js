@@ -6,11 +6,12 @@ process.env.ALLOW_INSECURE_LINE_HEADER='true';
 process.env.PDF_DOWNLOAD_SECRET=process.env.PDF_DOWNLOAD_SECRET||'test-pdf-secret';
 
 const db=require('../backend/db');
+const aiProvider=require('../backend/providers/aiProvider');
 let server,baseUrl;
 
 before(async()=>{const app=require('../backend/server');server=http.createServer(app);await new Promise((resolve)=>server.listen(0,resolve));baseUrl=`http://127.0.0.1:${server.address().port}`});
 after(async()=>new Promise((resolve)=>server.close(resolve)));
-beforeEach(()=>db.resetAll());
+beforeEach(()=>{db.resetAll();aiProvider.clearMockQueue()});
 
 async function request(path,{method='GET',body=null,user='U-OWNER'}={}){
   const response=await fetch(`${baseUrl}${path}`,{method,headers:{'Content-Type':'application/json','X-Line-User-Id':user},body:body===null?undefined:JSON.stringify(body)});
@@ -85,5 +86,41 @@ test('Center cannot forge another Center or discharged Resident medication conte
   assert.equal((await request('/api/residents/R-1/medications/current?centerId=C-OTHER',{method:'PUT',user:'U-CENTER',body:{items:[{name:'Forged'}]}})).response.status,403);
   await db.Residents.update((item)=>item.resident_id==='R-1',{status:'discharged'});
   assert.equal((await request('/api/residents/R-1/medications/current?centerId=C-1',{method:'PUT',user:'U-CENTER',body:{items:[{name:'After discharge'}]}})).response.status,404);
+  assert.equal((await db.MedicationSnapshots.findAll()).length,0);
+});
+
+test('one Family image may produce multiple review drafts without saving clinical state',async()=>{
+  await family();
+  aiProvider.queueMockResponse({medications:[
+    {name:'Amlodipine',strength:'10 mg',dose:'1',unit:'เม็ด',uncertainFields:[]},
+    {name:'Metformin',dose:'1',unit:'เม็ด',timing:'ก่อนนอน',uncertainFields:['timing'],providerSecret:'hidden'},
+  ]});
+  const result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  assert.equal(result.response.status,202);
+  assert.equal(result.body.status,'draft_requires_confirmation');
+  assert.deepEqual(result.body.extracted.map((item)=>item.name),['Amlodipine','Metformin']);
+  assert.deepEqual(result.body.extractionReview[1],{extractedIndex:1,state:'review',uncertainFields:['timing']});
+  assert.doesNotMatch(JSON.stringify(result.body),/hidden|providerSecret|aW1hZ2U/);
+  assert.equal((await db.MedicationSnapshots.findAll()).length,0);
+  assert.equal((await db.Medications.findAll()).length,0);
+});
+
+test('combined image drafts are compared authoritatively and duplicate candidates require review',async()=>{
+  await family();
+  const result=await request('/api/care-profile/CP-1/medications/draft-proposal',{method:'POST',body:{items:[{name:'Aspirin',strength:'81 mg'},{name:' aspirin ',strength:'325 mg'}]}});
+  assert.equal(result.response.status,202);
+  assert.ok(result.body.proposals.some((item)=>item.ambiguous));
+  assert.equal((await db.MedicationSnapshots.findAll()).length,0);
+});
+
+test('Center image and combined draft proposal retain Manager authorization and Staff denial',async()=>{
+  await center();
+  await db.CenterStaff.insert({staff_id:'S-MANAGER',center_id:'C-1',line_user_id:'U-MANAGER',role:'manager',status:'active'});
+  aiProvider.queueMockResponse({medications:[{name:'Calcium',amount:'30',unit:'เม็ด',uncertainFields:[]}]});
+  const manager=await request('/api/residents/R-1/medications/image-proposal?centerId=C-1',{method:'POST',user:'U-MANAGER',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  assert.equal(manager.response.status,202);
+  assert.equal(manager.body.extracted[0].amount,'30');
+  const staff=await request('/api/residents/R-1/medications/draft-proposal?centerId=C-1',{method:'POST',user:'U-STAFF',body:{items:[{name:'Forged'}]}});
+  assert.equal(staff.response.status,403);
   assert.equal((await db.MedicationSnapshots.findAll()).length,0);
 });
