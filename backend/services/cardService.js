@@ -7,7 +7,7 @@
 //                                      │                            │
 //                                      └──────── (เกิน 24 ชม.) ──→ expired
 
-const { PendingCards, Residents, CareProfiles, Appointments, audit, id, now } = require('../db');
+const { PendingCards, Residents, CareProfiles, Appointments, audit, id, now, withTransaction } = require('../db');
 const { loadCurrentSnapshot } = require('./medicationRetrievalService');
 const medicationCurrentSetService = require('./medicationCurrentSetService');
 const { findActiveFamilyBinding } = require('./groupBindingRepository');
@@ -121,18 +121,30 @@ async function handleIncomingPhoto({ centerId, imageBuffer, imageMimeType = 'ima
 
 // ── FR-D3: เมื่อ AI ไม่มั่นใจ ให้พนักงานเลือกจาก Quick Reply ──
 async function selectResidentForCard(cardId, residentId, selectedByLineUserId = null) {
-  const card = await PendingCards.findOne((c) => c.card_id === cardId);
-  if (!card) return { ok: false, reason: 'ไม่พบการ์ด' };
-  if (card.status !== 'awaiting_selection') return { ok: false, reason: 'การ์ดนี้ไม่ได้อยู่ในสถานะรอเลือกผู้พัก' };
-  const resident = await Residents.findOne((r) => r.resident_id === residentId && r.center_id === card.center_id && r.status === 'active');
-  if (!resident) return { ok: false, reason: 'ผู้พักไม่ได้อยู่ในสาขาของเอกสารนี้' };
-
-  const medicationBase = resident.care_profile_id && (card.ai_result?.medications || []).length
-    ? await loadCurrentSnapshot(resident.care_profile_id) : null;
-  await PendingCards.update((c) => c.card_id === cardId && c.status === 'awaiting_selection', {
-    resident_id: residentId, status: 'pending',
-    medication_base_snapshot_id:medicationBase?.currentSnapshot?.snapshotId || null,
+  const selection = await withTransaction(`card-selection:${cardId}`, async () => {
+    const card = await PendingCards.findOne((c) => c.card_id === cardId);
+    if (!card) return { ok:false, reason:'ไม่พบการ์ด' };
+    if (card.status !== 'awaiting_selection') {
+      if (card.status === 'pending' && card.resident_id === residentId) {
+        return { ok:true, duplicate:true, card };
+      }
+      return { ok:false, reason:'การ์ดนี้ไม่ได้อยู่ในสถานะรอเลือกผู้พัก' };
+    }
+    const resident = await Residents.findOne((r) => r.resident_id === residentId
+      && r.center_id === card.center_id && r.status === 'active');
+    if (!resident) return { ok:false, reason:'ผู้พักไม่ได้อยู่ในสาขาของเอกสารนี้' };
+    const medicationBase = resident.care_profile_id && (card.ai_result?.medications || []).length
+      ? await loadCurrentSnapshot(resident.care_profile_id) : null;
+    const updated = await PendingCards.update((c) => c.card_id === cardId && c.status === 'awaiting_selection', {
+      resident_id:residentId, status:'pending',
+      medication_base_snapshot_id:medicationBase?.currentSnapshot?.snapshotId || null,
+    });
+    return updated ? { ok:true, duplicate:false, card:updated } : {
+      ok:false, reason:'การ์ดนี้ไม่ได้อยู่ในสถานะรอเลือกผู้พัก',
+    };
   });
+  if (!selection.ok || selection.duplicate) return selection.ok ? { ok:true, duplicate:true } : selection;
+  const card = selection.card;
   if ((card.document_subtype || card.ai_result?.documentSubtype) === 'lab_report') {
     if (!selectedByLineUserId) return { ok: false, reason: 'ไม่พบตัวตนผู้ตรวจสอบผล Lab' };
     const draft = await getLabDocumentIngestionService().ensureDraftForPendingCard({
@@ -142,7 +154,7 @@ async function selectResidentForCard(cardId, residentId, selectedByLineUserId = 
       return { ok: true, needsCareProfile: true };
     }
   }
-  return { ok: true };
+  return { ok:true, duplicate:false };
 }
 
 // ── FR-E3-E6: เปิดหน้าแก้ไข / บันทึกค่าที่แก้ (ข้อ E4: คืนรูปต้นฉบับด้วยเสมอ) ──

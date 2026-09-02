@@ -1,9 +1,10 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
-const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, GroupBindingTokens, audit, id, now, withTransaction } = require('../db');
+const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, GroupBindingTokens, audit, id, now, withTransaction, withTransactionLocks } = require('../db');
 const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenterBinding, listActiveBindingsForGroup, isActiveGroupBinding } = require('./groupBindingRepository');
 const richMenuService = require('./richMenuService');
 const { addBangkokCalendarMonth } = require('./subscriptionService');
+const { logOperationalError } = require('../utils/safeOperationalError');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
 
@@ -11,7 +12,37 @@ const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
  *  ถ้าล้มเหลว (เช่น ผู้ใช้ยังไม่ได้เพิ่มเพื่อน OA) ให้ log ไว้เฉยๆ ไม่ทำให้การสร้างศูนย์/แต่งตั้งพัง */
 function linkMenuBestEffort(lineUserId) {
   richMenuService.linkCenterMenuToUser(lineUserId).catch((err) => {
-    console.error(`เชื่อม Rich Menu ให้ ${lineUserId} ไม่สำเร็จ (ไม่กระทบการทำงานหลัก):`, err.message);
+    logOperationalError(console.error, {
+      event:'center_rich_menu_link_failed', error:err, routeCategory:'line_provider',
+    });
+  });
+}
+
+const centerStaffLockKey = (centerId, lineUserId) => `center-staff:${centerId}:${lineUserId}`;
+const activeStaff = (row) => !row.status || row.status === 'active';
+const staffRoleRank = (role) => ({ owner:3, manager:2, staff:1 }[role] || 0);
+const staffStatusRank = (status) => (!status || status === 'active' ? 3 : status === 'pending' ? 2 : 1);
+
+function stableStaffRows(rows) {
+  return [...rows].sort((left, right) => (
+    staffStatusRank(right.status) - staffStatusRank(left.status)
+    || staffRoleRank(right.role) - staffRoleRank(left.role)
+    || String(left.assigned_at || left.joined_group_at || left._createdAt || '').localeCompare(
+      String(right.assigned_at || right.joined_group_at || right._createdAt || '')
+    )
+    || String(left.staff_id || '').localeCompare(String(right.staff_id || ''))
+  ));
+}
+
+async function revokeDuplicateStaffRows(rows, canonicalStaffId, actor, reason = 'duplicate_membership_consolidated',
+  { preserveOwner = true } = {}) {
+  const duplicateIds = new Set(rows.filter((row) => row.staff_id !== canonicalStaffId
+    && (!preserveOwner || row.role !== 'owner')
+    && (!row.status || ['active', 'pending'].includes(row.status))).map((row) => row.staff_id));
+  if (!duplicateIds.size) return [];
+  const at = now();
+  return CenterStaff.updateAll((row) => duplicateIds.has(row.staff_id), {
+    status:'revoked', revoked_at:at, revoked_by:actor, revoke_reason:reason,
   });
 }
 
@@ -20,7 +51,7 @@ async function createCenter({
   name, ownerLineId, address = '', contactPhone = '',
   subscriptionRequired = process.env.NODE_ENV !== 'test', selfRegistrationTrial = false,
 }) {
-  return withTransaction(`center-create:${ownerLineId}:${name}`, async () => {
+  const center = await withTransaction(`center-create:${ownerLineId}:${name}`, async () => {
     const registrationTime = now();
     const trialEnd = selfRegistrationTrial ? addBangkokCalendarMonth(registrationTime).toISOString() : null;
     const center = await Centers.insert({
@@ -52,9 +83,10 @@ async function createCenter({
         centerId: center.center_id, displayName: center.name, actorReference: 'system:center-create',
       });
     }
-    linkMenuBestEffort(ownerLineId);
     return center;
   });
+  linkMenuBestEffort(ownerLineId);
+  return center;
 }
 
 async function updateCenterSettings({ centerId, requesterLineId, address, contactPhone }) {
@@ -122,45 +154,62 @@ async function findCenterByGroup(groupId) {
 
 // ── FR-A4: แต่งตั้ง/ถอดถอนผู้จัดการ (เฉพาะเจ้าของ) ──
 async function appointManager({ centerId, targetLineId, requesterLineId }) {
-  const requester = await CenterStaff.findOne(
-    (s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner'
-  );
-  if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่แต่งตั้งผู้จัดการได้' };
-
-  const already = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === targetLineId);
-  if (already?.role === 'owner') return { ok: false, reason: 'ผู้ใช้นี้เป็นเจ้าของศูนย์อยู่แล้ว' };
-  if (already?.role === 'manager') return { ok: false, reason: 'ผู้ใช้นี้เป็นผู้จัดการอยู่แล้ว' };
-
-  if (already?.role === 'staff') {
-    const promoted = await CenterStaff.update(
-      (s) => s.center_id === centerId && s.line_user_id === targetLineId,
-      { role: 'manager', promoted_at: now() }
+  const result = await withTransactionLocks([centerStaffLockKey(centerId, targetLineId)], async () => {
+    const requester = await CenterStaff.findOne(
+      (s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner' && activeStaff(s)
     );
-    linkMenuBestEffort(targetLineId);
-    await audit('center.manager_appointed', requesterLineId, { centerId, targetLineId, promotedExistingStaff: true });
-    return { ok: true, staff: promoted };
-  }
-
-  const staff = await CenterStaff.insert({
-    staff_id: id('STF'), center_id: centerId, line_user_id: targetLineId, role: 'manager', assigned_at: now(),
+    if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่แต่งตั้งผู้จัดการได้' };
+    const rows = await CenterStaff.findWhere((s) => s.center_id === centerId && s.line_user_id === targetLineId);
+    const owner = rows.find((row) => row.role === 'owner' && activeStaff(row));
+    if (owner) {
+      await revokeDuplicateStaffRows(rows, owner.staff_id, requesterLineId);
+      return { ok: false, reason: 'ผู้ใช้นี้เป็นเจ้าของศูนย์อยู่แล้ว' };
+    }
+    const currentManager = stableStaffRows(rows).find((row) => row.role === 'manager' && activeStaff(row));
+    if (currentManager) {
+      await revokeDuplicateStaffRows(rows, currentManager.staff_id, requesterLineId);
+      return { ok: false, reason: 'ผู้ใช้นี้เป็นผู้จัดการอยู่แล้ว' };
+    }
+    const existing = stableStaffRows(rows.filter((row) => row.role !== 'owner'))[0] || null;
+    const promoted = existing
+      ? await CenterStaff.update((s) => s.staff_id === existing.staff_id, {
+        role:'manager', status:'active', promoted_at:now(), revoked_at:null, revoked_by:null, revoke_reason:null,
+      })
+      : await CenterStaff.insert({
+        staff_id:id('STF'), center_id:centerId, line_user_id:targetLineId,
+        role:'manager', status:'active', assigned_at:now(),
+      });
+    await revokeDuplicateStaffRows(rows, promoted.staff_id, requesterLineId);
+    await audit('center.manager_appointed', requesterLineId, {
+      centerId, targetLineId, promotedExistingStaff:Boolean(existing),
+    });
+    return { ok:true, staff:promoted };
   });
-  linkMenuBestEffort(targetLineId);
-  await audit('center.manager_appointed', requesterLineId, { centerId, targetLineId });
-  return { ok: true, staff };
+  if (result.ok) linkMenuBestEffort(targetLineId);
+  return result;
 }
 
 async function removeManager({ centerId, targetLineId, requesterLineId }) {
-  const requester = await CenterStaff.findOne(
-    (s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner'
-  );
-  if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่ถอดถอนผู้จัดการได้' };
-
-  const removed = await CenterStaff.update(
-    (s) => s.center_id === centerId && s.line_user_id === targetLineId && s.role === 'manager'
-    , { role: 'staff', demoted_at: now() }
-  );
-  if (removed) await audit('center.manager_removed', requesterLineId, { centerId, targetLineId });
-  return { ok: removed };
+  return withTransactionLocks([centerStaffLockKey(centerId, targetLineId)], async () => {
+    const requester = await CenterStaff.findOne(
+      (s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner' && activeStaff(s)
+    );
+    if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่ถอดถอนผู้จัดการได้' };
+    const rows = await CenterStaff.findWhere((s) => s.center_id === centerId && s.line_user_id === targetLineId);
+    const owner = rows.find((row) => row.role === 'owner' && activeStaff(row));
+    if (owner) {
+      await revokeDuplicateStaffRows(rows, owner.staff_id, requesterLineId);
+      return { ok:false, reason:'ไม่สามารถถอดถอนเจ้าของศูนย์ด้วยขั้นตอนนี้ได้' };
+    }
+    const manager = stableStaffRows(rows).find((row) => row.role === 'manager' && activeStaff(row));
+    if (!manager) return { ok:false };
+    const demoted = await CenterStaff.update((s) => s.staff_id === manager.staff_id, {
+      role:'staff', status:'active', demoted_at:now(),
+    });
+    await revokeDuplicateStaffRows(rows, demoted.staff_id, requesterLineId);
+    await audit('center.manager_removed', requesterLineId, { centerId, targetLineId });
+    return { ok:true, staff:demoted };
+  });
 }
 
 async function listStaff(centerId) {
@@ -182,39 +231,53 @@ async function recordStaffFromGroup(groupId, lineUserId) {
   const center = await findCenterByGroup(groupId);
   if (!center) return null;
 
-  const existing = await CenterStaff.findOne((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
-  if (existing) {
-    if (existing.status === 'revoked') {
-      const requireApproval = process.env.REQUIRE_STAFF_APPROVAL === 'true' || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_STAFF_APPROVAL !== 'false');
-      const restored = await CenterStaff.update((s) => s.staff_id === existing.staff_id, {
-        role: 'staff', status: requireApproval ? 'pending' : 'active',
-        rejoined_group_at: now(), revoked_at: null, revoked_by: null, revoke_reason: null,
-      });
-      await audit('center.staff_rejoined', lineUserId, { centerId: center.center_id, requiresApproval: requireApproval });
-      if (!requireApproval) {
-        linkMenuBestEffort(lineUserId);
-        await setActiveCenterForStaff(lineUserId, center.center_id);
-      }
-      return restored;
-    }
-    if (existing.status === 'pending') return existing;
-    linkMenuBestEffort(lineUserId);
-    await setActiveCenterForStaff(lineUserId, center.center_id);
-    return existing;
+  const probe = await CenterStaff.findOne((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
+  let profile = null;
+  if (!probe) {
+    const lineClient = require('../providers/lineClient');
+    profile = await lineClient.getGroupMemberProfile(groupId, lineUserId);
   }
-
-  const lineClient = require('../providers/lineClient');
-  const profile = await lineClient.getGroupMemberProfile(groupId, lineUserId);
-  const requireApproval = process.env.REQUIRE_STAFF_APPROVAL === 'true' || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_STAFF_APPROVAL !== 'false');
-
-  const staff = await CenterStaff.insert({
-    staff_id: id('STF'), center_id: center.center_id, line_user_id: lineUserId,
-    display_name: profile?.displayName || null, picture_url: profile?.pictureUrl || null,
-    role: 'staff', status: requireApproval ? 'pending' : 'active', joined_group_at: now(),
-    assigned_at: requireApproval ? null : now(), auto_registered: true,
+  const staff = await withTransactionLocks([centerStaffLockKey(center.center_id, lineUserId)], async () => {
+    const rows = await CenterStaff.findWhere((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
+    const existing = stableStaffRows(rows.filter((row) => row.role !== 'owner' || activeStaff(row)))[0] || null;
+    if (existing) {
+      if (existing.status === 'revoked') {
+        const requireApproval = process.env.REQUIRE_STAFF_APPROVAL === 'true'
+          || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_STAFF_APPROVAL !== 'false');
+        const restored = await CenterStaff.update((s) => s.staff_id === existing.staff_id, {
+          role:'staff', status:requireApproval ? 'pending' : 'active',
+          rejoined_group_at:now(), revoked_at:null, revoked_by:null, revoke_reason:null,
+        });
+        await audit('center.staff_rejoined', lineUserId, {
+          centerId:center.center_id, requiresApproval:requireApproval,
+        });
+        if (!requireApproval) {
+          await setActiveCenterForStaff(lineUserId, center.center_id);
+        }
+        await revokeDuplicateStaffRows(rows, restored.staff_id, lineUserId);
+        return restored;
+      }
+      await revokeDuplicateStaffRows(rows, existing.staff_id, lineUserId);
+      if (existing.status === 'pending') return existing;
+      await setActiveCenterForStaff(lineUserId, center.center_id);
+      return existing;
+    }
+    const requireApproval = process.env.REQUIRE_STAFF_APPROVAL === 'true'
+      || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_STAFF_APPROVAL !== 'false');
+    const staff = await CenterStaff.insert({
+      staff_id:id('STF'), center_id:center.center_id, line_user_id:lineUserId,
+      display_name:profile?.displayName || null, picture_url:profile?.pictureUrl || null,
+      role:'staff', status:requireApproval ? 'pending' : 'active', joined_group_at:now(),
+      assigned_at:requireApproval ? null : now(), auto_registered:true,
+    });
+    if (requireApproval) {
+      await audit('center.staff_pending_approval', lineUserId, { centerId:center.center_id, groupId });
+    } else {
+      await setActiveCenterForStaff(lineUserId, center.center_id);
+    }
+    return staff;
   });
-  if (requireApproval) await audit('center.staff_pending_approval', lineUserId, { centerId: center.center_id, groupId });
-  else { linkMenuBestEffort(lineUserId); await setActiveCenterForStaff(lineUserId, center.center_id); }
+  if (staff && activeStaff(staff)) linkMenuBestEffort(lineUserId);
   return staff;
 }
 
@@ -272,42 +335,160 @@ async function getOrCreateResidentInvite({ centerId, residentId, requesterLineId
 }
 
 async function approveStaff({ centerId, targetLineId, requesterLineId, role = 'staff' }) {
-  const requester = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner' && (!s.status || s.status === 'active'));
-  if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่อนุมัติพนักงานได้' };
   if (!['staff', 'manager'].includes(role)) return { ok: false, reason: 'บทบาทไม่ถูกต้อง' };
-  const member = await CenterStaff.update((s) => s.center_id === centerId && s.line_user_id === targetLineId && s.status === 'pending', { status: 'active', role, assigned_at: now(), approved_by: requesterLineId });
-  if (!member) return { ok: false, reason: 'ไม่พบสมาชิกที่รออนุมัติ' };
-  linkMenuBestEffort(targetLineId);
-  await setActiveCenterForStaff(targetLineId, centerId);
-  await audit('center.staff_approved', requesterLineId, { centerId, targetLineId, role });
-  return { ok: true, staff: member };
+  const result = await withTransactionLocks([centerStaffLockKey(centerId, targetLineId)], async () => {
+    const requester = await CenterStaff.findOne((s) => s.center_id === centerId
+      && s.line_user_id === requesterLineId && s.role === 'owner' && activeStaff(s));
+    if (!requester) return { ok:false, reason:'เฉพาะเจ้าของศูนย์เท่านั้นที่อนุมัติพนักงานได้' };
+    const rows = await CenterStaff.findWhere((s) => s.center_id === centerId && s.line_user_id === targetLineId);
+    const owner = rows.find((row) => row.role === 'owner' && activeStaff(row));
+    if (owner) {
+      await revokeDuplicateStaffRows(rows, owner.staff_id, requesterLineId);
+      return { ok:false, reason:'ไม่สามารถเปลี่ยนบทบาทเจ้าของศูนย์ด้วยขั้นตอนนี้ได้' };
+    }
+    const pending = stableStaffRows(rows).find((row) => row.status === 'pending');
+    const existingActive = stableStaffRows(rows).find((row) => activeStaff(row));
+    if (existingActive) {
+      const member = pending ? await CenterStaff.update((row) => row.staff_id === existingActive.staff_id, {
+        role, assigned_at:now(), approved_by:requesterLineId,
+      }) : existingActive;
+      await revokeDuplicateStaffRows(rows, existingActive.staff_id, requesterLineId);
+      if (pending) {
+        await setActiveCenterForStaff(targetLineId, centerId);
+        await audit('center.staff_approved', requesterLineId, { centerId, targetLineId, role });
+      }
+      return { ok:true, duplicate:true, staff:member, linkMenuAfterCommit:Boolean(pending) };
+    }
+    if (!pending) return { ok:false, reason:'ไม่พบสมาชิกที่รออนุมัติ' };
+    const member = await CenterStaff.update((s) => s.staff_id === pending.staff_id, {
+      status:'active', role, assigned_at:now(), approved_by:requesterLineId,
+    });
+    await revokeDuplicateStaffRows(rows, member.staff_id, requesterLineId);
+    await setActiveCenterForStaff(targetLineId, centerId);
+    await audit('center.staff_approved', requesterLineId, { centerId, targetLineId, role });
+    return { ok:true, staff:member, linkMenuAfterCommit:true };
+  });
+  if (result.linkMenuAfterCommit) linkMenuBestEffort(targetLineId);
+  const { linkMenuAfterCommit, ...publicResult } = result;
+  return publicResult;
 }
 
 async function revokeStaff({ centerId, targetLineId, requesterLineId, reason = '' }) {
-  const requester = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === requesterLineId && s.role === 'owner' && (!s.status || s.status === 'active'));
-  if (!requester) return { ok: false, reason: 'เฉพาะเจ้าของศูนย์เท่านั้นที่ถอนสิทธิ์พนักงานได้' };
-  const target = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === targetLineId);
-  if (!target || target.role === 'owner') return { ok: false, reason: 'ไม่สามารถถอนสิทธิ์รายการนี้ได้' };
-  const member = await CenterStaff.update((s) => s.staff_id === target.staff_id, { status: 'revoked', revoked_at: now(), revoked_by: requesterLineId, revoke_reason: String(reason || '').slice(0, 500) });
-  await StaffContexts.remove((c) => c.line_user_id === targetLineId && c.center_id === centerId);
-  await audit('center.staff_revoked', requesterLineId, { centerId, targetLineId, previousRole: target.role, reason });
-  return { ok: true, staff: member };
+  return withTransactionLocks([centerStaffLockKey(centerId, targetLineId)], async () => {
+    const requester = await CenterStaff.findOne((s) => s.center_id === centerId
+      && s.line_user_id === requesterLineId && s.role === 'owner' && activeStaff(s));
+    if (!requester) return { ok:false, reason:'เฉพาะเจ้าของศูนย์เท่านั้นที่ถอนสิทธิ์พนักงานได้' };
+    const rows = await CenterStaff.findWhere((s) => s.center_id === centerId && s.line_user_id === targetLineId);
+    const hasActiveOwner = rows.some((row) => row.role === 'owner' && activeStaff(row));
+    const targets = rows.filter((row) => row.role !== 'owner'
+      && (!row.status || ['active', 'pending'].includes(row.status)));
+    if (!targets.length) {
+      if (!hasActiveOwner && rows.some((row) => row.role !== 'owner')) {
+        await StaffContexts.removeAll((context) => context.line_user_id === targetLineId
+          && context.center_id === centerId);
+      }
+      return { ok:false, reason:'ไม่สามารถถอนสิทธิ์รายการนี้ได้' };
+    }
+    const targetIds = new Set(targets.map((row) => row.staff_id));
+    const revokedAt = now();
+    const safeReason = String(reason || '').slice(0, 500);
+    const members = await CenterStaff.updateAll((row) => targetIds.has(row.staff_id), {
+      status:'revoked', revoked_at:revokedAt, revoked_by:requesterLineId, revoke_reason:safeReason,
+    });
+    if (!hasActiveOwner) {
+      await StaffContexts.removeAll((context) => context.line_user_id === targetLineId
+        && context.center_id === centerId);
+    }
+    await audit('center.staff_revoked', requesterLineId, {
+      centerId, targetLineId, previousRoles:[...new Set(targets.map((row) => row.role))], reason:safeReason,
+    });
+    return { ok:true, staff:members[0], revokedCount:members.length };
+  });
 }
 
 async function transferOwner({ centerId, newOwnerLineId, actor = 'admin', keepPreviousAsManager = false }) {
-  return withTransaction(`center-owner:${centerId}`, async () => {
+  const centerProbe = await Centers.findOne((c) => c.center_id === centerId);
+  if (!centerProbe) return { ok:false, reason:'ไม่พบศูนย์นี้' };
+  const ownerRowsProbe = await CenterStaff.findWhere((staff) => (
+    staff.center_id === centerId && staff.role === 'owner' && activeStaff(staff)
+  ));
+  const ownerHint = centerProbe.owner_line_id || stableStaffRows(ownerRowsProbe)[0]?.line_user_id || null;
+  const locks = [
+    `center-owner:${centerId}`,
+    centerStaffLockKey(centerId, newOwnerLineId),
+    ...ownerRowsProbe.map((staff) => centerStaffLockKey(centerId, staff.line_user_id)),
+  ];
+  if (ownerHint) locks.push(centerStaffLockKey(centerId, ownerHint));
+  const result = await withTransactionLocks(locks, async () => {
     const center = await Centers.findOne((c) => c.center_id === centerId);
     if (!center) return { ok:false, reason:'ไม่พบศูนย์นี้' };
-    const oldOwner = await CenterStaff.findOne((s) => s.center_id === centerId && s.role === 'owner' && (!s.status || s.status === 'active'));
-    let target = await CenterStaff.findOne((s) => s.center_id === centerId && s.line_user_id === newOwnerLineId);
-    if (target) target = await CenterStaff.update((s) => s.staff_id === target.staff_id, { role:'owner', status:'active', ownership_started_at:now(), approved_by:actor });
-    else target = await CenterStaff.insert({ staff_id:id('STF'), center_id:centerId, line_user_id:newOwnerLineId, role:'owner', status:'active', assigned_at:now(), ownership_started_at:now(), approved_by:actor });
-    if (oldOwner && oldOwner.line_user_id !== newOwnerLineId) await CenterStaff.update((s) => s.staff_id === oldOwner.staff_id, keepPreviousAsManager ? { role:'manager', status:'active', ownership_ended_at:now() } : { role:'owner_previous', status:'revoked', ownership_ended_at:now(), revoked_by:actor, revoke_reason:'ownership_transferred' });
-    const updated = await Centers.update((c) => c.center_id === centerId, { owner_line_id:newOwnerLineId, owner_transferred_at:now(), owner_transferred_by:actor });
-    await audit('center.owner_transferred', actor, { centerId, previousOwnerLineId:oldOwner?.line_user_id || center.owner_line_id, newOwnerLineId, keepPreviousAsManager });
-    linkMenuBestEffort(newOwnerLineId);
+    const activeOwnerRows = await CenterStaff.findWhere((staff) => (
+      staff.center_id === centerId && staff.role === 'owner' && activeStaff(staff)
+    ));
+    const authoritativeOwnerLineId = center.owner_line_id
+      || stableStaffRows(activeOwnerRows)[0]?.line_user_id || null;
+    if (authoritativeOwnerLineId !== ownerHint) {
+      return { ok:false, conflict:true, reason:'ข้อมูลเจ้าของศูนย์มีการเปลี่ยนแปลง กรุณาลองใหม่อีกครั้ง' };
+    }
+    const oldOwner = stableStaffRows(activeOwnerRows.filter((staff) => (
+      staff.line_user_id === authoritativeOwnerLineId
+    )))[0] || null;
+    const targetRows = await CenterStaff.findWhere((staff) => (
+      staff.center_id === centerId && staff.line_user_id === newOwnerLineId
+    ));
+    let target = stableStaffRows(targetRows)[0] || null;
+    if (target) target = await CenterStaff.update((staff) => staff.staff_id === target.staff_id, {
+      role:'owner', status:'active', ownership_started_at:now(), approved_by:actor,
+      revoked_at:null, revoked_by:null, revoke_reason:null,
+    });
+    else target = await CenterStaff.insert({
+      staff_id:id('STF'), center_id:centerId, line_user_id:newOwnerLineId,
+      role:'owner', status:'active', assigned_at:now(), ownership_started_at:now(), approved_by:actor,
+    });
+    await revokeDuplicateStaffRows(targetRows, target.staff_id, actor,
+      'duplicate_membership_consolidated', { preserveOwner:false });
+    if (oldOwner && oldOwner.line_user_id !== newOwnerLineId && keepPreviousAsManager) {
+      await CenterStaff.update((staff) => staff.staff_id === oldOwner.staff_id, {
+        role:'manager', status:'active', ownership_ended_at:now(),
+      });
+    }
+    const priorOwnerLineIds = [...new Set(activeOwnerRows
+      .filter((staff) => staff.line_user_id !== newOwnerLineId)
+      .map((staff) => staff.line_user_id))];
+    for (const priorOwnerLineId of priorOwnerLineIds) {
+      const priorRows = await CenterStaff.findWhere((staff) => (
+        staff.center_id === centerId && staff.line_user_id === priorOwnerLineId
+      ));
+      if (keepPreviousAsManager && priorOwnerLineId === authoritativeOwnerLineId && oldOwner) {
+        await revokeDuplicateStaffRows(priorRows, oldOwner.staff_id, actor,
+          'ownership_transferred', { preserveOwner:false });
+        continue;
+      }
+      const at = now();
+      await CenterStaff.updateAll((staff) => staff.center_id === centerId
+        && staff.line_user_id === priorOwnerLineId && activeStaff(staff) && staff.role === 'owner', {
+        role:'owner_previous', status:'revoked', ownership_ended_at:at, revoked_at:at,
+        revoked_by:actor, revoke_reason:'ownership_transferred',
+      });
+      await CenterStaff.updateAll((staff) => staff.center_id === centerId
+        && staff.line_user_id === priorOwnerLineId
+        && (!staff.status || ['active', 'pending'].includes(staff.status)) && staff.role !== 'owner', {
+        status:'revoked', revoked_at:at, revoked_by:actor, revoke_reason:'ownership_transferred',
+      });
+      await StaffContexts.removeAll((context) => context.center_id === centerId
+        && context.line_user_id === priorOwnerLineId);
+    }
+    const updated = await Centers.update((centerRow) => centerRow.center_id === centerId, {
+      owner_line_id:newOwnerLineId, owner_transferred_at:now(), owner_transferred_by:actor,
+    });
+    await audit('center.owner_transferred', actor, {
+      centerId, previousOwnerLineId:oldOwner?.line_user_id || center.owner_line_id,
+      newOwnerLineId, keepPreviousAsManager,
+    });
     return { ok:true, center:updated, owner:target };
   });
+  if (result.ok) linkMenuBestEffort(newOwnerLineId);
+  return result;
 }
 
 async function reconcileAllCenterStaff() {
@@ -318,14 +499,27 @@ async function reconcileAllCenterStaff() {
     const result = await lineClient.listGroupMemberUserIds(center.group_id);
     if (!result.available) continue;
     const actual = new Set(result.userIds);
-    const members = await CenterStaff.findWhere((s) => s.center_id === center.center_id && s.role !== 'owner' && (!s.status || ['active','pending'].includes(s.status)));
-    for (const member of members) {
-      checked += 1;
-      if (!actual.has(member.line_user_id)) {
-        await CenterStaff.update((s) => s.staff_id === member.staff_id, { status:'revoked', revoked_at:now(), revoked_by:'system:group_reconciliation', revoke_reason:'not_in_staff_group' });
-        await StaffContexts.remove((c) => c.line_user_id === member.line_user_id && c.center_id === center.center_id);
-        await audit('center.staff_reconciled_revoked', 'system', { centerId:center.center_id, targetLineId:member.line_user_id });
-        revoked += 1;
+    const members = await CenterStaff.findWhere((s) => s.center_id === center.center_id
+      && s.role !== 'owner' && (!s.status || ['active','pending'].includes(s.status)));
+    const userIds = [...new Set(members.map((member) => member.line_user_id))];
+    for (const lineUserId of userIds) {
+      const memberCount = members.filter((member) => member.line_user_id === lineUserId).length;
+      checked += memberCount;
+      if (!actual.has(lineUserId)) {
+        const changed = await withTransactionLocks([centerStaffLockKey(center.center_id, lineUserId)], async () => {
+          const at = now();
+          const rows = await CenterStaff.updateAll((s) => s.center_id === center.center_id
+            && s.line_user_id === lineUserId && s.role !== 'owner'
+            && (!s.status || ['active','pending'].includes(s.status)), {
+            status:'revoked', revoked_at:at, revoked_by:'system:group_reconciliation', revoke_reason:'not_in_staff_group',
+          });
+          await StaffContexts.removeAll((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
+          return rows;
+        });
+        if (changed.length) {
+          await audit('center.staff_reconciled_revoked', 'system', { centerId:center.center_id, targetLineId:lineUserId });
+          revoked += changed.length;
+        }
       }
     }
   }
@@ -336,7 +530,7 @@ async function setActiveCenterForStaff(lineUserId, centerId) {
   const membership = await CenterStaff.findOne((s) => s.line_user_id === lineUserId && s.center_id === centerId && (!s.status || s.status === 'active'));
   if (!membership) return { ok: false, reason: 'ผู้ใช้ไม่มีสิทธิ์ในสาขานี้' };
   const existing = await StaffContexts.findOne((c) => c.line_user_id === lineUserId);
-  if (existing) await StaffContexts.update((c) => c.line_user_id === lineUserId, { center_id: centerId, selected_at: now() });
+  if (existing) await StaffContexts.updateAll((c) => c.line_user_id === lineUserId, { center_id: centerId, selected_at: now() });
   else await StaffContexts.insert({ context_id: id('CTX'), line_user_id: lineUserId, center_id: centerId, selected_at: now() });
   return { ok: true };
 }
@@ -364,24 +558,31 @@ async function removeStaffFromGroup(groupId, lineUserId) {
   if (!groupId || !lineUserId) return { removed: false };
   const center = await findCenterByGroup(groupId);
   if (!center) return { removed: false };
-  const member = await CenterStaff.findOne(
-    (s) => s.center_id === center.center_id && s.line_user_id === lineUserId
-  );
-  if (!member || member.role === 'owner') return { removed: false, preservedOwner: member?.role === 'owner' };
-  const removed = await CenterStaff.remove(
-    (s) => s.center_id === center.center_id && s.line_user_id === lineUserId && s.role !== 'owner'
-  );
-  const context = await StaffContexts.findOne((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
-  if (removed && context) await StaffContexts.remove((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
-  if (removed) await audit('center.staff_left_group', lineUserId, { centerId: center.center_id, groupId, previousRole: member.role });
+  const result = await withTransactionLocks([centerStaffLockKey(center.center_id, lineUserId)], async () => {
+    const members = await CenterStaff.findWhere(
+      (s) => s.center_id === center.center_id && s.line_user_id === lineUserId
+    );
+    const removable = members.filter((member) => member.role !== 'owner');
+    const removedCount = await CenterStaff.removeAll(
+      (s) => s.center_id === center.center_id && s.line_user_id === lineUserId && s.role !== 'owner'
+    );
+    if (removedCount) await StaffContexts.removeAll((c) => c.line_user_id === lineUserId && c.center_id === center.center_id);
+    return { removedCount, removable, preservedOwner:members.some((member) => member.role === 'owner') };
+  });
+  const removed = result.removedCount > 0;
+  if (removed) await audit('center.staff_left_group', lineUserId, {
+    centerId:center.center_id, groupId, previousRoles:[...new Set(result.removable.map((member) => member.role))],
+  });
   if (removed) {
     const remaining = await CenterStaff.findWhere((s) => s.line_user_id === lineUserId);
     if (remaining.length === 0) {
       const lineClient = require('../providers/lineClient');
-      lineClient.unlinkRichMenuFromUser(lineUserId).catch((err) => console.error('คืน Rich Menu เริ่มต้นไม่สำเร็จ:', err.message));
+      lineClient.unlinkRichMenuFromUser(lineUserId).catch((err) => logOperationalError(console.error, {
+        event:'center_rich_menu_unlink_failed', error:err, routeCategory:'line_provider',
+      }));
     }
   }
-  return { removed, centerId: center.center_id };
+  return { removed, preservedOwner:result.preservedOwner, centerId:center.center_id };
 }
 
 /** หาศูนย์ที่ผู้ใช้คนนี้สังกัด — ใช้ตอนพนักงานส่งรูปในแชทส่วนตัว */
@@ -677,7 +878,9 @@ async function updateAppointment({ centerId, appointmentId, patch, requesterLine
 
 async function cancelAppointment({ centerId, appointmentId, requesterLineId, reason = '' }) {
   const { Appointments, TransportPlans } = require('../db');
-  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+  const planIds = (await TransportPlans.findWhere((plan) => plan.appointment_id === appointmentId))
+    .map((plan) => require('./transportService').transportPlanLockKey(plan.plan_id));
+  const mutation = await withTransactionLocks([`appointment-mutation:${appointmentId}`, ...planIds], async () => {
     const residents = await Residents.findWhere((r) => r.center_id === centerId && r.status === 'active');
     const profileIds = new Set(residents.map((r) => r.care_profile_id).filter(Boolean));
     const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && profileIds.has(a.care_profile_id));
@@ -724,4 +927,5 @@ module.exports = {
   approveStaff, revokeStaff, createCenterManagedCareProfile, getOrCreateResidentInvite,
   transferOwner, reconcileAllCenterStaff,
   setActiveCenterForStaff, getActiveCenterIdForStaff, listCentersByStaffUser,
+  centerStaffLockKey,
 };

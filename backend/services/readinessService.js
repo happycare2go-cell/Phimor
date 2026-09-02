@@ -46,6 +46,7 @@ function createReadinessService({
   schedulerHealth = () => ({ configuredJobs:0, lane:{ concurrency:1, activeJobName:null, queuedJobs:0, localDuplicateSkips:0 }, jobs:{} }),
   realtimeHealth = () => ({ configured:false, started:false }),
   missingEnvironment = () => [],
+  configurationIssues = () => [],
   timeoutMs = readinessTimeoutMs(),
   clock = Date.now,
   schedule = setTimeout,
@@ -67,13 +68,15 @@ function createReadinessService({
     }, timeoutMs);
     const databasePool = getDatabasePoolMetrics();
     const missing = missingEnvironment();
+    const unsafeConfiguration = configurationIssues();
     const scheduler = schedulerHealth();
     const consultationRealtime = realtimeHealth();
 
     if (!databaseCheck.ok) {
       return {
         ready:false, database:false, databaseError:databaseCheck.errorCode,
-        missingEnvironment:missing, rateLimits:{ available:false, shared:true },
+        missingEnvironment:missing, configurationIssues:unsafeConfiguration,
+        rateLimits:{ available:false, shared:true },
         plusPaymentStorage:{ available:false, configured:plusPaymentConfigured() === true },
         notifications:{ unavailable:true }, scheduler, consultationRealtime, databasePool,
       };
@@ -97,9 +100,11 @@ function createReadinessService({
     const plusPaymentStorage = plusPaymentCheck.ok
       ? plusPaymentCheck.value : { available:false, configured:true };
     const ready = rateLimits?.available === true
-      && plusPaymentStorage?.available === true && missing.length === 0;
+      && plusPaymentStorage?.available === true && missing.length === 0
+      && unsafeConfiguration.length === 0;
     return {
       ready, database:true, databaseError:null, missingEnvironment:missing,
+      configurationIssues:unsafeConfiguration,
       rateLimits, plusPaymentStorage, notifications, scheduler, consultationRealtime, databasePool,
     };
   }

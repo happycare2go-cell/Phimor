@@ -386,6 +386,7 @@ test('concurrent webhook workers atomically claim one pending join event', async
 
 test('onboarding retry reuses one stable LINE retry key', async () => {
   const retryKeys = [];
+  const errorLogs = [];
   const originalPush = lineClient.pushMessage;
   const originalError = console.error;
   lineClient.pushMessage = async (_to, _messages, options) => {
@@ -393,7 +394,7 @@ test('onboarding retry reuses one stable LINE retry key', async () => {
     if (retryKeys.length === 1) throw new Error('simulated timeout');
     return { ok:true };
   };
-  console.error = () => {};
+  console.error = (...args) => errorLogs.push(args);
   try {
     await db.WebhookInbox.insert({
       inbox_id:'WH-RETRY', event_key:'EVT-RETRY',
@@ -401,6 +402,10 @@ test('onboarding retry reuses one stable LINE retry key', async () => {
       status:'pending', attempts:0, received_at:db.now(),
     });
     await require('../backend/routes/webhook').processPendingWebhookEvents();
+    const retrying = await db.WebhookInbox.findOne((item) => item.inbox_id === 'WH-RETRY');
+    assert.strictEqual(retrying.status, 'retrying');
+    assert.strictEqual(retrying.last_error, 'WEBHOOK_EVENT_PROCESSING_FAILED');
+    assert.doesNotMatch(JSON.stringify(errorLogs), /simulated timeout|G-RETRY|EVT-RETRY/);
     await require('../backend/routes/webhook').processPendingWebhookEvents();
     assert.strictEqual(retryKeys.length, 2);
     assert.strictEqual(retryKeys[0], retryKeys[1]);

@@ -59,6 +59,145 @@ test('พนักงานที่ถูกถอนสิทธิ์กล�
   delete process.env.REQUIRE_STAFF_APPROVAL;
 });
 
+test('CenterStaff legacy duplicates are all revoked and every stale Center context is removed', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await db.CenterStaff.insert({ staff_id:'STF-DUP-1', center_id:center.center_id, line_user_id:'U_DUP', role:'staff', status:'active' });
+  await db.CenterStaff.insert({ staff_id:'STF-DUP-2', center_id:center.center_id, line_user_id:'U_DUP', role:'manager', status:'active' });
+  await db.StaffContexts.insert({ context_id:'CTX-1', center_id:center.center_id, line_user_id:'U_DUP' });
+  await db.StaffContexts.insert({ context_id:'CTX-2', center_id:center.center_id, line_user_id:'U_DUP' });
+
+  const result = await centerService.revokeStaff({
+    centerId:center.center_id, targetLineId:'U_DUP', requesterLineId:'U_OWNER', reason:'offboarded',
+  });
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.revokedCount, 2);
+  const rows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id && row.line_user_id === 'U_DUP');
+  assert.strictEqual(rows.every((row) => row.status === 'revoked'), true);
+  assert.strictEqual((await db.StaffContexts.findWhere((row) => row.center_id === center.center_id && row.line_user_id === 'U_DUP')).length, 0);
+  assert.strictEqual((await centerService.listCentersByStaffUser('U_DUP')).length, 0);
+  assert.strictEqual(await centerService.canApprove(center.center_id, 'U_DUP'), false);
+});
+
+test('revoking duplicate non-owner rows never revokes the owner row', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await db.CenterStaff.insert({ staff_id:'STF-OWNER-DUP', center_id:center.center_id, line_user_id:'U_OWNER', role:'staff', status:'active' });
+  const result = await centerService.revokeStaff({
+    centerId:center.center_id, targetLineId:'U_OWNER', requesterLineId:'U_OWNER',
+  });
+  assert.strictEqual(result.ok, true);
+  const rows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id && row.line_user_id === 'U_OWNER');
+  assert.strictEqual(rows.find((row) => row.role === 'owner').status, 'active');
+  assert.strictEqual(rows.find((row) => row.staff_id === 'STF-OWNER-DUP').status, 'revoked');
+});
+
+test('concurrent staff discovery and promotion converge to one effective Center role', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await centerService.bindGroupToCenter({ centerId:center.center_id, groupId:'G_STAFF', requesterLineId:'U_OWNER' });
+  await Promise.all([
+    centerService.recordStaffFromGroup('G_STAFF', 'U_RACE'),
+    centerService.recordStaffFromGroup('G_STAFF', 'U_RACE'),
+  ]);
+  let rows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id && row.line_user_id === 'U_RACE' && (!row.status || row.status === 'active'));
+  assert.strictEqual(rows.length, 1);
+  const [appointed, duplicate] = await Promise.all([
+    centerService.appointManager({ centerId:center.center_id, targetLineId:'U_RACE', requesterLineId:'U_OWNER' }),
+    centerService.appointManager({ centerId:center.center_id, targetLineId:'U_RACE', requesterLineId:'U_OWNER' }),
+  ]);
+  assert.strictEqual([appointed, duplicate].filter((result) => result.ok).length, 1);
+  rows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id && row.line_user_id === 'U_RACE' && (!row.status || row.status === 'active'));
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].role, 'manager');
+  const demoted = await centerService.removeManager({ centerId:center.center_id, targetLineId:'U_RACE', requesterLineId:'U_OWNER' });
+  assert.strictEqual(demoted.ok, true);
+  rows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id && row.line_user_id === 'U_RACE' && (!row.status || row.status === 'active'));
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].role, 'staff');
+});
+
+test('duplicate manager and staff memberships converge through promotion and demotion', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await db.CenterStaff.insert({
+    staff_id:'STF-MANAGER-DUP', center_id:center.center_id,
+    line_user_id:'U_DUP_ROLE', role:'manager', status:'active', assigned_at:'2026-01-01T00:00:00.000Z',
+  });
+  await db.CenterStaff.insert({
+    staff_id:'STF-STAFF-DUP', center_id:center.center_id,
+    line_user_id:'U_DUP_ROLE', role:'staff', status:'active', assigned_at:'2026-01-02T00:00:00.000Z',
+  });
+
+  const alreadyManager = await centerService.appointManager({
+    centerId:center.center_id, targetLineId:'U_DUP_ROLE', requesterLineId:'U_OWNER',
+  });
+  assert.strictEqual(alreadyManager.ok, false);
+  let activeRows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id
+    && row.line_user_id === 'U_DUP_ROLE' && (!row.status || row.status === 'active'));
+  assert.strictEqual(activeRows.length, 1);
+  assert.strictEqual(activeRows[0].role, 'manager');
+
+  const demoted = await centerService.removeManager({
+    centerId:center.center_id, targetLineId:'U_DUP_ROLE', requesterLineId:'U_OWNER',
+  });
+  assert.strictEqual(demoted.ok, true);
+  activeRows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id
+    && row.line_user_id === 'U_DUP_ROLE' && (!row.status || row.status === 'active'));
+  assert.strictEqual(activeRows.length, 1);
+  assert.strictEqual(activeRows[0].role, 'staff');
+});
+
+test('concurrent owner transfers serialize and only one stale command succeeds', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await db.CenterStaff.insert({
+    staff_id:'STF-OWNER-SAME-IDENTITY-DUP', center_id:center.center_id,
+    line_user_id:'U_OWNER', role:'owner', status:'active', assigned_at:'2026-01-02T00:00:00.000Z',
+  });
+  await db.CenterStaff.insert({
+    staff_id:'STF-OWNER-OTHER-IDENTITY-DUP', center_id:center.center_id,
+    line_user_id:'U_ROGUE_OWNER', role:'owner', status:'active', assigned_at:'2026-01-03T00:00:00.000Z',
+  });
+  await db.StaffContexts.insert({ context_id:'CTX-OWNER', center_id:center.center_id, line_user_id:'U_OWNER' });
+  await db.StaffContexts.insert({ context_id:'CTX-ROGUE', center_id:center.center_id, line_user_id:'U_ROGUE_OWNER' });
+  const results = await Promise.all([
+    centerService.transferOwner({ centerId:center.center_id, newOwnerLineId:'U_OWNER_A', actor:'U_ADMIN' }),
+    centerService.transferOwner({ centerId:center.center_id, newOwnerLineId:'U_OWNER_B', actor:'U_ADMIN' }),
+  ]);
+
+  assert.strictEqual(results.filter((result) => result.ok).length, 1);
+  assert.strictEqual(results.filter((result) => result.conflict).length, 1);
+  const updatedCenter = await db.Centers.findOne((row) => row.center_id === center.center_id);
+  const activeOwners = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id
+    && row.role === 'owner' && (!row.status || row.status === 'active'));
+  assert.strictEqual(activeOwners.length, 1);
+  assert.strictEqual(activeOwners[0].line_user_id, updatedCenter.owner_line_id);
+  assert.ok(['U_OWNER_A', 'U_OWNER_B'].includes(updatedCenter.owner_line_id));
+  assert.strictEqual((await db.StaffContexts.findWhere((row) => row.center_id === center.center_id
+    && row.line_user_id === 'U_OWNER')).length, 0);
+  assert.strictEqual((await db.StaffContexts.findWhere((row) => row.center_id === center.center_id
+    && row.line_user_id === 'U_ROGUE_OWNER')).length, 0);
+  const priorOwnerRows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id
+    && ['U_OWNER', 'U_ROGUE_OWNER'].includes(row.line_user_id));
+  assert.strictEqual(priorOwnerRows.every((row) => row.status === 'revoked'), true);
+});
+
+test('owner transfer may retain exactly one previous-owner manager membership', async () => {
+  const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
+  await db.CenterStaff.insert({
+    staff_id:'STF-OWNER-DUP', center_id:center.center_id,
+    line_user_id:'U_OWNER', role:'staff', status:'active', assigned_at:'2026-01-02T00:00:00.000Z',
+  });
+  await db.StaffContexts.insert({ context_id:'CTX-OWNER', center_id:center.center_id, line_user_id:'U_OWNER' });
+
+  const result = await centerService.transferOwner({
+    centerId:center.center_id, newOwnerLineId:'U_NEW_OWNER', actor:'U_ADMIN', keepPreviousAsManager:true,
+  });
+  assert.strictEqual(result.ok, true);
+  const activePreviousRows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id
+    && row.line_user_id === 'U_OWNER' && (!row.status || row.status === 'active'));
+  assert.strictEqual(activePreviousRows.length, 1);
+  assert.strictEqual(activePreviousRows[0].role, 'manager');
+  assert.strictEqual((await db.StaffContexts.findWhere((row) => row.center_id === center.center_id
+    && row.line_user_id === 'U_OWNER')).length, 1);
+});
+
 test('ศูนย์สร้าง Care Profile ก่อน แล้วญาติรับสิทธิ์ภายหลังโดยข้อมูลเดิมไม่หาย', async () => {
   const center = await centerService.createCenter({ name:'สาขา A', ownerLineId:'U_OWNER' });
   const { resident } = await centerService.addResident({ centerId:center.center_id, fullName:'คุณยาย', familyPhone:'0811111111' });

@@ -33,7 +33,8 @@ const subscriptionService = require('./services/subscriptionService');
 const notificationService = require('./services/notificationService');
 const db = require('./db');
 const { TZ } = require('./utils/thaiDate');
-const { missingRuntimeEnvironment, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
+const { missingRuntimeEnvironment, unsafeRuntimeConfiguration, buildPublicLiffConfig } = require('./config/runtimeCapabilities');
+const { logOperationalError } = require('./utils/safeOperationalError');
 const { createConsultationRealtimeGateway } = require('./realtime/consultationRealtimeGateway');
 const { createConsultationLifecycleSchedulerService } = require('./services/consultationLifecycleSchedulerService');
 const { createSchedulerCoordinatorService } = require('./services/schedulerCoordinatorService');
@@ -62,6 +63,7 @@ const readinessService = createReadinessService({
   schedulerHealth:() => schedulerCoordinator.health(),
   realtimeHealth:() => app.locals.consultationRealtimeHealth?.() || { configured:false, started:false },
   missingEnvironment:() => missingRuntimeEnvironment(),
+  configurationIssues:() => unsafeRuntimeConfiguration(),
   timeoutMs:readinessTimeoutMs(),
 });
 
@@ -155,7 +157,10 @@ app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     return res.status(status).json({ status:status >= 500 ? 'retrying' : 'rejected', error:safe });
   }
-  console.error(err);
+  logOperationalError(console.error, {
+    event:'http_request_failed', error:err, httpStatus:err?.status,
+    requestId:req.headers?.['x-request-id'], routeCategory:'interactive_api',
+  });
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: 'เกิดข้อผิดพลาดในระบบ กรุณาลองใหม่อีกครั้ง' });
 });
@@ -220,7 +225,7 @@ if (require.main === module) {
       startScheduler();
     });
   }).catch((error) => {
-    console.error('เริ่มระบบไม่ได้เพราะฐานข้อมูลไม่พร้อม:', error);
+    logOperationalError(console.error, { event:'backend_start_failed', error, routeCategory:'startup' });
     process.exitCode = 1;
   });
 }

@@ -55,15 +55,61 @@ async function getCaregiverInvite(token) {
 }
 
 async function acceptCaregiverInvite(token, lineUserId, identity = {}) {
-  const found = await getCaregiverInvite(token); if (!found.ok) return found;
-  if (found.invite.created_by === lineUserId) return { ok:false, reason:'เจ้าของ Care Profile ไม่จำเป็นต้องรับคำเชิญของตนเอง' };
-  let member = await CareProfileMembers.findOne((m) => m.care_profile_id === found.invite.care_profile_id && m.line_user_id === lineUserId);
-  const displayName = typeof identity.displayName === 'string' ? identity.displayName.trim().slice(0, 160) : null;
-  if (member) member = await CareProfileMembers.update((m) => m.member_id === member.member_id, { status:'active', role:'caregiver', rejoined_at:now(), display_name:displayName || member.display_name || null });
-  else member = await CareProfileMembers.insert({ member_id:id('CPM'), care_profile_id:found.invite.care_profile_id, line_user_id:lineUserId, display_name:displayName, role:'caregiver', status:'active', permissions:['view','edit_profile','manage_appointments','decide_transport'], joined_at:now(), invited_by:found.invite.created_by });
-  await CareProfileShareInvites.update((i) => i.invite_id === found.invite.invite_id, { used_at:now(), used_by:lineUserId, status:'used' });
-  await audit('care_profile.caregiver_joined', lineUserId, { careProfileId:found.invite.care_profile_id, invitedBy:found.invite.created_by });
-  return { ok:true, member };
+  const probe = await CareProfileShareInvites.findOne((invite) => invite.token === token);
+  if (!probe) return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้แล้ว' };
+  return withTransactionLocks([
+    `caregiver-invite:${token}`,
+    `care-profile-member:${probe.care_profile_id}:${lineUserId}`,
+  ], async () => {
+    const invite = await CareProfileShareInvites.findOne((item) => item.token === token);
+    if (!invite) return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้แล้ว' };
+    const memberships = await CareProfileMembers.findWhere((member) => (
+      member.care_profile_id === invite.care_profile_id && member.line_user_id === lineUserId
+    ));
+    if (invite.used_at || invite.status === 'used') {
+      const accepted = memberships.find((member) => member.status === 'active');
+      if (invite.used_by === lineUserId && accepted) return { ok:true, duplicate:true, member:accepted };
+      return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้แล้ว' };
+    }
+    if (invite.status !== 'active' || new Date(invite.expires_at).getTime() < Date.now()) {
+      return { ok:false, reason:'ลิงก์เชิญไม่ถูกต้อง หมดอายุ หรือถูกใช้แล้ว' };
+    }
+    if (invite.created_by === lineUserId) {
+      return { ok:false, reason:'เจ้าของ Care Profile ไม่จำเป็นต้องรับคำเชิญของตนเอง' };
+    }
+    const displayName = typeof identity.displayName === 'string' ? identity.displayName.trim().slice(0, 160) : null;
+    const ordered = [...memberships].sort((left, right) => (
+      Number(right.status === 'active') - Number(left.status === 'active')
+      || String(left.joined_at || left._createdAt || '').localeCompare(String(right.joined_at || right._createdAt || ''))
+      || String(left.member_id || '').localeCompare(String(right.member_id || ''))
+    ));
+    let member = ordered[0] || null;
+    if (member) {
+      member = await CareProfileMembers.update((row) => row.member_id === member.member_id, {
+        status:'active', role:'caregiver', rejoined_at:now(),
+        display_name:displayName || member.display_name || null,
+      });
+    } else {
+      member = await CareProfileMembers.insert({
+        member_id:id('CPM'), care_profile_id:invite.care_profile_id, line_user_id:lineUserId,
+        display_name:displayName, role:'caregiver', status:'active',
+        permissions:['view','edit_profile','manage_appointments','decide_transport'],
+        joined_at:now(), invited_by:invite.created_by,
+      });
+    }
+    const duplicateIds = new Set(ordered.slice(1).filter((row) => row.status === 'active').map((row) => row.member_id));
+    if (duplicateIds.size) {
+      await CareProfileMembers.updateAll((row) => duplicateIds.has(row.member_id), {
+        status:'revoked', revoked_at:now(), revoked_by:'system:duplicate_consolidation',
+      });
+    }
+    await CareProfileShareInvites.update((item) => item.invite_id === invite.invite_id
+      && item.status === 'active' && !item.used_at, { used_at:now(), used_by:lineUserId, status:'used' });
+    await audit('care_profile.caregiver_joined', lineUserId, {
+      careProfileId:invite.care_profile_id, invitedBy:invite.created_by,
+    });
+    return { ok:true, member };
+  });
 }
 
 async function canAccessProfile(careProfileId, lineUserId) {
@@ -412,7 +458,9 @@ async function updateFamilyAppointment({ careProfileId, appointmentId, patch, re
 
 async function cancelFamilyAppointment({ careProfileId, appointmentId, requesterLineId, reason = '' }) {
   if (!await canAccessProfile(careProfileId, requesterLineId)) return { ok: false, reason: 'ไม่มีสิทธิ์' };
-  const mutation = await withTransaction(`appointment-mutation:${appointmentId}`, async () => {
+  const transportPlans = await require('../db').TransportPlans.findWhere((plan) => plan.appointment_id === appointmentId);
+  const planLocks = transportPlans.map((plan) => require('./transportService').transportPlanLockKey(plan.plan_id));
+  const mutation = await withTransactionLocks([`appointment-mutation:${appointmentId}`, ...planLocks], async () => {
     const appointment = await Appointments.findOne((a) => a.appointment_id === appointmentId && a.care_profile_id === careProfileId);
     if (!appointment) return { missing:true };
     if (appointment.status === 'cancelled') return { appointment, alreadyCancelled:true };

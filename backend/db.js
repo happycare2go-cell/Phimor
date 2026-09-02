@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
+const { logOperationalError } = require('./utils/safeOperationalError');
 
 const DEFAULT_DATABASE_POOL_MAX = 10;
 const DEFAULT_DATABASE_POOL_CONNECTION_TIMEOUT_MS = 2000;
@@ -68,9 +69,13 @@ const initTable = async (tableName) => {
     try {
         await pool.query(query);
     } catch (err) {
-        console.error(`Error initializing table ${tableName}:`, err);
+        logOperationalError(console.error, {
+            event:'database_table_initialization_failed', error:err, routeCategory:'database_startup',
+        });
     }
 };
+
+const findOneOrNull = (rows, predicate) => rows.find(predicate) || null;
 
 // ฟังก์ชันแปลงคำสั่งจัดการฐานข้อมูล ให้ทำงานเข้ากับระบบเก่าได้เป๊ะๆ
 const makeTable = (tableName) => {
@@ -108,10 +113,10 @@ const makeTable = (tableName) => {
             return allData.filter(predicate);
         },
         findOne: async (predicate) => {
-            if (isTest) return memory().find(predicate) || null;
+            if (isTest) return findOneOrNull(memory(), predicate);
             const res = await query(`SELECT data FROM "${tableName}"`);
             const allData = res.rows.map(row => row.data);
-            return allData.find(predicate);
+            return findOneOrNull(allData, predicate);
         },
         findOneByField: async (field, value) => {
             const key = safeField(field);
@@ -190,6 +195,23 @@ const makeTable = (tableName) => {
             if (!target) return false;
             await query(`DELETE FROM "${tableName}" WHERE id = $1`, [target.id]);
             return true;
+        },
+        removeAll: async (predicate) => {
+            if (isTest) {
+                let removed = 0;
+                for (let index = memory().length - 1; index >= 0; index -= 1) {
+                    if (!predicate(memory()[index])) continue;
+                    memory().splice(index, 1);
+                    removed += 1;
+                }
+                return removed;
+            }
+            const res = await query(`SELECT id, data FROM "${tableName}"`);
+            const targets = res.rows.filter((row) => predicate(row.data));
+            for (const target of targets) {
+                await query(`DELETE FROM "${tableName}" WHERE id = $1`, [target.id]);
+            }
+            return targets.length;
         }
     };
 };
@@ -358,6 +380,7 @@ module.exports = {
   audit, resetAll, initializeDatabase, withTransaction, withTransactionLocks, pingDatabase,
   acquireDatabaseClient,
   createDatabasePoolConfig, getDatabasePoolMetrics, safePoolErrorCode,
+  findOneOrNull,
   DEFAULT_DATABASE_POOL_MAX, DEFAULT_DATABASE_POOL_CONNECTION_TIMEOUT_MS,
   databaseQuery: query,
 };

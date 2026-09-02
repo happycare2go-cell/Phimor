@@ -8,6 +8,7 @@ process.env.PDF_DOWNLOAD_SECRET=process.env.PDF_DOWNLOAD_SECRET||'test-pdf-secre
 const db=require('../backend/db');
 const aiProvider=require('../backend/providers/aiProvider');
 const {AI_ERROR_CODES,AIProviderError}=require('../backend/providers/aiErrors');
+const VALID_JPEG_BASE64=Buffer.from([0xff,0xd8,0xff,0xe0,0x00,0x10,0xff,0xd9]).toString('base64');
 let server,baseUrl;
 
 before(async()=>{const app=require('../backend/server');server=http.createServer(app);await new Promise((resolve)=>server.listen(0,resolve));baseUrl=`http://127.0.0.1:${server.address().port}`});
@@ -112,7 +113,7 @@ test('one Family image may produce multiple review drafts without saving clinica
     {name:'Amlodipine',strength:'10 mg',dose:'1',unit:'เม็ด',uncertainFields:[]},
     {name:'Metformin',dose:'1',unit:'เม็ด',timing:'ก่อนนอน',uncertainFields:['timing'],providerSecret:'hidden'},
   ]});
-  const result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  const result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:VALID_JPEG_BASE64,imageMimeType:'image/jpeg'}});
   assert.equal(result.response.status,202);
   assert.equal(result.body.status,'draft_requires_confirmation');
   assert.deepEqual(result.body.extracted.map((item)=>item.name),['Amlodipine','Metformin']);
@@ -125,7 +126,7 @@ test('one Family image may produce multiple review drafts without saving clinica
 test('Family image provider failure returns safe extraction-unavailable response without raw details',async()=>{
   await family();
   aiProvider.setProviderForTests({generateStructured:async()=>{throw new AIProviderError(AI_ERROR_CODES.AI_RATE_LIMIT,'private provider response')}});
-  const result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  const result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:VALID_JPEG_BASE64,imageMimeType:'image/jpeg'}});
   assert.equal(result.response.status,503);
   assert.equal(result.body.error,'MEDICATION_EXTRACTION_UNAVAILABLE');
   assert.match(result.body.message,/ระบบอ่านฉลากยาชั่วคราวไม่ได้/);
@@ -136,12 +137,12 @@ test('Family image provider failure returns safe extraction-unavailable response
 test('invalid AI response and valid empty extraction remain distinct safe outcomes',async()=>{
   await family();
   aiProvider.setProviderForTests({generateStructured:async()=>({medications:'invalid',raw:'private provider response'})});
-  let result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  let result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:VALID_JPEG_BASE64,imageMimeType:'image/jpeg'}});
   assert.equal(result.response.status,503);
   assert.equal(result.body.error,'MEDICATION_EXTRACTION_UNAVAILABLE');
   assert.doesNotMatch(JSON.stringify(result.body),/private|raw|aW1hZ2U/);
   aiProvider.setProviderForTests({generateStructured:async()=>({medications:[]})});
-  result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  result=await request('/api/care-profile/CP-1/medications/image-proposal',{method:'POST',body:{imageBase64:VALID_JPEG_BASE64,imageMimeType:'image/jpeg'}});
   assert.equal(result.response.status,202);
   assert.equal(result.body.imageStatus,'no_medication_detected');
   assert.deepEqual(result.body.extracted,[]);
@@ -161,7 +162,7 @@ test('Center image and combined draft proposal retain Manager authorization and 
   await center();
   await db.CenterStaff.insert({staff_id:'S-MANAGER',center_id:'C-1',line_user_id:'U-MANAGER',role:'manager',status:'active'});
   aiProvider.queueMockResponse({medications:[{name:'Calcium',amount:'30',unit:'เม็ด',uncertainFields:[]}]});
-  const manager=await request('/api/residents/R-1/medications/image-proposal?centerId=C-1',{method:'POST',user:'U-MANAGER',body:{imageBase64:'aW1hZ2U=',imageMimeType:'image/jpeg'}});
+  const manager=await request('/api/residents/R-1/medications/image-proposal?centerId=C-1',{method:'POST',user:'U-MANAGER',body:{imageBase64:VALID_JPEG_BASE64,imageMimeType:'image/jpeg'}});
   assert.equal(manager.response.status,202);
   assert.equal(manager.body.extracted[0].amount,'30');
   const staff=await request('/api/residents/R-1/medications/draft-proposal?centerId=C-1',{method:'POST',user:'U-STAFF',body:{items:[{name:'Forged'}]}});

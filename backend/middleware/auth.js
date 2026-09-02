@@ -21,12 +21,17 @@ async function verifyLineIdToken(idToken) {
 }
 
 /** Production ต้องใช้ LINE ID Token; header ตรงอนุญาตเฉพาะ local/test ที่เปิด flag ชัดเจน */
-async function identify(req) {
+function insecureLineHeaderAllowed(env = process.env) {
+  return env.NODE_ENV === 'test'
+    || (env.NODE_ENV !== 'production' && env.ALLOW_INSECURE_LINE_HEADER === 'true');
+}
+
+async function identify(req, { env = process.env, verify = verifyLineIdToken } = {}) {
   const authorization = req.header('Authorization') || '';
   const bearer = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : null;
-  const verified = await verifyLineIdToken(bearer);
+  const verified = await verify(bearer);
   if (verified) return verified;
-  if (process.env.ALLOW_INSECURE_LINE_HEADER === 'true' || process.env.NODE_ENV === 'test') {
+  if (insecureLineHeaderAllowed(env)) {
     const lineUserId = req.header('X-Line-User-Id');
     if (lineUserId) return { lineUserId, insecureDevelopmentIdentity: true };
   }
@@ -132,4 +137,4 @@ async function centerCanAccessResident(centerId, residentId) {
   return resident.center_id === centerId && resident.status === 'active';
 }
 
-module.exports = { identify, verifyLineIdToken, requireAuth, requireCenterStaff, requireFamilyAccess, resolveCenterByGroup, centerCanAccessResident };
+module.exports = { identify, verifyLineIdToken, insecureLineHeaderAllowed, requireAuth, requireCenterStaff, requireFamilyAccess, resolveCenterByGroup, centerCanAccessResident };

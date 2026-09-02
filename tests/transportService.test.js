@@ -6,6 +6,8 @@ const db = require('../backend/db');
 const centerService = require('../backend/services/centerService');
 const transportService = require('../backend/services/transportService');
 const lineClient = require('../backend/providers/lineClient');
+const fs = require('node:fs');
+const path = require('node:path');
 
 beforeEach(() => {
   db.resetAll();
@@ -55,6 +57,83 @@ test('Care Profile อิสระเลือกไปเองได้ แล
   assert.equal(updated.history.filter((item) => item.event === 'family_choice=self').length, 1);
   const audits = await db.AuditLog.findWhere((item) => item.action === 'transport.family_self' && item.meta?.planId === plan.plan_id);
   assert.equal(audits.length, 1);
+});
+
+test('competing Family transport choices share one plan lock and only one transition wins', async () => {
+  const { center, profile } = await setupLinkedProfile();
+  const plan = await transportService.createTransportPlan({ appointmentId:'A-RACE', careProfileId:profile.care_profile_id, centerId:center.center_id });
+  const results = await Promise.all([
+    transportService.familyChooseSelf(plan.plan_id, 'U_FAMILY'),
+    transportService.familyRequestCenter(plan.plan_id, 'U_FAMILY'),
+  ]);
+  assert.strictEqual(results.filter((result) => result.ok).length, 1);
+  const updated = await db.TransportPlans.findOne((item) => item.plan_id === plan.plan_id);
+  assert.ok(['family_handled', 'awaiting_center'].includes(updated.status));
+  assert.strictEqual(updated.history.filter((entry) => entry.event.startsWith('family_choice=')).length, 1);
+});
+
+test('competing Center choices cannot both win and append history without loss', async () => {
+  const { center, profile } = await setupLinkedProfile();
+  await transportService.updateRateCard(center.center_id, { vehicle_enabled:true, vehicle_price:500 }, 'U_OWNER');
+  const plan = await transportService.createTransportPlan({ appointmentId:'A-CENTER-RACE', careProfileId:profile.care_profile_id, centerId:center.center_id });
+  await transportService.familyRequestCenter(plan.plan_id, 'U_FAMILY');
+  const results = await Promise.all([
+    transportService.centerChoose(plan.plan_id, 'center_own', 'U_OWNER', { needs:['vehicle'] }),
+    transportService.centerChoose(plan.plan_id, 'care2go', 'U_OWNER', { needs:['vehicle'] }),
+  ]);
+  assert.strictEqual(results.filter((result) => result.ok).length, 1);
+  const updated = await db.TransportPlans.findOne((item) => item.plan_id === plan.plan_id);
+  assert.strictEqual(updated.history.filter((entry) => entry.event.startsWith('center_choice=')).length, 1);
+  assert.strictEqual(updated.history.filter((entry) => entry.event === 'family_choice=request_center').length, 1);
+});
+
+test('Center choice releases the plan transaction before LINE provider delivery', async () => {
+  const { center, profile } = await setupLinkedProfile();
+  const plan = await transportService.createTransportPlan({
+    appointmentId:'A-POST-COMMIT', careProfileId:profile.care_profile_id, centerId:center.center_id,
+  });
+  await transportService.familyRequestCenter(plan.plan_id, 'U_FAMILY');
+
+  const originalPushMessage = lineClient.pushMessage;
+  let signalPushStarted;
+  let releasePush;
+  const pushStarted = new Promise((resolve) => { signalPushStarted = resolve; });
+  const pushGate = new Promise((resolve) => { releasePush = resolve; });
+  lineClient.pushMessage = async () => {
+    signalPushStarted();
+    await pushGate;
+    return { ok:true };
+  };
+  try {
+    const choicePromise = transportService.centerChoose(
+      plan.plan_id, 'center_own', 'U_OWNER', { needs:[] }
+    );
+    await pushStarted;
+    const duplicateChoicePromise = transportService.centerChoose(
+      plan.plan_id, 'center_own', 'U_OWNER', { needs:[] }
+    );
+    const secondLockCompletedBeforeProvider = await Promise.race([
+      duplicateChoicePromise.then(() => true),
+      new Promise((resolve) => setImmediate(() => resolve(false))),
+    ]);
+    releasePush();
+    const [, duplicateChoice] = await Promise.all([choicePromise, duplicateChoicePromise]);
+    assert.strictEqual(secondLockCompletedBeforeProvider, true);
+    assert.strictEqual(duplicateChoice.ok, false);
+  } finally {
+    releasePush?.();
+    lineClient.pushMessage = originalPushMessage;
+  }
+
+  const updated = await db.TransportPlans.findOne((row) => row.plan_id === plan.plan_id);
+  assert.strictEqual(updated.history.filter((entry) => entry.event === 'center_choice=center_own').length, 1);
+});
+
+test('all runtime TransportPlan mutations use the canonical plan lock namespace', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../backend/services/transportService.js'), 'utf8');
+  assert.match(source, /transport-plan:\$\{planId\}/);
+  assert.doesNotMatch(source, /withTransaction\(`transport-(?:family-choice|choice|reminder):/);
+  assert.strictEqual(transportService.transportPlanLockKey('TP-1'), 'transport-plan:TP-1');
 });
 
 test('เกณฑ์ยอมรับข้อ 8: กดให้ศูนย์จัดการ → การ์ดคำขอส่งไปกลุ่มงานศูนย์เท่านั้น', async () => {

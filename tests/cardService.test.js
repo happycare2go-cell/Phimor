@@ -67,6 +67,39 @@ test('FR-D3: ชื่อไม่ชัดเจนหรือใกล้เ�
   assert.strictEqual(card.resident_id, null, 'ห้ามเดาแล้วเลือกให้เอง');
 });
 
+test('concurrent card resident selections serialize and only one eligible resident wins', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์ทดสอบ', ownerLineId:'U_OWNER' });
+  const first = (await centerService.addResident({ centerId:center.center_id, fullName:'บุคคล A' })).resident;
+  const second = (await centerService.addResident({ centerId:center.center_id, fullName:'บุคคล B' })).resident;
+  const card = await db.PendingCards.insert({
+    card_id:'CARD-RACE', center_id:center.center_id, resident_id:null,
+    status:'awaiting_selection', ai_result:{ medications:[] }, document_subtype:'appointment',
+  });
+  const results = await Promise.all([
+    cardService.selectResidentForCard(card.card_id, first.resident_id, 'U_OWNER'),
+    cardService.selectResidentForCard(card.card_id, second.resident_id, 'U_OWNER'),
+  ]);
+  assert.strictEqual(results.filter((result) => result.ok).length, 1);
+  const updated = await db.PendingCards.findOne((item) => item.card_id === card.card_id);
+  assert.ok([first.resident_id, second.resident_id].includes(updated.resident_id));
+  assert.strictEqual(updated.status, 'pending');
+  const duplicate = await cardService.selectResidentForCard(card.card_id, updated.resident_id, 'U_OWNER');
+  assert.deepEqual(duplicate, { ok:true, duplicate:true });
+});
+
+test('card resident selection rejects discharged and cross-Center residents inside the lock', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์ A', ownerLineId:'U_OWNER' });
+  const other = await centerService.createCenter({ name:'ศูนย์ B', ownerLineId:'U_OTHER_OWNER' });
+  const discharged = (await centerService.addResident({ centerId:center.center_id, fullName:'บุคคลเดิม' })).resident;
+  const crossCenter = (await centerService.addResident({ centerId:other.center_id, fullName:'บุคคลอื่น' })).resident;
+  await db.Residents.update((item) => item.resident_id === discharged.resident_id, { status:'discharged' });
+  await db.PendingCards.insert({ card_id:'CARD-SAFE', center_id:center.center_id, resident_id:null,
+    status:'awaiting_selection', ai_result:{ medications:[] } });
+  assert.strictEqual((await cardService.selectResidentForCard('CARD-SAFE', discharged.resident_id)).ok, false);
+  assert.strictEqual((await cardService.selectResidentForCard('CARD-SAFE', crossCenter.resident_id)).ok, false);
+  assert.strictEqual((await db.PendingCards.findOne((item) => item.card_id === 'CARD-SAFE')).status, 'awaiting_selection');
+});
+
 test('ผู้พักเกิน 13 คน — candidates ต้องไม่เกิน 13 (ข้อจำกัด Quick Reply)', async () => {
   const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
   await centerService.bindGroupToCenter({ centerId: center.center_id, groupId: 'G1', requesterLineId: 'U_OWNER' });

@@ -1,4 +1,5 @@
 const line = require('@line/bot-sdk');
+const { logOperationalError } = require('../utils/safeOperationalError');
 
 // สร้างตัวเชื่อมต่อกับ LINE ด้วย Access Token ของจริงจาก Environment
 const client = new line.messagingApi.MessagingApiClient({
@@ -19,7 +20,9 @@ async function replyMessage(replyToken, messages) {
     });
     return { ok: true };
   } catch (err) {
-    console.error('LINE Reply Error:', err.response?.data || err.message);
+    logOperationalError(console.error, {
+      event:'line_reply_failed', error:err, httpStatus:providerStatus(err), routeCategory:'line_provider',
+    });
     const error = new Error('ส่งข้อความตอบกลับ LINE ไม่สำเร็จ');
     error.cause = err;
     throw error;
@@ -83,7 +86,9 @@ async function getProfile(userId) {
   try {
     return await client.getProfile(userId);
   } catch (err) {
-    console.error('LINE GetProfile Error:', err.message);
+    logOperationalError(console.error, {
+      event:'line_profile_lookup_failed', error:err, httpStatus:providerStatus(err), routeCategory:'line_provider',
+    });
     return { userId, displayName: 'ผู้ใช้งาน' };
   }
 }

@@ -52,6 +52,14 @@ function missingRuntimeEnvironment(env = process.env) {
   return requiredRuntimeEnvironment(env).filter((key) => !hasValue(env[key]));
 }
 
+function unsafeRuntimeConfiguration(env = process.env) {
+  if (env.NODE_ENV !== 'production') return [];
+  const issues = [];
+  if (env.ALLOW_INSECURE_LINE_HEADER === 'true') issues.push('INSECURE_LINE_HEADER_ENABLED');
+  if (env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true') issues.push('UNSIGNED_LINE_WEBHOOK_ENABLED');
+  return issues;
+}
+
 function buildPublicLiffConfig(env = process.env) {
   const configured = {
     publicBackendUrl: env.PUBLIC_BACKEND_URL,
@@ -71,5 +79,6 @@ module.exports = {
   messagingConfigured,
   requiredRuntimeEnvironment,
   missingRuntimeEnvironment,
+  unsafeRuntimeConfiguration,
   buildPublicLiffConfig,
 };

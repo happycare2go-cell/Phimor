@@ -1,5 +1,6 @@
 require('dotenv').config();
-const { CenterStaff, Centers } = require('../db');
+const { CenterStaff, Centers, id, now, withTransactionLocks } = require('../db');
+const { centerStaffLockKey } = require('../services/centerService');
 
 async function run() {
   const targetCenterId = 'CTR-7906676e';
@@ -17,19 +18,18 @@ async function run() {
   }
 
   // 2. เคลียร์ตารางพนักงานให้ LINE ID ของคุณโอผูกกับ targetCenterId อันเดียวเท่านั้น
-  const allStaff = await CenterStaff.findWhere(() => true);
-  for (const s of allStaff) {
-    if (s.line_user_id === myLineId) {
-      await CenterStaff.remove((item) => item.center_id === s.center_id && item.line_user_id === s.line_user_id);
-    }
-  }
-
-  // เพิ่มสิทธิ์ Owner ให้กับศูนย์หลักสาขาเดียว
-  await CenterStaff.insert({
-    center_id: targetCenterId,
-    line_user_id: myLineId,
-    role: 'owner',
-    created_at: new Date().toISOString()
+  const allStaff = await CenterStaff.findWhere((staff) => staff.line_user_id === myLineId);
+  const lockKeys = [...new Set([
+    centerStaffLockKey(targetCenterId, myLineId),
+    ...allStaff.map((staff) => centerStaffLockKey(staff.center_id, myLineId)),
+  ])];
+  await withTransactionLocks(lockKeys, async () => {
+    await CenterStaff.removeAll((staff) => staff.line_user_id === myLineId);
+    // เพิ่มสิทธิ์ Owner ให้กับศูนย์หลักสาขาเดียว
+    await CenterStaff.insert({
+      staff_id:id('STF'), center_id:targetCenterId, line_user_id:myLineId,
+      role:'owner', status:'active', assigned_at:now(),
+    });
   });
 
   console.log(`✅ สำเร็จ! ล็อกให้ LINE ID ของคุณโอเป็น Owner ของศูนย์ ${targetCenterId} เรียบร้อยแล้ว`);

@@ -12,13 +12,23 @@ const lineClient = require('../providers/lineClient');
 const flex = require('../flexMessages');
 const rateLimiter = require('../utils/rateLimiter');
 const { messagingConfigured } = require('../config/runtimeCapabilities');
+const { safeErrorCode, logOperationalError } = require('../utils/safeOperationalError');
 const { Residents, PendingCards, CareProfiles, CenterStaff, Centers, WebhookInbox, id, now, withTransaction } = require('../db');
 
 const IMAGE_RATE_LIMIT = Number(process.env.IMAGE_RATE_LIMIT_PER_MINUTE) || 5;
 const WEBHOOK_PROCESSING_LEASE_MS = 5 * 60 * 1000;
-const webhookParser = (process.env.NODE_ENV === 'test' || process.env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true')
-  ? express.json()
-  : line.middleware({ channelSecret: process.env.LINE_CHANNEL_SECRET || 'missing-channel-secret' });
+function unsignedLineWebhookAllowed(env = process.env) {
+  return env.NODE_ENV === 'test'
+    || (env.NODE_ENV !== 'production' && env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true');
+}
+
+function createWebhookParser(env = process.env) {
+  return unsignedLineWebhookAllowed(env)
+    ? express.json()
+    : line.middleware({ channelSecret: env.LINE_CHANNEL_SECRET || 'missing-channel-secret' });
+}
+
+const webhookParser = createWebhookParser();
 
 function requireMessagingCapability(req, res, next) {
   if (!messagingConfigured()) {
@@ -412,10 +422,12 @@ async function processPendingWebhookEvents(limit = 50) {
       await WebhookInbox.update((entry) => entry.inbox_id === item.inbox_id
         && entry.processing_claim_id === item.processing_claim_id, {
         status:attempts>=5?'dead_letter':'retrying', attempts,
-        last_error:String(err.message||err).slice(0,500), last_attempt_at:now(),
+        last_error:safeErrorCode(err, 'WEBHOOK_EVENT_PROCESSING_FAILED'), last_attempt_at:now(),
         processing_claim_id:null, processing_started_at:null,
       });
-      console.error('webhook handler error:', err);
+      logOperationalError(console.error, {
+        event:'webhook_event_processing_failed', error:err, routeCategory:'line_webhook_worker',
+      });
     }
   }
   return { processed };
@@ -439,6 +451,8 @@ module.exports.isGroupOrRoomSource = isGroupOrRoomSource;
 module.exports.isUserIdCommand = isUserIdCommand;
 module.exports.handleUserIdCommand = handleUserIdCommand;
 module.exports.normalizeTextCommand = normalizeTextCommand;
+module.exports.unsignedLineWebhookAllowed = unsignedLineWebhookAllowed;
+module.exports.createWebhookParser = createWebhookParser;
 module.exports.isOpenCenterCommand = isOpenCenterCommand;
 module.exports.handleOpenCenterCommand = handleOpenCenterCommand;
 module.exports.processEvent = processEvent;
