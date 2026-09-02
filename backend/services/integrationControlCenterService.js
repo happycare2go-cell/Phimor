@@ -29,6 +29,8 @@ function attentionFor(row){
   if(row.group_reconciliation_status==='group_binding_missing')return{stage:'family_destination',reason:'ยังไม่ได้ผูกปลายทางครอบครัว'};
   if(row.group_reconciliation_status==='group_binding_mismatch')return{stage:'family_destination',reason:'ปลายทางครอบครัวไม่ตรงกับการเชื่อมที่ยืนยันไว้'};
   if(row.notification_intent_status==='enqueue_failed')return{stage:'notification',reason:'สร้างคิวการแจ้งเตือนไม่สำเร็จ'};
+  if(row.notification_delivery_status==='retrying')return{stage:'notification',reason:'การแจ้งเตือนยังส่งไม่สำเร็จและระบบกำลังลองใหม่'};
+  if(row.notification_delivery_status==='dead_letter')return{stage:'notification',reason:'ระบบหยุดลองส่งการแจ้งเตือนแล้ว'};
   if(['rejected','retrying','dead'].includes(row.status))return{stage:row.resident_id?'persistence':'resident',reason:ERROR_LABELS[row.last_error_code]||'เหตุการณ์นี้ต้องตรวจสอบเพิ่มเติม'};
   return null;
 }
@@ -37,7 +39,7 @@ function flowForEvent(row){
   const isDaily=row.event_type==='care.daily_report.finalized';const processed=row.status==='processed';
   const pendingSubject=row.status==='pending'&&row.pending_reason==='subject_mapping';
   const terminalFailure=['rejected','dead'].includes(row.status);const processing=['received','processing','retrying'].includes(row.status);
-  const group=row.group_reconciliation_status;const notification=row.notification_intent_status;
+  const group=row.group_reconciliation_status;const notification=row.notification_intent_status;const delivery=row.notification_delivery_status;
   const stages=[
     stage('receive','completed','ระบบบันทึกเหตุการณ์แล้ว'),
     stage('validate','completed','ผ่านการตรวจ canonical envelope ก่อนบันทึก inbox'),
@@ -46,8 +48,8 @@ function flowForEvent(row){
     stage('resident',row.resident_id?'completed':pendingSubject?'attention':terminalFailure?'failed':processing?'current':'unknown',row.resident_id?'เชื่อมผู้พักแล้ว':pendingSubject?'รอผู้ดูแลเชื่อมผู้พัก':'ยังตรวจสอบไม่ได้'),
     stage('care_profile',row.care_profile_id?'completed':pendingSubject?'waiting':terminalFailure?'unknown':processing?'waiting':'unknown',row.care_profile_id?'เชื่อม Care Profile แล้ว':'ยังไม่มีหลักฐานการเชื่อม'),
     stage('persistence',processed&&row.canonical_resource_id?'completed':terminalFailure?'failed':pendingSubject?'waiting':processing?'current':'unknown',processed&&row.canonical_resource_id?'บันทึกข้อมูลมาตรฐานแล้ว':terminalFailure?'บันทึกข้อมูลไม่สำเร็จ':'กำลังรอประมวลผล'),
-    stage('family_destination',!isDaily?'not_applicable':!processed?'waiting':group==='group_binding_missing'||group==='group_binding_mismatch'?'attention':row.verified_line_group_id?'completed':'unknown',!isDaily?'เหตุการณ์นี้ไม่ส่งรายงานครอบครัว':row.verified_line_group_id?'พบปลายทางที่ผ่านการตรวจสอบแล้ว':group==='group_binding_missing'?'ยังไม่ได้ผูกปลายทางครอบครัว':group==='group_binding_mismatch'?'ปลายทางไม่ตรงกัน':'ยังตรวจสอบไม่ได้'),
-    stage('notification',!isDaily?'not_applicable':!processed?'waiting':notification==='queued'||notification==='duplicate'?'current':['recipient_missing','held_group_missing','held_group_mismatch'].includes(notification)?'attention':notification==='enqueue_failed'?'failed':notification==='not_applicable'?'not_applicable':'unknown',!isDaily?'เหตุการณ์นี้ไม่มีการแจ้งครอบครัว':notification==='queued'?'สร้างคิวแล้ว แต่ยังไม่ใช่หลักฐานว่าส่งถึงผู้รับ':notification==='duplicate'?'มีคิวของรายการนี้อยู่แล้ว':notification==='enqueue_failed'?'สร้างคิวไม่สำเร็จ':'ยังตรวจสอบสถานะการส่งไม่ได้'),
+    stage('family_destination',!isDaily?'not_applicable':!processed?'waiting':group==='group_binding_missing'||group==='group_binding_mismatch'?'attention':(row.family_destination_verified||row.verified_line_group_id)?'completed':'unknown',!isDaily?'เหตุการณ์นี้ไม่ส่งรายงานครอบครัว':(row.family_destination_verified||row.verified_line_group_id)?'พบปลายทางที่ผ่านการตรวจสอบแล้ว':group==='group_binding_missing'?'ยังไม่ได้ผูกปลายทางครอบครัว':group==='group_binding_mismatch'?'ปลายทางไม่ตรงกัน':'ยังตรวจสอบไม่ได้'),
+    stage('notification',!isDaily?'not_applicable':!processed?'waiting':delivery==='sent'?'completed':delivery==='dead_letter'?'failed':delivery==='retrying'?'attention':['pending','sending'].includes(delivery)||notification==='queued'||notification==='duplicate'?'current':['recipient_missing','held_group_missing','held_group_mismatch'].includes(notification)?'attention':notification==='enqueue_failed'?'failed':notification==='not_applicable'?'not_applicable':'unknown',!isDaily?'เหตุการณ์นี้ไม่มีการแจ้งครอบครัว':delivery==='sent'?'ผู้ให้บริการรับคำขอส่งแล้ว แต่ไม่มีหลักฐานว่าส่งถึงผู้รับปลายทาง':delivery==='dead_letter'?'ระบบหยุดลองส่งแล้ว':delivery==='retrying'?'ระบบกำลังลองส่งใหม่':notification==='queued'?'สร้างคิวแล้ว แต่ยังไม่ใช่หลักฐานว่าส่งถึงผู้รับ':notification==='duplicate'?'มีคิวของรายการนี้อยู่แล้ว':notification==='enqueue_failed'?'สร้างคิวไม่สำเร็จ':'ยังตรวจสอบสถานะการส่งไม่ได้'),
   ];
   return{latestEvent:{safeReference:safeReference(row.integration_event_id),eventType:row.event_type,status:row.status,
     receivedAt:row.created_at||null,latestMeaningfulAt:row.processed_at||row.updated_at||row.created_at||null,
@@ -95,6 +97,44 @@ function identityProjection(row){
     ambiguity:ambiguous?{candidateCount:Number(row.candidate_count)||0,status:row.alert_status||'open'}:null,
     lastSeenAt:row.last_seen_at||row.updated_at||row.created_at||null};
 }
+const HISTORY_STATUSES=Object.freeze(['received','processing','processed','pending','rejected','retrying','dead']);
+const HISTORY_CATEGORIES=Object.freeze(['identity','family_destination','notification','processing']);
+function safeDate(value,endOfDay=false){const clean=String(value||'').trim();if(!clean)return null;if(!/^\d{4}-\d{2}-\d{2}$/.test(clean))throw Object.assign(new Error('รูปแบบวันที่ไม่ถูกต้อง'),{code:'INVALID_HISTORY_DATE',status:400});const date=new Date(`${clean}T00:00:00+07:00`);if(!Number.isFinite(date.getTime()))throw Object.assign(new Error('รูปแบบวันที่ไม่ถูกต้อง'),{code:'INVALID_HISTORY_DATE',status:400});if(endOfDay)date.setTime(date.getTime()+86400000);return date.toISOString();}
+function historyQuery(input={}){
+  const status=String(input.status||'').trim()||null;if(status&&!HISTORY_STATUSES.includes(status))throw Object.assign(new Error('ตัวกรองสถานะไม่ถูกต้อง'),{code:'INVALID_HISTORY_STATUS',status:400});
+  const category=String(input.category||'').trim()||null;if(category&&!HISTORY_CATEGORIES.includes(category))throw Object.assign(new Error('ตัวกรองขั้นตอนไม่ถูกต้อง'),{code:'INVALID_HISTORY_CATEGORY',status:400});
+  const reference=String(input.reference||'').trim();const suffix=reference?(reference.match(/^(?:เหตุการณ์\s+••••)?([A-Za-z0-9]{6})$/u)?.[1]||null):null;if(reference&&!suffix)throw Object.assign(new Error('รหัสอ้างอิงไม่ถูกต้อง'),{code:'INVALID_HISTORY_REFERENCE',status:400});
+  const page=Math.max(1,Number(input.page)||1);const limit=Math.min(50,Math.max(1,Number(input.limit)||20));return{integrationClientId:String(input.integrationClientId||'').trim()||null,status,category,from:safeDate(input.from),to:safeDate(input.to,true),referenceSuffix:suffix,page,limit,offset:(page-1)*limit};
+}
+const OUTCOME_LABELS=Object.freeze({received:'รับข้อมูลแล้ว',processing:'กำลังประมวลผล',processed:'บันทึกข้อมูลแล้ว',pending:'รอเชื่อมผู้พัก',rejected:'ข้อมูลถูกปฏิเสธ',retrying:'กำลังลองประมวลผลใหม่',dead:'หยุดประมวลผลแล้ว'});
+function nextAction(row,flow){
+  if(row.pending_reason==='subject_mapping')return'ตรวจสอบผู้พักรอเชื่อมในงานต้องตรวจ';
+  if(['group_binding_missing','group_binding_mismatch'].includes(row.group_reconciliation_status))return'ตรวจสอบ GroupBinding ของ Care Profile ในงานต้องตรวจ';
+  if(['retrying','dead_letter'].includes(row.notification_delivery_status))return'ตรวจสอบรายการส่งแจ้งเตือนในงานต้องตรวจ โดยไม่สั่งส่งซ้ำจากหน้านี้';
+  if(row.status==='retrying')return'ระบบจะลองประมวลผลใหม่ตามเวลาที่กำหนด ไม่ต้องสั่งซ้ำ';
+  if(['rejected','dead'].includes(row.status))return'ตรวจรหัสสาเหตุและการตั้งค่าระบบต้นทาง แล้วแก้ที่ต้นเหตุ';
+  if(flow.attention)return'ตรวจสอบขั้นตอนที่ระบุว่าต้องตรวจ';return'ไม่ต้องดำเนินการเพิ่มเติม';
+}
+function historyProjection(row,{detail=false}={}){
+  const flow=flowForEvent(row);const notification=row.notification_delivery_status?{status:row.notification_delivery_status,
+    attempts:Number(row.delivery_attempts)||0,errorCode:row.delivery_error_code||null,createdAt:row.notification_created_at||null,
+    nextAttemptAt:row.notification_next_attempt_at||null,statusUpdatedAt:row.notification_updated_at||null,
+    providerAccepted:row.notification_delivery_status==='sent'&&Boolean(row.provider_acceptance),
+    providerStateLabel:row.notification_delivery_status==='sent'?'ผู้ให้บริการรับคำขอส่งแล้ว':row.notification_delivery_status==='retrying'?'ระบบกำลังลองส่งใหม่':row.notification_delivery_status==='dead_letter'?'ระบบหยุดลองส่งแล้ว':['pending','sending'].includes(row.notification_delivery_status)?'อยู่ในคิวส่ง':'ไม่มีข้อมูล'}:null;
+  const item={eventKey:row.integration_event_id,safeReference:safeReference(row.integration_event_id),integration:{safeReference:safeReference(row.integration_client_id,'ระบบ'),displayName:row.integration_name||'ระบบเชื่อมต่อ',sourceSystem:row.source_system||null},
+    eventType:row.event_type,receivedAt:row.created_at||null,outcome:row.status,outcomeLabel:OUTCOME_LABELS[row.status]||'ไม่ทราบผล',
+    problemStage:flow.attention?.stage||flow.stages.find((stageItem)=>['current','failed','attention'].includes(stageItem.state))?.key||null,
+    summary:flow.attention?.reason||OUTCOME_LABELS[row.status]||'ยังตรวจสอบไม่ได้',latestAt:row.processed_at||row.updated_at||row.created_at||null,
+    identity:{centerName:row.center_name||null,residentName:row.resident_name||null,room:row.room||null,
+      residentState:row.resident_id?'resolved':row.pending_reason==='subject_mapping'?'unresolved':'unknown',careProfileState:row.care_profile_id?'resolved':'unknown'},
+    familyDestination:{state:(row.family_destination_verified||row.verified_line_group_id)?'resolved':['group_binding_missing','group_binding_mismatch'].includes(row.group_reconciliation_status)?'attention':row.event_type==='care.vitals.recorded'?'not_applicable':'unknown'},
+    notification,nextOperatorAction:nextAction(row,flow)};
+  if(detail)item.detail={stages:flow.stages,technical:{safeEventReference:item.safeReference,safeIntegrationReference:item.integration.safeReference,
+    adapterVersion:null,adapterEvidence:'unavailable_for_event',safeErrorCode:row.last_error_code||row.delivery_error_code||null,
+    processingState:row.status,processingAttemptCount:Number(row.attempt_count)||0,nextProcessingAttemptAt:row.next_attempt_at||null,
+    idempotencyEvidence:'event_id_unique_but_duplicate_receipt_count_not_persisted'}};
+  return item;
+}
 function createIntegrationControlCenterService(overrides={}){
   const platform=overrides.platformService||platformService;
   const events=overrides.eventRepository||createIntegrationEventRepository();
@@ -126,7 +166,9 @@ function createIntegrationControlCenterService(overrides={}){
     return{integrationClient:{integrationClientId:client.integrationClientId,displayName:client.displayName,sourceSystem:client.sourceSystem},
       items:rows.map(identityProjection),pagination:{page:boundedPage,limit:boundedLimit,total,totalPages:Math.ceil(total/boundedLimit)}};
   }
-  return{overview,mappingInspector,identityInspector};
+  async function history(input={}){const query=historyQuery(input);const [rows,count]=await Promise.all([control.listHistory(query),control.countHistory(query)]);const total=Number(count?.total)||0;return{items:rows.map((row)=>historyProjection(row)),pagination:{page:query.page,limit:query.limit,total,totalPages:Math.ceil(total/query.limit)},filters:{status:query.status,category:query.category,from:input.from||null,to:input.to||null,reference:input.reference||null}};}
+  async function historyDetail({eventKey}){const key=String(eventKey||'').trim();if(!/^[A-Za-z0-9_-]{3,80}$/.test(key))throw Object.assign(new Error('รหัสเหตุการณ์ไม่ถูกต้อง'),{code:'INVALID_HISTORY_EVENT',status:400});const row=await control.findHistoryEvent(key);if(!row)throw Object.assign(new Error('ไม่พบเหตุการณ์'),{code:'INTEGRATION_EVENT_NOT_FOUND',status:404});return{item:historyProjection(row,{detail:true})};}
+  return{overview,mappingInspector,identityInspector,history,historyDetail};
 }
 const integrationControlCenterService=createIntegrationControlCenterService();
-module.exports={STAGE_DEFINITIONS,ERROR_LABELS,TRANSFORM_LABELS,MATCH_METHODS,safeReference,flowForEvent,locatorPath,mappingProjection,identityProjection,createIntegrationControlCenterService,integrationControlCenterService};
+module.exports={STAGE_DEFINITIONS,ERROR_LABELS,TRANSFORM_LABELS,MATCH_METHODS,HISTORY_STATUSES,HISTORY_CATEGORIES,safeReference,flowForEvent,locatorPath,mappingProjection,identityProjection,historyQuery,historyProjection,createIntegrationControlCenterService,integrationControlCenterService};

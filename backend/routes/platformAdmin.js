@@ -155,6 +155,16 @@ function createPlatformAdminRouter() {
       status:req.query.status,page:req.query.page,limit:req.query.limit}));
   }));
 
+  router.get('/integration-control/history', platformAction(async (req, res) => {
+    res.json(await controlCenterServiceFor(req).history({integrationClientId:req.query.integrationClientId,
+      status:req.query.status,category:req.query.category,from:req.query.from,to:req.query.to,
+      reference:req.query.reference,page:req.query.page,limit:req.query.limit}));
+  }));
+
+  router.get('/integration-control/history/:eventKey', platformAction(async (req, res) => {
+    res.json(await controlCenterServiceFor(req).historyDetail({eventKey:req.params.eventKey}));
+  }));
+
   router.get('/integration-identity-alerts', platformAction(async (req, res, service) => {
     res.json(await service.listIntegrationAlerts({
       integrationClientId:req.query.integrationClientId || null,

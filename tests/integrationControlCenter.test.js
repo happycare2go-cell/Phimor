@@ -3,7 +3,7 @@ process.env.ADMIN_API_KEY='integration-control-admin-key';
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const http=require('node:http');
-const {flowForEvent,mappingProjection,identityProjection,createIntegrationControlCenterService}=require('../backend/services/integrationControlCenterService');
+const {flowForEvent,mappingProjection,identityProjection,historyQuery,historyProjection,createIntegrationControlCenterService}=require('../backend/services/integrationControlCenterService');
 const {createIntegrationControlCenterRepository}=require('../backend/services/integrationControlCenterRepository');
 const ui=require('../liff-app/system-admin/care-operations-ui.js');
 
@@ -49,7 +49,7 @@ test('overview is bounded and performs one latest-event lookup for the page',asy
 
 test('System Admin overview route is authorized by the existing admin boundary',async()=>{
   const app=require('../backend/server');
-  app.locals.integrationControlCenterService={async overview(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0},refreshedAt:'2026-09-01T00:00:00Z'};},async mappingInspector(){return{mappingMode:'canonical_contract',mappings:[]};},async identityInspector(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0}};}};
+  app.locals.integrationControlCenterService={async overview(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0},refreshedAt:'2026-09-01T00:00:00Z'};},async mappingInspector(){return{mappingMode:'canonical_contract',mappings:[]};},async identityInspector(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0}};},async history(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0}};},async historyDetail(){return{item:{}};}};
   const server=http.createServer(app);await new Promise((resolve)=>server.listen(0,resolve));
   const url=`http://127.0.0.1:${server.address().port}/api/admin/platform/integration-control/overview`;
   try{
@@ -63,6 +63,9 @@ test('System Admin overview route is authorized by the existing admin boundary',
     const identityUrl=`http://127.0.0.1:${server.address().port}/api/admin/platform/integration-clients/INT-A/control/identities`;
     response=await fetch(identityUrl);assert.equal(response.status,401);
     response=await fetch(identityUrl,{headers:{'X-Admin-Key':'integration-control-admin-key'}});assert.equal(response.status,200);
+    const historyUrl=`http://127.0.0.1:${server.address().port}/api/admin/platform/integration-control/history`;
+    response=await fetch(historyUrl);assert.equal(response.status,401);
+    response=await fetch(historyUrl,{headers:{'X-Admin-Key':'integration-control-admin-key'}});assert.equal(response.status,200);
   }finally{delete app.locals.integrationControlCenterService;await new Promise((resolve)=>server.close(resolve));}
 });
 
@@ -144,4 +147,41 @@ test('identity repository uses bounded SQL joins and never selects clinical payl
 test('identity inspector UI request is read-only and bounded',()=>{
   const descriptor=ui.buildIntegrationIdentityInspectorRequest('INT/A',{page:3,limit:20});
   assert.match(descriptor.path,/INT%2FA\/control\/identities\?/);assert.match(descriptor.path,/page=3/);assert.match(descriptor.path,/limit=20/);assert.equal(descriptor.options.method,'GET');
+});
+
+test('history query is server bounded and accepts only exact operational filters',()=>{
+  const query=historyQuery({integrationClientId:'INT-A',status:'dead',category:'notification',from:'2026-09-01',to:'2026-09-02',reference:'เหตุการณ์ ••••ABC123',page:2,limit:500});
+  assert.equal(query.limit,50);assert.equal(query.offset,50);assert.equal(query.referenceSuffix,'ABC123');assert.match(query.from,/T17:00:00\.000Z$/);assert.match(query.to,/T17:00:00\.000Z$/);
+  assert.throws(()=>historyQuery({status:'unknown'}),/สถานะ/);assert.throws(()=>historyQuery({reference:'free text payload search'}),/อ้างอิง/);
+});
+
+test('history detail separates queued, provider accepted, retrying and dead-letter evidence',()=>{
+  const sent=historyProjection({...baseRow,integration_name:'Vendor',source_system:'Generic',notification_delivery_status:'sent',delivery_attempts:1,provider_acceptance:'accepted'},{detail:true});
+  assert.equal(sent.notification.providerAccepted,true);assert.match(sent.notification.providerStateLabel,/ผู้ให้บริการรับคำขอส่งแล้ว/);assert.doesNotMatch(JSON.stringify(sent),/ส่งถึงผู้รับแล้ว|C-SECRET-GROUP|RES-A|CP-A|DCR-A/);
+  assert.equal(sent.detail.technical.adapterEvidence,'unavailable_for_event');assert.equal(sent.detail.technical.adapterVersion,null);
+  const retry=historyProjection({...baseRow,notification_delivery_status:'retrying',delivery_attempts:2,delivery_error_code:'LINE_DELIVERY_FAILED'});
+  assert.equal(retry.notification.status,'retrying');assert.match(retry.nextOperatorAction,/งานต้องตรวจ/);
+  const dead=historyProjection({...baseRow,notification_delivery_status:'dead_letter',delivery_attempts:5});assert.equal(dead.notification.status,'dead_letter');assert.match(dead.notification.providerStateLabel,/หยุดลองส่ง/);
+});
+
+test('history repository filters and paginates in SQL without raw payload or destination',async()=>{
+  const calls=[];const repository=createIntegrationControlCenterRepository({queryFn:async(sql,params)=>{calls.push({sql,params});return{rows:sql.includes('COUNT(*)')?[{total:0}]:[]};}});
+  const query={integrationClientId:'INT-A',status:'rejected',from:null,to:null,category:'processing',referenceSuffix:'ABC123',limit:20,offset:0};
+  await repository.listHistory(query);await repository.countHistory(query);
+  assert.match(calls[0].sql,/LIMIT \$7 OFFSET \$8/);assert.match(calls[0].sql,/notificationOutbox/);assert.match(calls[0].sql,/RIGHT\(e\.integration_event_id,6\)/);
+  assert.match(calls[0].sql,/verified_line_group_id IS NOT NULL/);
+  assert.doesNotMatch(calls[0].sql,/canonical_payload|data->>'to'|messages|patient_name|general_report/i);
+});
+
+test('history service returns a bounded page and one safe detail projection',async()=>{
+  const calls=[];const control={async listHistory(q){calls.push(['list',q]);return[{...baseRow,integration_name:'Vendor'}];},async countHistory(q){calls.push(['count',q]);return{total:1};},async findHistoryEvent(key){calls.push(['detail',key]);return{...baseRow,integration_name:'Vendor'};}};
+  const service=createIntegrationControlCenterService({platformService:{},eventRepository:{},adapterRepository:{},controlRepository:control});
+  const page=await service.history({page:1,limit:100});assert.equal(page.pagination.limit,50);assert.equal(page.items.length,1);
+  const detail=await service.historyDetail({eventKey:'IEVT-123'});assert.ok(detail.item.detail);assert.deepEqual(calls.map((item)=>item[0]).sort(),['count','detail','list']);
+});
+
+test('history UI contracts are read-only, paginated, and expose no recovery request',()=>{
+  const list=ui.buildIntegrationHistoryRequest({status:'retrying',page:2,limit:20,reference:'ABC123'});assert.match(list.path,/integration-control\/history\?/);assert.match(list.path,/page=2/);assert.equal(list.options.method,'GET');
+  const detail=ui.buildIntegrationHistoryDetailRequest('IEVT/A');assert.equal(detail.path,'/api/admin/platform/integration-control/history/IEVT%2FA');assert.equal(detail.options.method,'GET');
+  const source=require('node:fs').readFileSync(require('node:path').resolve(__dirname,'../liff-app/system-admin/care-operations-ui.js'),'utf8');assert.match(source,/ประวัติเหตุการณ์/);assert.match(source,/ไม่มีคำสั่งส่งซ้ำ/);assert.doesNotMatch(source,/integration-control\/history[^\n]+method:'(?:POST|PUT|PATCH|DELETE)'/);
 });

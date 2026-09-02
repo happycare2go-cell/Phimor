@@ -59,13 +59,18 @@ function createIntegrationEventRepository({queryFn=databaseQuery}={}){const one=
         ORDER BY updated_at DESC,integration_event_id DESC LIMIT $${p.length}`,p);},
     listLatestForClients(integrationClientIds=[]){const ids=[...new Set((integrationClientIds||[]).map(String).filter(Boolean))].slice(0,100);
       if(!ids.length)return Promise.resolve([]);
-      return many(`SELECT DISTINCT ON (integration_client_id)
-        integration_event_id,integration_client_id,event_type,status,resident_id,care_profile_id,
-        canonical_resource_type,canonical_resource_id,pending_reason,last_error_code,
-        verified_line_group_id,group_reconciliation_status,notification_intent_status,
-        attempt_count,next_attempt_at,created_at,updated_at,processed_at
-        FROM integration_event_inbox
-        WHERE integration_client_id = ANY($1::varchar[])
-        ORDER BY integration_client_id,updated_at DESC,integration_event_id DESC`,[ids]);},
+      return many(`SELECT DISTINCT ON (e.integration_client_id)
+        e.integration_event_id,e.integration_client_id,e.event_type,e.status,e.resident_id,e.care_profile_id,
+        e.canonical_resource_type,e.canonical_resource_id,e.pending_reason,e.last_error_code,
+        (e.verified_line_group_id IS NOT NULL) AS family_destination_verified,e.group_reconciliation_status,e.notification_intent_status,
+        e.attempt_count,e.next_attempt_at,e.created_at,e.updated_at,e.processed_at,
+        n.data->>'status' AS notification_delivery_status,
+        CASE WHEN COALESCE(n.data->>'attempts','')~'^[0-9]{1,9}$' THEN (n.data->>'attempts')::int ELSE 0 END AS delivery_attempts
+        FROM integration_event_inbox e
+        LEFT JOIN LATERAL (SELECT data FROM "notificationOutbox"
+          WHERE data->'meta'->>'resourceId'=e.canonical_resource_id
+          ORDER BY created_at DESC LIMIT 1) n ON TRUE
+        WHERE e.integration_client_id = ANY($1::varchar[])
+        ORDER BY e.integration_client_id,e.updated_at DESC,e.integration_event_id DESC`,[ids]);},
   };}
 module.exports={createIntegrationEventRepository};
