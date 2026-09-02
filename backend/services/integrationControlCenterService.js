@@ -1,6 +1,7 @@
 const {platformService}=require('./platformService');
 const {createIntegrationEventRepository}=require('./integrationEventRepository');
 const {createIntegrationAdapterRepository}=require('./integrationAdapterRepository');
+const {createIntegrationControlCenterRepository}=require('./integrationControlCenterRepository');
 const {TARGET_FIELDS,TARGET_EVENT_TYPE}=require('../domain/integrationAdapter');
 
 const STAGE_DEFINITIONS=Object.freeze([
@@ -64,6 +65,7 @@ function locatorPath(locator){
   return 'ไม่ทราบ';
 }
 const TRANSFORM_LABELS=Object.freeze({join_text:'รวมข้อความตามลำดับ',identifier:'รหัสอ้างอิง',text:'ข้อความ',number:'ตัวเลขมาตรฐาน',date:'วันที่มาตรฐาน',datetime:'วันเวลามาตรฐาน'});
+const MATCH_METHODS=Object.freeze({learned_automatically:'learned',configured_manually:'configured'});
 function mappingProjection(binding){
   if(!binding)return{mappingMode:'canonical_contract',activeAdapter:null,mappings:[],message:'รับข้อมูลตาม PHIMOR canonical contract โดยไม่มี Adapter field mapping ที่ตั้งค่าไว้'};
   const targets=new Map(TARGET_FIELDS.map((item)=>[item.id,item]));
@@ -77,10 +79,27 @@ function mappingProjection(binding){
     targetEventType:binding.target_event_type||TARGET_EVENT_TYPE,version:Number(binding.version)||null,status:binding.version_status||null,
     activatedAt:binding.activated_at||null},mappings,message:mappings.length?'การจับคู่ข้อมูลปัจจุบันจาก Adapter ที่เปิดใช้งาน':'Adapter นี้ไม่มีรายการจับคู่ที่ตรวจสอบได้'};
 }
+function identityProjection(row){
+  const ambiguous=row.row_kind==='ambiguity'||row.mapping_status==='ambiguous';
+  const mapped=row.mapping_status==='mapped';
+  const residentActive=mapped&&row.resident_status==='active';
+  const careProfileReady=residentActive&&Boolean(row.care_profile_ready);
+  return{safeReference:safeReference(row.row_id,'การเชื่อม'),externalCenterId:String(row.external_center_id||'').slice(0,160)||null,
+    externalResidentId:String(row.external_resident_id||'').slice(0,160)||null,
+    mappingStatus:ambiguous?'ambiguous':row.mapping_status||'unresolved',
+    matchMethod:ambiguous?'unresolved':mapped?(MATCH_METHODS[row.mapping_source]||'unknown'):'unresolved',
+    center:{state:row.center_mapping_status==='active'&&row.center_name?'resolved':row.center_mapping_status==='inactive'?'inactive':'unresolved',displayName:row.center_name||null},
+    resident:{state:residentActive?'resolved':mapped?'inactive':'unresolved',displayName:residentActive?row.resident_name||null:null,room:residentActive?row.room||null:null},
+    careProfile:{state:careProfileReady?'resolved':mapped?'missing':'unresolved'},
+    familyDestination:{state:careProfileReady?(row.family_destination_ready?'resolved':'missing'):'unresolved'},
+    ambiguity:ambiguous?{candidateCount:Number(row.candidate_count)||0,status:row.alert_status||'open'}:null,
+    lastSeenAt:row.last_seen_at||row.updated_at||row.created_at||null};
+}
 function createIntegrationControlCenterService(overrides={}){
   const platform=overrides.platformService||platformService;
   const events=overrides.eventRepository||createIntegrationEventRepository();
   const adapters=overrides.adapterRepository||createIntegrationAdapterRepository();
+  const control=overrides.controlRepository||createIntegrationControlCenterRepository();
   async function overview(input={}){
     const directory=await platform.listIntegrationClientDirectory({...input,view:input.view||'current',limit:Math.min(50,Math.max(1,Number(input.limit)||20))});
     const rows=await events.listLatestForClients(directory.items.map((item)=>item.integrationClientId));
@@ -97,7 +116,17 @@ function createIntegrationControlCenterService(overrides={}){
     return{integrationClient:{integrationClientId:client.integrationClientId,displayName:client.displayName,
       sourceSystem:client.sourceSystem,status:client.status},...mappingProjection(binding)};
   }
-  return{overview,mappingInspector};
+  async function identityInspector({integrationClientId,status=null,page=1,limit=20}){
+    const clientId=String(integrationClientId||'').trim();if(!clientId)throw Object.assign(new Error('กรุณาระบุระบบเชื่อมต่อ'),{code:'INTEGRATION_CLIENT_REQUIRED',status:400});
+    const allowed=['mapped','pending_subject_mapping','inactive','ambiguous'];const cleanStatus=String(status||'').trim()||null;
+    if(cleanStatus&&!allowed.includes(cleanStatus))throw Object.assign(new Error('ตัวกรองสถานะไม่ถูกต้อง'),{code:'INVALID_IDENTITY_STATUS',status:400});
+    const boundedPage=Math.max(1,Number(page)||1);const boundedLimit=Math.min(50,Math.max(1,Number(limit)||20));
+    const client=await platform.inspectIntegrationClient(clientId);const query={integrationClientId:clientId,status:cleanStatus,limit:boundedLimit,offset:(boundedPage-1)*boundedLimit};
+    const [rows,count]=await Promise.all([control.listIdentityChains(query),control.countIdentityChains(query)]);const total=Number(count?.total)||0;
+    return{integrationClient:{integrationClientId:client.integrationClientId,displayName:client.displayName,sourceSystem:client.sourceSystem},
+      items:rows.map(identityProjection),pagination:{page:boundedPage,limit:boundedLimit,total,totalPages:Math.ceil(total/boundedLimit)}};
+  }
+  return{overview,mappingInspector,identityInspector};
 }
 const integrationControlCenterService=createIntegrationControlCenterService();
-module.exports={STAGE_DEFINITIONS,ERROR_LABELS,TRANSFORM_LABELS,safeReference,flowForEvent,locatorPath,mappingProjection,createIntegrationControlCenterService,integrationControlCenterService};
+module.exports={STAGE_DEFINITIONS,ERROR_LABELS,TRANSFORM_LABELS,MATCH_METHODS,safeReference,flowForEvent,locatorPath,mappingProjection,identityProjection,createIntegrationControlCenterService,integrationControlCenterService};

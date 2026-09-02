@@ -3,7 +3,8 @@ process.env.ADMIN_API_KEY='integration-control-admin-key';
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const http=require('node:http');
-const {flowForEvent,mappingProjection,createIntegrationControlCenterService}=require('../backend/services/integrationControlCenterService');
+const {flowForEvent,mappingProjection,identityProjection,createIntegrationControlCenterService}=require('../backend/services/integrationControlCenterService');
+const {createIntegrationControlCenterRepository}=require('../backend/services/integrationControlCenterRepository');
 const ui=require('../liff-app/system-admin/care-operations-ui.js');
 
 const baseRow={integration_event_id:'IEVT-PRIVATE-123456',integration_client_id:'INT-A',
@@ -48,7 +49,7 @@ test('overview is bounded and performs one latest-event lookup for the page',asy
 
 test('System Admin overview route is authorized by the existing admin boundary',async()=>{
   const app=require('../backend/server');
-  app.locals.integrationControlCenterService={async overview(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0},refreshedAt:'2026-09-01T00:00:00Z'};},async mappingInspector(){return{mappingMode:'canonical_contract',mappings:[]};}};
+  app.locals.integrationControlCenterService={async overview(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0},refreshedAt:'2026-09-01T00:00:00Z'};},async mappingInspector(){return{mappingMode:'canonical_contract',mappings:[]};},async identityInspector(){return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0}};}};
   const server=http.createServer(app);await new Promise((resolve)=>server.listen(0,resolve));
   const url=`http://127.0.0.1:${server.address().port}/api/admin/platform/integration-control/overview`;
   try{
@@ -59,6 +60,9 @@ test('System Admin overview route is authorized by the existing admin boundary',
     response=await fetch(mappingUrl);assert.equal(response.status,401);
     response=await fetch(mappingUrl,{headers:{'X-Admin-Key':'integration-control-admin-key'}});assert.equal(response.status,200);
     assert.equal((await response.json()).mappingMode,'canonical_contract');
+    const identityUrl=`http://127.0.0.1:${server.address().port}/api/admin/platform/integration-clients/INT-A/control/identities`;
+    response=await fetch(identityUrl);assert.equal(response.status,401);
+    response=await fetch(identityUrl,{headers:{'X-Admin-Key':'integration-control-admin-key'}});assert.equal(response.status,200);
   }finally{delete app.locals.integrationControlCenterService;await new Promise((resolve)=>server.close(resolve));}
 });
 
@@ -106,4 +110,38 @@ test('mapping inspector UI uses a read-only purpose-specific endpoint',()=>{
   const source=require('node:fs').readFileSync(require('node:path').resolve(__dirname,'../liff-app/system-admin/care-operations-ui.js'),'utf8');
   assert.match(source,/ดูการจับคู่ข้อมูล/);assert.match(source,/ไม่แสดงค่าตัวอย่างจาก event/);
   assert.doesNotMatch(source,/control\/mapping[^\n]+method:'(?:POST|PUT|PATCH|DELETE)'/);
+});
+
+test('resolved identity projection uses persisted mapping origin and current relationship state',()=>{
+  const result=identityProjection({row_id:'ESM-PRIVATE-123456',row_kind:'mapping',external_center_id:'EXT-C',external_resident_id:'EXT-R',mapping_status:'mapped',mapping_source:'learned_automatically',center_mapping_status:'active',center_name:'ศูนย์ตัวอย่าง',resident_status:'active',resident_name:'ผู้พักตัวอย่าง',room:'A1',care_profile_ready:true,family_destination_ready:true,last_seen_at:'2026-09-01T00:00:00Z'});
+  assert.equal(result.matchMethod,'learned');assert.equal(result.center.state,'resolved');assert.equal(result.resident.state,'resolved');assert.equal(result.careProfile.state,'resolved');assert.equal(result.familyDestination.state,'resolved');
+  assert.doesNotMatch(JSON.stringify(result),/ESM-PRIVATE|care_profile_id|line_group_id/i);
+});
+
+test('legacy, unresolved, ambiguous and missing destination states never infer success',()=>{
+  const legacy=identityProjection({row_id:'ESM-1',row_kind:'mapping',mapping_status:'mapped',mapping_source:null,center_mapping_status:'active',center_name:'ศูนย์',resident_status:'active',resident_name:'ผู้พัก',care_profile_ready:true,family_destination_ready:false});
+  assert.equal(legacy.matchMethod,'unknown');assert.equal(legacy.familyDestination.state,'missing');
+  const unresolved=identityProjection({row_id:'ESM-2',row_kind:'mapping',mapping_status:'pending_subject_mapping',external_center_id:'EXT-C',external_resident_id:'EXT-R'});
+  assert.equal(unresolved.matchMethod,'unresolved');assert.equal(unresolved.resident.state,'unresolved');
+  const ambiguous=identityProjection({row_id:'ALERT-1',row_kind:'ambiguity',mapping_status:'ambiguous',candidate_count:2});
+  assert.equal(ambiguous.mappingStatus,'ambiguous');assert.equal(ambiguous.ambiguity.candidateCount,2);assert.notEqual(ambiguous.resident.state,'resolved');
+});
+
+test('identity inspector pagination is bounded and query is server-side without N+1',async()=>{
+  const calls=[];const row={row_id:'ESM-1',row_kind:'mapping',mapping_status:'mapped'};
+  const service=createIntegrationControlCenterService({platformService:{async inspectIntegrationClient(id){return{integrationClientId:id,displayName:'Vendor',sourceSystem:'Generic'};}},eventRepository:{},adapterRepository:{},controlRepository:{async listIdentityChains(q){calls.push(['list',q]);return[row];},async countIdentityChains(q){calls.push(['count',q]);return{total:1};}}});
+  const result=await service.identityInspector({integrationClientId:'INT-A',page:2,limit:500});
+  assert.equal(result.pagination.limit,50);assert.equal(calls[0][1].offset,50);assert.deepEqual(calls.map((item)=>item[0]).sort(),['count','list']);
+});
+
+test('identity repository uses bounded SQL joins and never selects clinical payload or LINE destination',async()=>{
+  const calls=[];const repository=createIntegrationControlCenterRepository({queryFn:async(sql,params)=>{calls.push({sql,params});return{rows:sql.includes('COUNT(*)')?[{total:0}]:[]};}});
+  await repository.listIdentityChains({integrationClientId:'INT-A',limit:20,offset:0});await repository.countIdentityChains({integrationClientId:'INT-A'});
+  assert.equal(calls.length,2);assert.match(calls[0].sql,/LIMIT \$3 OFFSET \$4/);assert.match(calls[0].sql,/external_subject_mappings/);assert.match(calls[0].sql,/groupBindings/);
+  assert.doesNotMatch(calls[0].sql,/canonical_payload|line_group_id|patient_name|medication|lab/i);
+});
+
+test('identity inspector UI request is read-only and bounded',()=>{
+  const descriptor=ui.buildIntegrationIdentityInspectorRequest('INT/A',{page:3,limit:20});
+  assert.match(descriptor.path,/INT%2FA\/control\/identities\?/);assert.match(descriptor.path,/page=3/);assert.match(descriptor.path,/limit=20/);assert.equal(descriptor.options.method,'GET');
 });

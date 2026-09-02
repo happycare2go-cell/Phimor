@@ -150,6 +150,11 @@ function createPlatformAdminRouter() {
     }));
   }));
 
+  router.get('/integration-clients/:integrationClientId/control/identities', platformAction(async (req, res) => {
+    res.json(await controlCenterServiceFor(req).identityInspector({integrationClientId:req.params.integrationClientId,
+      status:req.query.status,page:req.query.page,limit:req.query.limit}));
+  }));
+
   router.get('/integration-identity-alerts', platformAction(async (req, res, service) => {
     res.json(await service.listIntegrationAlerts({
       integrationClientId:req.query.integrationClientId || null,
