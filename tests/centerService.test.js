@@ -55,6 +55,66 @@ test('เกณฑ์ยอมรับข้อ 1: เพิ่มผู้พ�
   assert.strictEqual(list[0].full_name, 'สมศรี ใจดี');
 });
 
+test('linked Resident name update synchronizes Care Profile in one audited operation', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์ทดสอบ', ownerLineId:'U_OWNER' });
+  const { resident } = await centerService.addResident({ centerId:center.center_id, fullName:'ชื่อเดิม' });
+  await db.CareProfiles.insert({ care_profile_id:'CP-SYNC', patient_name:'ชื่อเดิม', center_id:center.center_id, status:'linked' });
+  await db.Residents.update((row)=>row.resident_id===resident.resident_id,{ care_profile_id:'CP-SYNC' });
+
+  const updated = await centerService.updateResident(center.center_id,resident.resident_id,
+    { full_name:'ชื่อใหม่', aliases:['ชื่อเล่น'], room:'A2' },'U_MANAGER');
+  const profile = await db.CareProfiles.findOne((row)=>row.care_profile_id==='CP-SYNC');
+  assert.strictEqual(updated.full_name,'ชื่อใหม่');assert.strictEqual(updated.room,'A2');
+  assert.deepStrictEqual(updated.aliases,['ชื่อเล่น']);assert.strictEqual(profile.patient_name,'ชื่อใหม่');
+  const event = await db.AuditLog.findOne((row)=>row.action==='resident.identity_name_synced');
+  assert.ok(event);assert.strictEqual(event.actor_line_id,'U_MANAGER');
+  assert.deepStrictEqual(event.meta,{centerId:center.center_id,residentId:resident.resident_id,
+    careProfileId:'CP-SYNC',residentNameChanged:true,careProfileNameChanged:true});
+  assert.doesNotMatch(JSON.stringify(event),/ชื่อเดิม|ชื่อใหม่|ชื่อเล่น/);
+});
+
+test('saving an unchanged Resident name repairs a stale linked Care Profile name', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์ทดสอบ', ownerLineId:'U_OWNER' });
+  const { resident } = await centerService.addResident({ centerId:center.center_id, fullName:'นางสุธาพร สวัสดี' });
+  await db.CareProfiles.insert({ care_profile_id:'CP-DRIFT', patient_name:'ยายสุธาพร สวัสดี', center_id:center.center_id, status:'linked' });
+  await db.Residents.update((row)=>row.resident_id===resident.resident_id,{ care_profile_id:'CP-DRIFT' });
+
+  await centerService.updateResident(center.center_id,resident.resident_id,{ full_name:'นางสุธาพร สวัสดี' },'U_OWNER');
+  const profile = await db.CareProfiles.findOne((row)=>row.care_profile_id==='CP-DRIFT');
+  assert.strictEqual(profile.patient_name,'นางสุธาพร สวัสดี');
+  const event = await db.AuditLog.findOne((row)=>row.action==='resident.identity_name_synced');
+  assert.strictEqual(event.meta.residentNameChanged,false);assert.strictEqual(event.meta.careProfileNameChanged,true);
+});
+
+test('Resident without Care Profile keeps existing update behavior', async () => {
+  const center = await centerService.createCenter({ name:'ศูนย์ทดสอบ', ownerLineId:'U_OWNER' });
+  const { resident } = await centerService.addResident({ centerId:center.center_id, fullName:'ชื่อเดิม' });
+  const updated = await centerService.updateResident(center.center_id,resident.resident_id,
+    { full_name:'ชื่อใหม่', aliases:['ชื่อเล่น'], room:'B1', family_phone:'0800000000' },'U_MANAGER');
+  assert.strictEqual(updated.full_name,'ชื่อใหม่');assert.strictEqual(updated.room,'B1');
+  assert.strictEqual(updated.family_phone,'0800000000');assert.deepStrictEqual(updated.aliases,['ชื่อเล่น']);
+  assert.strictEqual(await db.AuditLog.findOne((row)=>row.action==='resident.identity_name_synced'),null);
+});
+
+test('linked name synchronization rolls back both records when the Care Profile update fails', async () => {
+  const residentRows=[{resident_id:'RES-ROLLBACK',center_id:'CTR-A',care_profile_id:'CP-ROLLBACK',status:'active',full_name:'ชื่อเดิม'}];
+  const profileRows=[{care_profile_id:'CP-ROLLBACK',patient_name:'ชื่อเดิม'}];
+  const table=(rows,{failUpdate=false}={})=>({
+    async findOneByField(field,value){return rows.find((row)=>row[field]===value)||null;},
+    async findOneByFieldForUpdate(field,value){return rows.find((row)=>row[field]===value)||null;},
+    async update(predicate,patch){const index=rows.findIndex(predicate);if(index<0)return null;
+      if(failUpdate)throw Object.assign(new Error('simulated profile failure'),{code:'SIMULATED_FAILURE'});
+      rows[index]={...rows[index],...patch};return rows[index];},
+  });
+  const transactional=async(_key,operation)=>{const residentSnapshot=structuredClone(residentRows);
+    const profileSnapshot=structuredClone(profileRows);try{return await operation();}catch(error){
+      residentRows.splice(0,residentRows.length,...residentSnapshot);profileRows.splice(0,profileRows.length,...profileSnapshot);throw error;}};
+  const update=centerService.createResidentUpdater({Residents:table(residentRows),CareProfiles:table(profileRows,{failUpdate:true}),
+    withTransaction:transactional,audit:async()=>{}});
+  await assert.rejects(update('CTR-A','RES-ROLLBACK',{full_name:'ชื่อใหม่'},'U_MANAGER'),{code:'SIMULATED_FAILURE'});
+  assert.strictEqual(residentRows[0].full_name,'ชื่อเดิม');assert.strictEqual(profileRows[0].patient_name,'ชื่อเดิม');
+});
+
 test('FR-B5, B6: จำหน่ายผู้พักออก — เพิกถอนสิทธิ์ศูนย์ทันที แต่ Care Profile ยังอยู่กับครอบครัว', async () => {
   const center = await centerService.createCenter({ name: 'ศูนย์ทดสอบ', ownerLineId: 'U_OWNER' });
   const { resident } = await centerService.addResident({ centerId: center.center_id, fullName: 'สมศรี ใจดี' });

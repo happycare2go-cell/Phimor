@@ -867,7 +867,7 @@ function createPlatformService(overrides = {}) {
         && row.center_id === centerId && row.status === 'active');
       const profile = await CareProfiles.findOne((row) => row.care_profile_id === careProfileId);
       if (!resident || !resident.care_profile_id || resident.care_profile_id !== careProfileId
-        || !profile || normalizeIdentityName(profile.patient_name) !== expectedNameKey) {
+        || !profile || normalizeIdentityName(resident.full_name) !== expectedNameKey) {
         throw new PlatformError('RESIDENT_CARE_PROFILE_NOT_READY', 'ผู้พักและ Care Profile ไม่พร้อมเชื่อม', 409);
       }
       const existingCenter = await repository.findExternalCenterMapping(integrationClientId, extCenterId);

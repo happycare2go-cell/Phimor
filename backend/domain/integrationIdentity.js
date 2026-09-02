@@ -43,7 +43,12 @@ function normalizeIdentityName(value) {
 function normalizedSubjectName(subject = {}) {
   const first = String(subject.firstName || '').normalize('NFKC').trim().replace(/\s+/gu, ' ');
   const last = String(subject.lastName || '').normalize('NFKC').trim().replace(/\s+/gu, ' ');
-  const display = [first, last].filter(Boolean).join(' ');
+  const suppliedParts = [first, last].filter(Boolean).join(' ');
+  const fallback = String(subject.displayName || '').normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  // Canonical clients which provide structured name parts retain precedence.
+  // Adapter-produced subjects may expose only displayName, which is still an
+  // exact deterministic identity input (never fuzzy/alias/semantic matching).
+  const display = suppliedParts || fallback;
   return { displayName:display || null, comparisonKey:normalizeIdentityName(display) || null };
 }
 

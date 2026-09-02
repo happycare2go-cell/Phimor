@@ -122,6 +122,15 @@ const makeTable = (tableName) => {
             );
             return res.rows[0]?.data || null;
         },
+        findOneByFieldForUpdate: async (field, value) => {
+            const key = safeField(field);
+            if (isTest) return memory().find((record) => record[key] === value) || null;
+            const res = await query(
+                `SELECT data FROM "${tableName}" WHERE data->>'${key}' = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+                [String(value)]
+            );
+            return res.rows[0]?.data || null;
+        },
         findWhereByField: async (field, value) => {
             const key = safeField(field);
             if (isTest) return memory().filter((record) => record[key] === value);

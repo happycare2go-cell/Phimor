@@ -438,12 +438,67 @@ async function addResident({ centerId, fullName, aliases = [], room, familyPhone
 }
 
 // ── FR-B4: แก้ไขข้อมูลผู้พัก ──
-async function updateResident(centerId, residentId, patch) {
-  const allowed = ['full_name', 'aliases', 'room', 'family_phone'];
-  const clean = {};
-  for (const k of allowed) if (k in patch) clean[k] = patch[k];
-  return Residents.update((r) => r.resident_id === residentId && r.center_id === centerId && r.status === 'active', clean);
+function createResidentUpdater(overrides = {}) {
+  const residents = overrides.Residents || Residents;
+  const profiles = overrides.CareProfiles || CareProfiles;
+  const runTransaction = overrides.withTransaction || withTransaction;
+  const recordAudit = overrides.audit || audit;
+
+  return async function updateResident(centerId, residentId, patch, requesterLineId = null) {
+    const allowed = ['full_name', 'aliases', 'room', 'family_phone'];
+    const clean = {};
+    for (const key of allowed) if (key in patch) clean[key] = patch[key];
+    const synchronizesName = Object.hasOwn(clean, 'full_name');
+
+    return runTransaction(`resident-update:${residentId}`, async () => {
+      // Read the relationship first so linked rows can be locked in the same
+      // Care Profile -> Resident order used by Integration identity learning.
+      const snapshot = await residents.findOneByField('resident_id', residentId);
+      if (!snapshot || snapshot.center_id !== centerId || snapshot.status !== 'active') return null;
+
+      let profile = null;
+      if (synchronizesName && snapshot.care_profile_id) {
+        profile = await profiles.findOneByFieldForUpdate('care_profile_id', snapshot.care_profile_id);
+        if (!profile) return null;
+      }
+      const resident = await residents.findOneByFieldForUpdate('resident_id', residentId);
+      if (!resident || resident.center_id !== centerId || resident.status !== 'active') return null;
+      if (synchronizesName && resident.care_profile_id !== snapshot.care_profile_id) {
+        const error = new Error('Resident relationship changed during update');
+        error.code = 'RESIDENT_RELATIONSHIP_CHANGED';
+        throw error;
+      }
+
+      const residentNameChanged = synchronizesName && resident.full_name !== clean.full_name;
+      const profileNameChanged = Boolean(profile && profile.patient_name !== clean.full_name);
+      const updated = await residents.update((row) => row.resident_id === residentId
+        && row.center_id === centerId && row.status === 'active', clean);
+      if (!updated) {
+        const error = new Error('Resident update conflict');
+        error.code = 'RESIDENT_UPDATE_CONFLICT';
+        throw error;
+      }
+      if (profileNameChanged) {
+        const synced = await profiles.update((row) => row.care_profile_id === resident.care_profile_id,
+          { patient_name:clean.full_name });
+        if (!synced) {
+          const error = new Error('Care Profile update conflict');
+          error.code = 'CARE_PROFILE_UPDATE_CONFLICT';
+          throw error;
+        }
+      }
+      if (profile && (residentNameChanged || profileNameChanged)) {
+        await recordAudit('resident.identity_name_synced', requesterLineId || 'system:resident_update', {
+          centerId, residentId, careProfileId:resident.care_profile_id,
+          residentNameChanged, careProfileNameChanged:profileNameChanged,
+        });
+      }
+      return updated;
+    });
+  };
 }
+
+const updateResident = createResidentUpdater();
 
 // ── FR-B5, B6: จำหน่ายผู้พักออก — เพิกถอนสิทธิ์ศูนย์ทันที แต่ Care Profile ยังอยู่กับครอบครัว ──
 // เชื่อมกับ FR-N6: Care Profile ต้องเปลี่ยนเป็นสถานะอิสระโดยอัตโนมัติ
@@ -661,7 +716,7 @@ async function findCenterByApiKey(apiKey) {
 
 module.exports = {
   createCenter, updateCenterSettings, bindGroupToCenter, bindGroupToCenterInCurrentTransaction, findCenterByGroup, appointManager, removeManager, listStaff,
-  addResident, updateResident, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
+  addResident, updateResident, createResidentUpdater, dischargeResident, listResidents, importResidentsBulk, getCenterAppointments,
   updateAppointment, cancelAppointment,
   rotateExternalApiKey, findCenterByApiKey,
   recordStaffFromGroup, findCenterByStaffUser, listApprovers, canApprove,

@@ -40,6 +40,10 @@ const subject=(overrides={})=>({externalCenterId:'EXT-C',externalResidentId:'EXT
 test('name normalization is Unicode-safe, whitespace-collapsed, Latin case-insensitive and Thai exact',()=>{
   assert.equal(normalizeIdentityName('  SOMJAI   JAIDEE '),'somjai jaidee');
   assert.equal(normalizedSubjectName({firstName:' สมใจ ',lastName:' ใจดี '}).comparisonKey,'สมใจ ใจดี');
+  assert.deepEqual(normalizedSubjectName({displayName:' นางสุธาพร   สวัสดี '}),{
+    displayName:'นางสุธาพร สวัสดี',comparisonKey:'นางสุธาพร สวัสดี'});
+  assert.deepEqual(normalizedSubjectName({firstName:'สมใจ',lastName:'ใจดี',displayName:'ชื่อ fallback'}),{
+    displayName:'สมใจ ใจดี',comparisonKey:'สมใจ ใจดี'});
   assert.notEqual(normalizeIdentityName('สมใจ ใจดี'),normalizeIdentityName('สมจัย ใจดี'));
 });
 
@@ -52,13 +56,17 @@ test('every intentional ignored outcome has the bounded non-accepted and non-sto
 
 test('unique exact name learns Center and Resident mappings with learned inventory source',async()=>{const f=await fixture();await f.person();const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()});assert.equal(result.action,'process');assert.equal(result.learned,true);assert.equal(result.tenant.centerId,'CTR-A');assert.equal(result.subject.residentId,'RES-A');assert.equal(f.repository.state.centerMappings.length,1);assert.equal(f.repository.state.subjectMappings.length,1);assert.equal((await f.platform.listExternalCenterMappings(f.client.integrationClientId)).items[0].mappingSource,'learned_automatically');assert.equal((await f.platform.listExternalSubjectMappings(f.client.integrationClientId)).items[0].mappingSource,'learned_automatically');});
 
-test('learned mapping is authoritative after display-name and room drift and never remaps',async()=>{const f=await fixture();await f.person();await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()});await f.person({centerId:'CTR-B',residentId:'RES-B',profileId:'CP-B',name:'ชื่อใหม่ คนใหม่'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject({firstName:'ชื่อใหม่',lastName:'คนใหม่',room:'ZZZ'})});assert.equal(result.subject.residentId,'RES-A');assert.equal(f.repository.state.subjectMappings.length,1);assert.equal(f.repository.state.subjectMappings[0].resident_id,'RES-A');});
+test('learned mapping is authoritative after the linked person name changes and never remaps',async()=>{const f=await fixture();await f.person();await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()});await db.Residents.update((row)=>row.resident_id==='RES-A',{full_name:'ชื่อใหม่ คนใหม่'});await db.CareProfiles.update((row)=>row.care_profile_id==='CP-A',{patient_name:'ชื่อใหม่ คนใหม่'});await f.person({centerId:'CTR-B',residentId:'RES-B',profileId:'CP-B',name:'ชื่อใหม่ คนใหม่'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject({firstName:null,lastName:null,displayName:'ชื่อใหม่ คนใหม่',room:'ZZZ'})});assert.equal(result.subject.residentId,'RES-A');assert.equal(f.repository.state.subjectMappings.length,1);assert.equal(f.repository.state.subjectMappings[0].resident_id,'RES-A');});
 
 test('existing Center mapping narrows automatic search to its authoritative Center',async()=>{const f=await fixture();await f.person({centerId:'CTR-B',residentId:'RES-B',profileId:'CP-B'});await f.platform.mapExternalCenter({integrationClientId:f.client.integrationClientId,externalCenterId:'EXT-C',centerId:'CTR-A',actorReference:'ADM-1'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()});assert.equal(result.result.status,'ignored_subject_unresolved');assert.equal(f.repository.state.subjectMappings.length,0);});
 
 test('zero exact match is ignored with bounded metric and no mapping',async()=>{const f=await fixture();await f.person({name:'คนละ ชื่อ'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()});assert.deepEqual(result.result,{status:'ignored_subject_unresolved',accepted:false,stored:false});assert.equal(f.repository.state.centerMappings.length,0);assert.equal((await f.policies.getMetrics(f.client.integrationClientId)).ignored_subject_unresolved,1);});
 
-test('missing first/last identity is ignored and displayName alone is not used',async()=>{const f=await fixture();await f.person();const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject({firstName:null,lastName:null,displayName:'สมใจ ใจดี'})});assert.equal(result.result.status,'ignored_subject_name_missing');});
+test('displayName is the exact deterministic fallback when first/last identity is absent',async()=>{const f=await fixture();await f.person();const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject({firstName:null,lastName:null,displayName:'สมใจ ใจดี'})});assert.equal(result.action,'process');assert.equal(result.subject.residentId,'RES-A');assert.equal(f.repository.state.subjectMappings.length,1);});
+
+test('exact bootstrap uses current Resident name while preserving a legacy Care Profile name drift',async()=>{const f=await fixture();await f.person();await db.Residents.update((row)=>row.resident_id==='RES-A',{full_name:'นางสุธาพร สวัสดี'});await db.CareProfiles.update((row)=>row.care_profile_id==='CP-A',{patient_name:'ยายสุธาพร สวัสดี'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.daily_report.finalized',subject:subject({firstName:null,lastName:null,displayName:'นางสุธาพร สวัสดี'})});assert.equal(result.action,'process');assert.equal(result.learned,true);assert.equal(result.subject.residentId,'RES-A');assert.equal(result.subject.careProfileId,'CP-A');assert.equal(f.repository.state.centerMappings.length,1);assert.equal(f.repository.state.subjectMappings.length,1);assert.equal(f.repository.state.subjectMappings[0].mapping_status,'mapped');});
+
+test('unmapped production spelling mismatch remains unresolved without fuzzy learning',async()=>{const f=await fixture();await f.person({name:'นางสุธาพร สวัสดี'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.daily_report.finalized',subject:subject({firstName:null,lastName:null,displayName:'นางสุราพร สวัสดี'})});assert.equal(result.result.status,'ignored_subject_unresolved');assert.equal(result.result.accepted,false);assert.equal(result.result.stored,false);assert.equal(f.repository.state.subjectMappings.length,0);});
 
 test('room, alias, phone and fuzzy near-match never resolve identity',async()=>{const f=await fixture();await db.CareProfiles.insert({care_profile_id:'CP-A',patient_name:'สมจัย ใจดี',aliases:['สมใจ ใจดี'],phone:'0800000000'});await db.Residents.insert({resident_id:'RES-A',center_id:'CTR-A',care_profile_id:'CP-A',status:'active',room:'A201'});await db.GroupBindings.insert({binding_id:'GB-A',kind:'family',care_profile_id:'CP-A',line_group_id:'G-A',status:'active'});const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject({room:'A201',phone:'0800000000'})});assert.equal(result.result.status,'ignored_subject_unresolved');});
 
@@ -74,7 +82,7 @@ test('cross-Organization candidate is never searched',async()=>{const f=await fi
 
 test('concurrent first events converge to one Center mapping and one Resident mapping',async()=>{const f=await fixture();await f.person();const calls=Array.from({length:6},()=>f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()}));const results=await Promise.all(calls);assert.ok(results.every((item)=>item.action==='process'));assert.equal(f.repository.state.centerMappings.length,1);assert.equal(f.repository.state.subjectMappings.length,1);assert.equal(new Set(f.repository.state.subjectMappings.map((item)=>item.resident_id)).size,1);});
 
-test('ignored event returns no inbox, canonical Vital or notification and processed event stores once',async()=>{const f=await fixture();await f.person({name:'คนละ ชื่อ'});const eventRepo=createIntegrationEventMemoryRepository();let vitals=0;const service=createIntegrationEventService({repository:eventRepo,platformService:f.platform,tenantResolver:createTenantResolver({platformService:f.platform,repository:f.repository}),identityResolutionService:f.resolution,integrationIdentityPolicyService:f.policies,vitalSignService:{async recordCanonical(){vitals++;return{item:{vitalSetId:'VSET-1'}}}},dailyCareService:{},withTransaction:db.withTransaction,withTransactionLocks:db.withTransactionLocks,idFactory:()=>`IEVT-${eventRepo.state.events.length+1}`});const input={schemaVersion:'1.0',eventId:'EV-1',eventType:'care.vitals.recorded',occurredAt:'2026-08-30T01:00:00Z',subject:subject(),recorder:{displayName:'ผู้ดูแล'},data:{observations:[{measurementType:'pulse',numericValue:72,sourceUnit:'bpm'}]}};let result=await service.ingest({identity:f.identity,input});assert.equal(result.status,'ignored_subject_unresolved');assert.equal(eventRepo.state.events.length,0);assert.equal(vitals,0);await db.CareProfiles.update((row)=>row.care_profile_id==='CP-A',{patient_name:'สมใจ ใจดี'});result=await service.ingest({identity:f.identity,input:{...input,eventId:'EV-2'}});assert.equal(result.status,'processed');assert.equal(eventRepo.state.events.length,1);assert.equal(vitals,1);});
+test('ignored event returns no inbox, canonical Vital or notification and processed event stores once',async()=>{const f=await fixture();await f.person({name:'คนละ ชื่อ'});const eventRepo=createIntegrationEventMemoryRepository();let vitals=0;const service=createIntegrationEventService({repository:eventRepo,platformService:f.platform,tenantResolver:createTenantResolver({platformService:f.platform,repository:f.repository}),identityResolutionService:f.resolution,integrationIdentityPolicyService:f.policies,vitalSignService:{async recordCanonical(){vitals++;return{item:{vitalSetId:'VSET-1'}}}},dailyCareService:{},withTransaction:db.withTransaction,withTransactionLocks:db.withTransactionLocks,idFactory:()=>`IEVT-${eventRepo.state.events.length+1}`});const input={schemaVersion:'1.0',eventId:'EV-1',eventType:'care.vitals.recorded',occurredAt:'2026-08-30T01:00:00Z',subject:subject(),recorder:{displayName:'ผู้ดูแล'},data:{observations:[{measurementType:'pulse',numericValue:72,sourceUnit:'bpm'}]}};let result=await service.ingest({identity:f.identity,input});assert.equal(result.status,'ignored_subject_unresolved');assert.equal(eventRepo.state.events.length,0);assert.equal(vitals,0);await db.Residents.update((row)=>row.resident_id==='RES-A',{full_name:'สมใจ ใจดี'});result=await service.ingest({identity:f.identity,input:{...input,eventId:'EV-2'}});assert.equal(result.status,'processed');assert.equal(eventRepo.state.events.length,1);assert.equal(vitals,1);});
 
 test('ignored finalized Daily payload is absent from inbox, audit, alerts, notifications and pending state',async()=>{
   const f=await fixture();await f.person({name:'คนละ ชื่อ'});const eventRepo=createIntegrationEventMemoryRepository();let dailyCalls=0;
@@ -88,6 +96,26 @@ test('ignored finalized Daily payload is absent from inbox, audit, alerts, notif
   assert.equal((await db.NotificationOutbox.findAll()).length,0);
   const retained=JSON.stringify({audit:await db.AuditLog.findAll(),platformAudit:f.repository.state.auditEvents});
   assert.doesNotMatch(retained,new RegExp(`${marker}|REC-PRIVATE|G-UNTRUSTED|spo2|symptom_note`));
+});
+
+test('adapter-style displayName with legacy profile drift learns identity and processes finalized Daily once',async()=>{
+  const f=await fixture();await f.person();
+  await db.Residents.update((row)=>row.resident_id==='RES-A',{full_name:'นางสุธาพร สวัสดี'});
+  await db.CareProfiles.update((row)=>row.care_profile_id==='CP-A',{patient_name:'ยายสุธาพร สวัสดี'});
+  const eventRepo=createIntegrationEventMemoryRepository();let dailyCalls=0;
+  const service=createIntegrationEventService({repository:eventRepo,platformService:f.platform,
+    tenantResolver:createTenantResolver({platformService:f.platform,repository:f.repository}),identityResolutionService:f.resolution,
+    integrationIdentityPolicyService:f.policies,vitalSignService:{},dailyCareService:{async recordCanonical(){dailyCalls++;return{item:{dailyReportId:'DCR-EXACT'}};}},
+    withTransaction:db.withTransaction,withTransactionLocks:db.withTransactionLocks,idFactory:()=>`IEVT-${eventRepo.state.events.length+1}`});
+  const input={schemaVersion:'1.0',eventId:'EV-DISPLAY-NAME',eventType:'care.daily_report.finalized',occurredAt:'2026-08-30T01:00:00Z',
+    subject:{externalCenterId:'EXT-C',externalResidentId:'EXT-R',displayName:'นางสุธาพร สวัสดี'},
+    data:{externalRecordId:'REC-1',careDate:'2026-08-30',shift:{code:'day',sourceLabel:'D'},observations:[],
+      careItems:[{itemType:'symptom_note',valueType:'text',value:'อาการทั่วไป'}],recordedBy:{displayName:'ผู้ดูแล'},
+      finalizedBy:{displayName:'ผู้จัดการ'},recordedAt:'2026-08-30T00:55:00Z',finalizedAt:'2026-08-30T01:00:00Z'}};
+  const result=await service.ingest({identity:f.identity,input});
+  assert.equal(result.status,'processed');assert.equal(dailyCalls,1);assert.equal(eventRepo.state.events.length,1);
+  assert.equal(f.repository.state.centerMappings.length,1);assert.equal(f.repository.state.subjectMappings.length,1);
+  assert.equal(f.repository.state.subjectMappings[0].mapping_status,'mapped');
 });
 
 test('Center-scope removal contends with first-event learning and cannot leave an out-of-scope learned mapping',async()=>{
@@ -144,7 +172,7 @@ test('strict first-event learning waits for GroupBinding mutation and ignores af
 test('candidate relationship is row-locked and revalidated before learned mappings are written',async()=>{
   const f=await fixture();await f.person();let locked=0;
   f.repository.lockIdentityLearningCandidate=async()=>{
-    locked++;await db.CareProfiles.update((row)=>row.care_profile_id==='CP-A',{patient_name:'ชื่อเปลี่ยน ระหว่างทำรายการ'});
+    locked++;await db.Residents.update((row)=>row.resident_id==='RES-A',{full_name:'ชื่อเปลี่ยน ระหว่างทำรายการ'});
     return true;
   };
   const result=await f.resolution.resolve({identity:f.identity,eventType:'care.vitals.recorded',subject:subject()});

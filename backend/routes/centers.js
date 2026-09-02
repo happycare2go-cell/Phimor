@@ -393,7 +393,7 @@ router.post('/residents/:residentId/medication-snapshots', requireCenterStaff(['
 
 // PATCH /api/residents/:id — แก้ไขข้อมูลผู้พัก (เจ้าของ/ผู้จัดการ)
 router.patch('/residents/:residentId', requireCenterStaff(), asyncHandler(async (req, res) => {
-  const updated = await centerService.updateResident(req.centerId, req.params.residentId, req.body);
+  const updated = await centerService.updateResident(req.centerId, req.params.residentId, req.body, req.user.lineUserId);
   if (!updated) return res.status(404).json({ error: 'not_found' });
   res.json(updated);
 }));

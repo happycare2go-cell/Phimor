@@ -100,7 +100,7 @@ function createIntegrationIdentityResolutionService(overrides = {}) {
       for (const resident of centerResidents) {
         if (!resident.care_profile_id) continue;
         const profile = await profiles.findOne((row) => row.care_profile_id === resident.care_profile_id);
-        if (!profile || normalizeIdentityName(profile.patient_name) !== comparisonKey) continue;
+        if (!profile || normalizeIdentityName(resident.full_name) !== comparisonKey) continue;
         const active = resident.status === 'active';
         const commissioned = active && await centerCommissioned(center.center_id, eventType);
         const group = commissioned && (policy.familyGroupRequirement !== 'required_before_ingest'
