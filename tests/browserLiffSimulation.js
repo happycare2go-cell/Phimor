@@ -794,7 +794,10 @@ async function adminOwnershipTransferJourney(browser) {
   assert.match(await page.locator('#ownershipTransferBody').textContent(), /ญาติไม่ต้องอนุญาตใหม่/);
   assert.ok((await page.locator('#ownershipTransferConfirm').boundingBox()).height >= 44);
   await page.getByRole('button', { name:'ยืนยันการโอนสิทธิ์' }).click();
-  await page.waitForFunction(() => document.querySelector('#ownershipTransferSuccess')?.textContent.includes('เรียบร้อยแล้ว'));
+  await page.waitForFunction(() => {
+    const notice = document.querySelector('#ownershipTransferSuccess');
+    return notice?.textContent.includes('เรียบร้อยแล้ว') && notice.offsetParent !== null;
+  });
   assert.deepEqual(transferBody, previewBody);
   assert.match(await page.locator('#ownershipHistory').textContent(), /เจ้าของเดิม.*เจ้าของใหม่/s);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);

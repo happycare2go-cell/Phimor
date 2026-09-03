@@ -86,6 +86,7 @@ test('System Admin transfer UI requires preview then explicit confirmation and e
   assert.match(uiSource, /transfer-owner\/preview/);
   assert.match(uiSource, /previewIntent/);
   assert.match(uiSource, /if \(busy \|\| !context \|\| !preview \|\| !previewIntent\) return/);
+  assert.match(html, /onTransferred:[\s\S]*setCenterDetailTab\('team'\)[\s\S]*ownershipTransferSuccess/);
   assert.doesNotMatch(uiSource, /Care Profile.*patient|resident.*name|clinicalPayload|owner_line_id/i);
 });
 
