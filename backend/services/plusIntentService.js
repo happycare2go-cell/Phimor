@@ -1,6 +1,7 @@
 const { AI_ERROR_CODES } = require('../providers/aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
 const { trustedTaskInstructions } = require('../providers/promptSafety');
+const { PLUS_INTENT_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const ALLOWED_INTENTS = Object.freeze(['retrieve', 'summarize', 'compare', 'explain', 'prepare']);
 const ESCALATION_INTENTS = Object.freeze([
@@ -75,6 +76,8 @@ function createStructuredIntentClassifier({ provider }) {
           }
           return validated;
         },
+        responseSchema: PLUS_INTENT_RESPONSE_SCHEMA,
+        responseSchemaName: 'phimor_plus_intent',
       });
     },
   };

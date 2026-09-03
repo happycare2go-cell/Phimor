@@ -12,6 +12,7 @@ const { recordAIInteractionMetadata } = require('./aiAuditService');
 const { createLabTrendService } = require('./labTrendService');
 const { EMERGENCY_PATTERNS } = require('./consultationSafetyService');
 const { LabDomainError } = require('../domain/lab');
+const { LAB_EXPLANATION_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const SAFE_PROVIDER_ERRORS = new Set([
   AI_ERROR_CODES.AI_UNAVAILABLE, AI_ERROR_CODES.AI_TIMEOUT, AI_ERROR_CODES.AI_RATE_LIMIT,
@@ -142,6 +143,8 @@ function createLabExplanationService(overrides = {}) {
         context: serializedContext,
         input: { text: normalizedQuestion || 'อธิบายผล Lab ที่ยืนยันแล้วด้วยภาษาที่เข้าใจง่าย' },
         outputSchema: validateLabExplanation,
+        responseSchema: LAB_EXPLANATION_RESPONSE_SCHEMA,
+        responseSchemaName: 'phimor_lab_explanation',
         timeoutMs: config.ai.timeoutMs, requestId: interactionId,
       });
       const validated = validateLabExplanation(response);

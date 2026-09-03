@@ -107,6 +107,19 @@ test('readiness security configuration remains neutral in safe production and no
   assert.deepEqual(result.configurationIssues, []);
 });
 
+test('production readiness reports safe OpenAI configuration issue codes without exposing secrets', () => {
+  const base = { NODE_ENV:'production', PDF_DOWNLOAD_SECRET:'configured' };
+  assert.deepEqual(unsafeRuntimeConfiguration({ ...base, AI_PROVIDER:'openai' }), ['OPENAI_API_KEY_MISSING']);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'openai', OPENAI_API_KEY:'configured-secret',
+  }), []);
+  const researchIssues = unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', PHARMACIST_AI_RESEARCH_ENABLED:'true',
+  });
+  assert.deepEqual(researchIssues, ['PHARMACIST_AI_RESEARCH_CONFIGURATION_MISSING']);
+  assert.doesNotMatch(JSON.stringify(researchIssues), /OPENAI_API_KEY|configured-secret/);
+});
+
 test('production operational logging emits bounded metadata without error message stack or PHI', () => {
   const calls = [];
   const error = Object.assign(new Error('patient บุคคลตัวอย่าง token=SECRET medication=Aspirin'), {

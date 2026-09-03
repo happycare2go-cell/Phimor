@@ -14,6 +14,7 @@ const { EMERGENCY_PATTERNS } = require('./consultationSafetyService');
 const {
   DoctorQuestionError, createDoctorQuestionContextBuilder,
 } = require('./doctorQuestionContextBuilder');
+const { DOCTOR_QUESTION_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const SAFE_PROVIDER_ERRORS = new Set([
   AI_ERROR_CODES.AI_UNAVAILABLE, AI_ERROR_CODES.AI_TIMEOUT, AI_ERROR_CODES.AI_RATE_LIMIT,
@@ -187,6 +188,8 @@ function createDoctorQuestionService(overrides = {}) {
         context: serializedContext,
         input: { text: normalizedFocus || 'ช่วยจัดลำดับคำถามสำคัญสำหรับพบแพทย์จากข้อมูลที่บันทึกไว้' },
         outputSchema: validateDoctorQuestions,
+        responseSchema: DOCTOR_QUESTION_RESPONSE_SCHEMA,
+        responseSchemaName: 'phimor_doctor_questions',
         timeoutMs: config.ai.timeoutMs,
         requestId: interactionId,
       });

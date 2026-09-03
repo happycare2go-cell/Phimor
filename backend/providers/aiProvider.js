@@ -3,6 +3,7 @@ const { loadV2Config } = require('../config/v2Config');
 const { createAIProvider } = require('./AIProviderFactory');
 const { DOCUMENT_PROMPT, validateDocumentResult } = require('./documentAI');
 const { LAB_DOCUMENT_PROMPT, validateLabExtractionResult } = require('./labDocumentAI');
+const { DOCUMENT_RESPONSE_SCHEMA, LAB_DOCUMENT_RESPONSE_SCHEMA } = require('./aiResponseSchemas');
 
 const mockQueue = [];
 const labMockQueue = [];
@@ -24,6 +25,8 @@ async function interpretDocument(imageBuffer, imageMimeType = 'image/jpeg') {
     context: null,
     input: { imageBuffer, imageMimeType },
     outputSchema: validateDocumentResult,
+    responseSchema: DOCUMENT_RESPONSE_SCHEMA,
+    responseSchemaName: 'phimor_document_interpretation',
     timeoutMs: config.ai.timeoutMs,
   });
 }
@@ -39,6 +42,8 @@ async function interpretLabDocument(imageBuffer, imageMimeType = 'image/jpeg') {
     context: null,
     input: { imageBuffer, imageMimeType },
     outputSchema: validateLabExtractionResult,
+    responseSchema: LAB_DOCUMENT_RESPONSE_SCHEMA,
+    responseSchemaName: 'phimor_lab_document_extraction',
     timeoutMs: config.ai.timeoutMs,
   });
 }

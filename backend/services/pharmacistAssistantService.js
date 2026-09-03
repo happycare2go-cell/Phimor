@@ -9,6 +9,7 @@ const {
 } = require('../providers/pharmacistAssistant');
 const { buildConsultationContext } = require('./consultationContextBuilder');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
+const { PHARMACIST_ASSISTANT_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const SAFE_PROVIDER_ERRORS=new Set([
   AI_ERROR_CODES.AI_UNAVAILABLE,AI_ERROR_CODES.AI_TIMEOUT,AI_ERROR_CODES.AI_RATE_LIMIT,
@@ -27,7 +28,7 @@ function createPharmacistAssistantService(overrides={}) {
   const config=overrides.config || loadV2Config();
   const provider=()=>{
     if (overrides.provider) return overrides.provider;
-    if (!defaultProvider) defaultProvider=createAIProvider({config,modelPurpose:'explanation'});
+    if (!defaultProvider) defaultProvider=createAIProvider({config,modelPurpose:'pharmacist'});
     return defaultProvider;
   };
   const contextBuilder=overrides.contextBuilder || buildConsultationContext;
@@ -59,6 +60,7 @@ function createPharmacistAssistantService(overrides={}) {
         task:'pharmacist_assistance',systemInstructions:PHARMACIST_ASSISTANT_INSTRUCTIONS,
         context:serialized,input:{text:'Prepare private pharmacist decision-support from the supplied structured context.'},
         outputSchema:validatePharmacistAssistantResponse,timeoutMs:config.ai.timeoutMs,requestId:interactionId,
+        responseSchema:PHARMACIST_ASSISTANT_RESPONSE_SCHEMA,responseSchemaName:'phimor_pharmacist_assistant',
       });
       const assistant=validatePharmacistAssistantResponse(raw);
       const generatedAt=new Date().toISOString();

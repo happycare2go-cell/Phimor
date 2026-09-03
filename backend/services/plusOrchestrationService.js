@@ -20,6 +20,7 @@ const { compareLatestMedicationSnapshots } = require('./medicationDiffService');
 const { getUpcomingAppointmentSummary } = require('./appointmentSummaryService');
 const { buildDoctorVisitPreparation } = require('./doctorVisitPreparationService');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
+const { PLUS_EXPLANATION_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const PURPOSES = Object.freeze([
   'care_profile_summary', 'medication_summary', 'medication_instructions',
@@ -197,6 +198,8 @@ function createPlusOrchestrator(overrides = {}) {
         context: JSON.stringify(context),
         input: { text: args.question },
         outputSchema: validatePlusExplanation,
+        responseSchema: PLUS_EXPLANATION_RESPONSE_SCHEMA,
+        responseSchemaName: 'phimor_plus_explanation',
         timeoutMs: config.ai.timeoutMs,
         requestId: interactionId,
       });

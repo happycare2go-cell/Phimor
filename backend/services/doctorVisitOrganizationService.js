@@ -12,6 +12,7 @@ const { requirePlusFeature } = require('./plusEntitlementService');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
 const { createDoctorVisitService } = require('./doctorVisitService');
 const { DoctorVisitDomainError } = require('../domain/doctorVisit');
+const { DOCTOR_VISIT_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const SAFE_PROVIDER_ERRORS = new Set([
   AI_ERROR_CODES.AI_UNAVAILABLE, AI_ERROR_CODES.AI_TIMEOUT, AI_ERROR_CODES.AI_RATE_LIMIT,
@@ -121,6 +122,8 @@ function createDoctorVisitOrganizationService(overrides = {}) {
         context,
         input: { text: 'จัดระเบียบข้อความต้นทางเป็นฉบับรอตรวจสอบ โดยห้ามเพิ่มข้อมูล' },
         outputSchema: validateDoctorVisitOrganization,
+        responseSchema: DOCTOR_VISIT_RESPONSE_SCHEMA,
+        responseSchemaName: 'phimor_doctor_visit',
         timeoutMs: config.ai.timeoutMs,
         requestId: interactionId,
       });
