@@ -69,6 +69,7 @@ The metadata-only audit records the interaction/case/provider/model/purpose/prom
 
 - complete PHIMOR privacy/security/legal review and OpenAI DPA/ZDR decision;
 - configure `OPENAI_API_KEY` server-side without exposing it to LIFF;
+- keep ordinary AI on `AI_PROVIDER=gemini` and select Clinical Research independently with `AI_PROVIDER_CLINICAL_RESEARCH=openai`;
 - verify approved model access in a non-PHI commissioning test;
 - review/lock `OPENAI_CLINICAL_ALLOWED_DOMAINS`;
 - confirm migration `0018` is reviewed, preflighted, applied, and recorded through the normal migration process;

@@ -52,14 +52,17 @@ Before a production merge or deployment:
    after a commit or CI result. Confirm no deployment is already running.
 2. Create a production PostgreSQL backup/snapshot and verify its completion
    time and documented restore path.
-3. From `backend`, run `npm run migrate:status` against the intended database.
+3. From `backend`, run `npm run migrate:status` against the intended database
+   and confirm the reviewed release starts from the expected version.
 4. Stop on a checksum mismatch. Record the actual current version and every
    pending migration; never assume production starts at a particular version.
-5. Run `npm run migrate`. The supported runner applies all pending migrations
-   in canonical filename order under a PostgreSQL advisory lock.
+5. Deploy the reviewed commit through the Blueprint-backed backend service.
+   `render.yaml` runs `npm run migrate` as `preDeployCommand`, applying pending
+   migrations in canonical order under a PostgreSQL advisory lock before the
+   new backend starts. A migration failure must block activation of the release.
 6. Run `npm run migrate:status` again. Require no checksum mismatch, no pending
-   migration, and the expected final version before deploying code.
-7. Manually deploy the approved `phimor-backend` commit.
+   migration, and the expected final version.
+7. Verify the approved `phimor-backend` commit is active.
 8. Verify `GET /health` and `GET /ready`, including database, environment,
    scheduler heartbeat, notification queue, integration inbox processing, and
    consultation realtime health where enabled.
@@ -69,10 +72,11 @@ Before a production merge or deployment:
 11. Run the controlled production E2E for the release, then restore Auto-Deploy
     only if the release owner chooses to do so.
 
-The backend must not be deployed before the compatible migration sequence is
-complete. `render.yaml` has no migration pre-deploy command and does not
-guarantee `autoDeploy:false`; an authorized human must enforce this hold in the
-Render dashboard.
+The backend must not receive traffic before its compatible migration sequence
+completes. `render.yaml` now declares the migration pre-deploy command, but it
+does not guarantee the live service is still Blueprint-managed or that
+`autoDeploy:false` is active; an authorized human must verify the live Render
+configuration before push/deploy.
 
 ## Legacy startup DDL inventory and risk
 
@@ -110,6 +114,12 @@ sample tables. Before deploying a backend that imports the adapter service, hold
 Auto-Deploy, verify a current backup and migration status, run the SELECT-only
 `npm run preflight:integration-adapter-v1`, apply 0017, and verify final migration
 status. Deploy the backend and System Admin LIFF only after the schema is current.
+
+Migration 0018 additively extends AI interaction audit metadata. For the
+OpenAI/ownership combined release, verify production is current through 0017;
+the backend pre-deploy step must apply 0018 before the new code starts. Keep
+Clinical Research disabled until its separate non-PHI preflight and governance
+gate are complete.
 
 ## Stop conditions
 

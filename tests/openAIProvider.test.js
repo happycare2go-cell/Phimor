@@ -153,6 +153,22 @@ test('factory selects OpenAI explicitly without fallback and chooses purpose mod
   assert.throws(() => createAIProvider({ config: { ai: { ...config.ai, provider: 'unknown' } } }), (error) => error.code === AI_ERROR_CODES.AI_UNAVAILABLE);
 });
 
+test('factory routes Clinical Research to OpenAI while ordinary AI remains on Gemini', () => {
+  const config = loadV2Config({
+    AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
+    AI_MODEL_DOCUMENT:'gpt-5.6-luna', AI_MODEL_CLINICAL_RESEARCH:'gpt-5.6-sol',
+  });
+  const ordinary = createAIProvider({ config, env:{ GEMINI_API_KEY:'test-gemini' } });
+  const research = createAIProvider({
+    config, providerName:config.ai.clinicalResearchProvider,
+    modelPurpose:'clinical_research', env:{ OPENAI_API_KEY:'test-openai' },
+  });
+  assert.strictEqual(ordinary.constructor.name, 'GeminiProvider');
+  assert.strictEqual(ordinary.configuredModel, '');
+  assert.ok(research instanceof OpenAIProvider);
+  assert.strictEqual(research.model, 'gpt-5.6-sol');
+});
+
 test('missing OpenAI key fails closed without invoking fetch', async () => {
   let called = false;
   const provider = createProvider(async () => { called = true; return completed({ answer: 'ok' }); }, { apiKey: '' });

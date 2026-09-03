@@ -61,9 +61,13 @@ function unsafeRuntimeConfiguration(env = process.env) {
   if (String(env.AI_PROVIDER || 'gemini').trim().toLowerCase() === 'openai' && !hasValue(env.OPENAI_API_KEY)) {
     issues.push('OPENAI_API_KEY_MISSING');
   }
-  if (String(env.PHARMACIST_AI_RESEARCH_ENABLED || '').trim().toLowerCase() === 'true'
-      && !hasValue(env.OPENAI_API_KEY)) {
-    issues.push('PHARMACIST_AI_RESEARCH_CONFIGURATION_MISSING');
+  if (String(env.PHARMACIST_AI_RESEARCH_ENABLED || '').trim().toLowerCase() === 'true') {
+    const researchProvider = String(
+      env.AI_PROVIDER_CLINICAL_RESEARCH || env.AI_PROVIDER || 'gemini',
+    ).trim().toLowerCase();
+    const providerReady = researchProvider === 'openai' ? hasValue(env.OPENAI_API_KEY)
+      : researchProvider === 'gemini' ? hasValue(env.GEMINI_API_KEY) : false;
+    if (!providerReady) issues.push('PHARMACIST_AI_RESEARCH_CONFIGURATION_MISSING');
   }
   return issues;
 }

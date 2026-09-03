@@ -89,16 +89,17 @@ truth. A checksum mismatch is a stop condition.
 
 `render.yaml` defines `phimor-backend` and `phimor-liff` but does not set
 `autoDeploy:false`; its header also describes automatic Blueprint deployment.
-It has no migration `preDeployCommand`. Therefore a merge can deploy backend
-code requiring migrations 0008–0016 before schema preparation. Migrations 0015
-and 0016 add separately scoped Plus payment and Center–Family linking integrity;
-neither changes the HHS event contract.
+The backend now declares `npm run migrate` as its pre-deploy command, so a
+Blueprint-managed release applies pending numbered migrations before new code
+starts. An authorized operator must still verify that the live Render service
+uses the reviewed Blueprint and that no unexpected migration is pending.
 
 Before merging/deploying the pilot release, an authorized operator must disable
 or pause auto-deploy for both production services in Render (or otherwise hold
 the deployment using the existing Render control), confirm the currently
-running version remains unchanged, perform and verify the migration sequence,
-then manually deploy backend before LIFF. This runbook does not modify Render.
+running version remains unchanged, verify migration status and backup safety,
+then deploy backend before LIFF and verify the post-deploy migration status.
+This runbook does not modify the live Render service.
 
 No new HHS-specific environment variable is required by the merged backend.
 The issued Integration credential is stored only on the HHS server side.

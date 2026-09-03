@@ -15,6 +15,7 @@
     "preflight:postgres-parameter-types": "node scripts/preflight-postgres-parameter-types.js",
     "preflight:consultation-lifecycle": "node scripts/preflight-consultation-lifecycle.js",
     "preflight:integration-adapter-v1": "node scripts/preflight-integration-adapter-v1.js",
+    "preflight:openai-v1": "node scripts/preflight-openai-v1.js",
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate-status.js"
   },

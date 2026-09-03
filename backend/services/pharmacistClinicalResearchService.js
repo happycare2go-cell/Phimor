@@ -71,6 +71,7 @@ function withDeterministicSafety(result, context) {
 function createPharmacistClinicalResearchService(overrides = {}) {
   const config = overrides.config || loadV2Config();
   const flags = overrides.flags || loadFeatureFlags();
+  const researchProviderName = config.ai.clinicalResearchProvider || config.ai.provider || 'gemini';
   const contextBuilder = overrides.contextBuilder || buildConsultationResearchContext;
   const auditRecorder = overrides.recordAudit || recordAIInteractionMetadata;
   const writeAudit = async (record) => {
@@ -86,7 +87,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     if (overrides.provider) return overrides.provider;
     if (!defaultProvider) {
       defaultProvider = createAIProvider({
-        config, providerName:'openai', modelPurpose:'clinical_research',
+        config, providerName:researchProviderName, modelPurpose:'clinical_research',
         env:overrides.env || process.env, fetchImpl:overrides.fetchImpl || global.fetch,
         logger:overrides.providerLogger || null,
       });
@@ -192,7 +193,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         interactionId, requesterLineId:null, requesterType:'pharmacist',
         careProfileId:prepared.careProfileId, consultationCaseId:caseId,
         purpose:'pharmacist_clinical_research', intent:'clinical_research',
-        provider:'openai', model:config.ai.clinicalResearchModel,
+        provider:researchProviderName, model:config.ai.clinicalResearchModel,
         promptVersion:SYNTHESIS_PROMPT_VERSION, contextVersion:RESEARCH_CONTEXT_VERSION,
         researchPlanVersion:RESEARCH_PLAN_VERSION,
         resultStatus:'needs_review', requestedAt, completedAt:generatedAt,
@@ -216,7 +217,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         interactionId, requesterLineId:null, requesterType:'pharmacist',
         careProfileId:prepared.careProfileId, consultationCaseId:caseId,
         purpose:'pharmacist_clinical_research', intent:'clinical_research',
-        provider:'openai', model:config.ai.clinicalResearchModel,
+        provider:researchProviderName, model:config.ai.clinicalResearchModel,
         promptVersion:SYNTHESIS_PROMPT_VERSION, contextVersion:RESEARCH_CONTEXT_VERSION,
         researchPlanVersion:RESEARCH_PLAN_VERSION,
         resultStatus:'error', errorCode, requestedAt, completedAt:new Date(now).toISOString(),

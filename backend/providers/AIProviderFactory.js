@@ -2,7 +2,15 @@ const { GeminiProvider } = require('./GeminiProvider');
 const { OpenAIProvider } = require('./OpenAIProvider');
 const { AI_ERROR_CODES, AIProviderError } = require('./aiErrors');
 
-function purposeConfig(config, modelPurpose) {
+function purposeConfig(config, modelPurpose, providerName = config?.ai?.provider || 'gemini') {
+  const purpose = modelPurpose === 'clinical_research' ? 'clinicalResearch'
+    : modelPurpose === 'pharmacist' ? 'pharmacist'
+      : modelPurpose === 'explanation' ? 'explanation' : 'document';
+  const providerModel = config?.ai?.providers?.[providerName]?.models?.[purpose];
+  if (providerModel !== undefined) {
+    const effortKey = `${purpose}ReasoningEffort`;
+    return { model:providerModel, reasoningEffort:config.ai[effortKey] };
+  }
   if (modelPurpose === 'clinical_research') {
     return { model: config.ai.clinicalResearchModel, reasoningEffort: config.ai.clinicalResearchReasoningEffort };
   }
@@ -16,8 +24,8 @@ function purposeConfig(config, modelPurpose) {
 }
 
 function createAIProvider({ config, env = process.env, fetchImpl = global.fetch, logger = null, modelPurpose = 'document', providerName = null } = {}) {
-  const provider = providerName || config?.ai?.provider || 'gemini';
-  const selected = purposeConfig(config, modelPurpose);
+  const provider = String(providerName || config?.ai?.provider || 'gemini').trim().toLowerCase();
+  const selected = purposeConfig(config, modelPurpose, provider);
   if (provider === 'openai') {
     return new OpenAIProvider({
       apiKey: env.OPENAI_API_KEY,

@@ -138,6 +138,13 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.match(productionBlueprint, /key:\s*CONSULTATION_REALTIME_TICKET_SECRET\s*\n\s*sync:\s*false/);
   assert.match(productionBlueprint, /key:\s*CONSULTATION_REALTIME_ALLOWED_ORIGINS\s*\n\s*value:\s*"https:\/\/phimor-liff\.onrender\.com"/);
   assert.doesNotMatch(productionBlueprint, /CONSULTATION_REALTIME_TICKET_SECRET\s*\n\s*value:/);
+  assert.match(productionBlueprint, /preDeployCommand:\s*npm run migrate/);
+  assert.match(productionBlueprint, /key:\s*AI_PROVIDER\s*\n\s*value:\s*["']gemini["']/);
+  assert.match(productionBlueprint, /key:\s*AI_PROVIDER_CLINICAL_RESEARCH\s*\n\s*value:\s*["']openai["']/);
+  assert.match(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*sync:\s*false/);
+  assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_ENABLED\s*\n\s*value:\s*["']false["']/);
+  assert.match(productionBlueprint, /key:\s*PDF_DOWNLOAD_SECRET\s*\n\s*sync:\s*false/);
+  assert.doesNotMatch(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*value:/);
 });
 
 test('Center LIFF obtains backend and LIFF ID from the authoritative runtime projection', () => {

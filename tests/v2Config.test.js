@@ -38,6 +38,10 @@ test('invalid feature flag values fall back to safe defaults', () => {
   assert.strictEqual(flags.plus.internalEntitlementOnly, true);
   assert.strictEqual(flags.plus.aiExplanation, false);
   assert.strictEqual(flags.plus.medicationDiff, false);
+  for (const value of [undefined, '', 'yes', '1', 'unexpected']) {
+    assert.strictEqual(loadFeatureFlags({ PHARMACIST_AI_RESEARCH_ENABLED:value }).consultation.clinicalResearch, false);
+  }
+  assert.strictEqual(loadFeatureFlags({ PHARMACIST_AI_RESEARCH_ENABLED:' true ' }).consultation.clinicalResearch, true);
 });
 
 test('AI configuration parses bounded numeric timeout and retries', () => {
@@ -55,13 +59,40 @@ test('invalid AI numeric configuration uses safe defaults', () => {
 test('missing optional V2 environment preserves existing behavior defaults', () => {
   const config = loadV2Config({});
   assert.strictEqual(config.ai.provider, 'gemini');
+  assert.strictEqual(config.ai.clinicalResearchProvider, 'gemini');
   assert.strictEqual(config.ai.documentModel, '');
   assert.strictEqual(config.ai.explanationModel, '');
+  assert.strictEqual(config.ai.clinicalResearchModel, '');
+});
+
+test('Clinical Research provider override stays independent from ordinary Gemini routing', () => {
+  const config = loadV2Config({
+    AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
+    AI_MODEL_DOCUMENT:'gpt-5.6-luna', AI_MODEL_EXPLANATION:'gpt-5.6-terra',
+    AI_MODEL_PHARMACIST:'gpt-5.6-terra', AI_MODEL_CLINICAL_RESEARCH:'gpt-5.6-sol',
+  });
+  assert.strictEqual(config.ai.provider, 'gemini');
+  assert.strictEqual(config.ai.clinicalResearchProvider, 'openai');
+  assert.strictEqual(config.ai.documentModel, '');
+  assert.strictEqual(config.ai.explanationModel, '');
+  assert.strictEqual(config.ai.pharmacistModel, '');
   assert.strictEqual(config.ai.clinicalResearchModel, 'gpt-5.6-sol');
+  assert.strictEqual(config.ai.providers.openai.models.document, 'gpt-5.6-luna');
+});
+
+test('legacy Gemini model overrides remain compatible but OpenAI model names never route to Gemini', () => {
+  const legacy = loadV2Config({
+    AI_PROVIDER:'gemini', AI_MODEL_DOCUMENT:'gemini-custom', AI_MODEL_EXPLANATION:'models/gemini-explain',
+  });
+  assert.strictEqual(legacy.ai.documentModel, 'gemini-custom');
+  assert.strictEqual(legacy.ai.explanationModel, 'models/gemini-explain');
+  const isolated = loadV2Config({ AI_PROVIDER:'gemini', AI_MODEL_DOCUMENT:'gpt-5.6-luna' });
+  assert.strictEqual(isolated.ai.documentModel, '');
 });
 
 test('OpenAI provider has explicit task model and reasoning defaults', () => {
   const config = loadV2Config({ AI_PROVIDER: 'openai' });
+  assert.strictEqual(config.ai.clinicalResearchProvider, 'openai');
   assert.strictEqual(config.ai.documentModel, 'gpt-5.6-luna');
   assert.strictEqual(config.ai.explanationModel, 'gpt-5.6-terra');
   assert.strictEqual(config.ai.pharmacistModel, 'gpt-5.6-terra');

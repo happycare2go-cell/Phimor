@@ -27,9 +27,43 @@ function parseInteger(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER 
   return parsed;
 }
 
+function providerName(value, fallback = 'gemini') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function configuredModel(value, fallback = '') {
+  return String(value || fallback).trim();
+}
+
+function legacyGeminiModel(value) {
+  const normalized = configuredModel(value);
+  return /^(?:models\/)?gemini-/i.test(normalized) ? normalized : '';
+}
+
 function loadV2Config(env = process.env) {
-  const provider = String(env.AI_PROVIDER || 'gemini').trim().toLowerCase() || 'gemini';
-  const model = (value, openAIDefault) => String(value || (provider === 'openai' ? openAIDefault : '')).trim();
+  const provider = providerName(env.AI_PROVIDER);
+  const clinicalResearchProvider = providerName(env.AI_PROVIDER_CLINICAL_RESEARCH, provider);
+  const openAIModels = Object.freeze({
+    document:configuredModel(env.AI_MODEL_DOCUMENT, OPENAI_MODEL_DEFAULTS.document),
+    explanation:configuredModel(env.AI_MODEL_EXPLANATION, OPENAI_MODEL_DEFAULTS.explanation),
+    pharmacist:configuredModel(env.AI_MODEL_PHARMACIST, OPENAI_MODEL_DEFAULTS.pharmacist),
+    clinicalResearch:configuredModel(env.AI_MODEL_CLINICAL_RESEARCH, OPENAI_MODEL_DEFAULTS.clinicalResearch),
+  });
+  // AI_MODEL_* historically accepted Gemini names. Preserve that compatibility,
+  // while never routing a configured gpt-* model to the Gemini provider.
+  const geminiModels = Object.freeze({
+    document:configuredModel(env.GEMINI_MODEL_DOCUMENT, legacyGeminiModel(env.AI_MODEL_DOCUMENT)),
+    explanation:configuredModel(env.GEMINI_MODEL_EXPLANATION, legacyGeminiModel(env.AI_MODEL_EXPLANATION)),
+    pharmacist:configuredModel(env.GEMINI_MODEL_PHARMACIST, legacyGeminiModel(env.AI_MODEL_PHARMACIST)),
+    clinicalResearch:configuredModel(
+      env.GEMINI_MODEL_CLINICAL_RESEARCH,
+      legacyGeminiModel(env.AI_MODEL_CLINICAL_RESEARCH),
+    ),
+  });
+  const selectedModel = (selectedProvider, purpose) => (
+    selectedProvider === 'openai' ? openAIModels[purpose] : geminiModels[purpose]
+  );
   const effort = (value, fallback) => {
     const normalized = String(value || fallback).trim().toLowerCase();
     return REASONING_EFFORTS.has(normalized) ? normalized : fallback;
@@ -37,15 +71,17 @@ function loadV2Config(env = process.env) {
   return Object.freeze({
     ai: Object.freeze({
       provider,
+      clinicalResearchProvider,
+      providers:Object.freeze({
+        openai:Object.freeze({ models:openAIModels }),
+        gemini:Object.freeze({ models:geminiModels }),
+      }),
       // Empty model values intentionally mean "use the existing provider behavior".
       // Foundation 1A does not change the current Gemini document model selection.
-      documentModel: model(env.AI_MODEL_DOCUMENT, OPENAI_MODEL_DEFAULTS.document),
-      explanationModel: model(env.AI_MODEL_EXPLANATION, OPENAI_MODEL_DEFAULTS.explanation),
-      pharmacistModel: model(env.AI_MODEL_PHARMACIST, OPENAI_MODEL_DEFAULTS.pharmacist),
-      // Clinical Research always uses the dedicated OpenAI provider even when
-      // ordinary PHIMOR AI flows remain configured for Gemini.
-      clinicalResearchModel:String(env.AI_MODEL_CLINICAL_RESEARCH
-        || OPENAI_MODEL_DEFAULTS.clinicalResearch).trim(),
+      documentModel:selectedModel(provider, 'document'),
+      explanationModel:selectedModel(provider, 'explanation'),
+      pharmacistModel:selectedModel(provider, 'pharmacist'),
+      clinicalResearchModel:selectedModel(clinicalResearchProvider, 'clinicalResearch'),
       documentReasoningEffort: effort(env.AI_REASONING_DOCUMENT, 'low'),
       explanationReasoningEffort: effort(env.AI_REASONING_EXPLANATION, 'medium'),
       pharmacistReasoningEffort: effort(env.AI_REASONING_PHARMACIST, 'medium'),
@@ -59,5 +95,6 @@ function loadV2Config(env = process.env) {
 
 module.exports = {
   loadV2Config, parseInteger, DEFAULT_AI_TIMEOUT_MS, DEFAULT_AI_MAX_RETRIES,
-  OPENAI_MODEL_DEFAULTS, DEFAULT_CLINICAL_ALLOWED_DOMAINS, parseDomainList,
+  OPENAI_MODEL_DEFAULTS, DEFAULT_CLINICAL_ALLOWED_DOMAINS,
+  parseDomainList, providerName, legacyGeminiModel,
 };

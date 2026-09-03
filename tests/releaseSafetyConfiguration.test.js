@@ -36,11 +36,24 @@ test('legacy startup DDL inventory is complete and not claimed by numbered migra
 
 test('deployment documentation requires migrations before backend and runtime LIFF configuration', () => {
   const deployment = read('docs/DEPLOY_RENDER.md');
-  const migrationStep = deployment.indexOf('Run `npm run migrate`');
-  const backendStep = deployment.indexOf('deploy the approved `phimor-backend`');
-  assert.ok(migrationStep >= 0 && backendStep > migrationStep);
+  const migrationStep = deployment.indexOf('`render.yaml` runs `npm run migrate` as `preDeployCommand`');
+  const backendActivation = deployment.indexOf('new backend starts');
+  assert.ok(migrationStep >= 0 && backendActivation > migrationStep);
   assert.match(deployment, /Never\s+edit a production LIFF ID into HTML\/JavaScript source/);
   assert.doesNotMatch(deployment, /ย้ายจาก In-memory Database ไป Google Sheets|Verify LINE Signature ที่ตอนนี้ยังไม่ได้ทำ/);
+});
+
+test('production backend applies reviewed migrations before activating a new release', () => {
+  const render = read('render.yaml');
+  const backend = render.split(/\n\s*- type: web\s*\n\s*name: phimor-liff/)[0];
+  assert.match(backend, /rootDir:\s*backend/);
+  assert.match(backend, /buildCommand:\s*npm ci --omit=dev/);
+  assert.match(backend, /preDeployCommand:\s*npm run migrate/);
+  assert.match(backend, /startCommand:\s*npm start/);
+  assert.match(backend, /healthCheckPath:\s*\/ready/);
+  const packageJson = JSON.parse(read('backend/package.json'));
+  assert.equal(packageJson.scripts.migrate, 'node scripts/migrate.js');
+  assert.equal(packageJson.scripts['preflight:openai-v1'], 'node scripts/preflight-openai-v1.js');
 });
 
 test('pilot governance covers every required domain without inventing a retention period', () => {

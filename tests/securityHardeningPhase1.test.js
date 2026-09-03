@@ -114,10 +114,23 @@ test('production readiness reports safe OpenAI configuration issue codes without
     ...base, AI_PROVIDER:'openai', OPENAI_API_KEY:'configured-secret',
   }), []);
   const researchIssues = unsafeRuntimeConfiguration({
-    ...base, AI_PROVIDER:'gemini', PHARMACIST_AI_RESEARCH_ENABLED:'true',
+    ...base, AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
+    PHARMACIST_AI_RESEARCH_ENABLED:'true',
   });
   assert.deepEqual(researchIssues, ['PHARMACIST_AI_RESEARCH_CONFIGURATION_MISSING']);
   assert.doesNotMatch(JSON.stringify(researchIssues), /OPENAI_API_KEY|configured-secret/);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
+    PHARMACIST_AI_RESEARCH_ENABLED:'false',
+  }), []);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
+    PHARMACIST_AI_RESEARCH_ENABLED:'unexpected',
+  }), []);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', GEMINI_API_KEY:'configured-gemini',
+    PHARMACIST_AI_RESEARCH_ENABLED:'true',
+  }), []);
 });
 
 test('production operational logging emits bounded metadata without error message stack or PHI', () => {

@@ -10,6 +10,7 @@ services:
     plan: starter               # เริ่มจาก Starter พอสำหรับเฟส 1 (8 สาขา) อัปเกรดทีหลังได้
     rootDir: backend
     buildCommand: npm ci --omit=dev
+    preDeployCommand: npm run migrate
     startCommand: npm start
     # ใช้ readiness เพื่อไม่สลับ traffic มาที่รุ่นใหม่ถ้า DB/Secret สำคัญยังไม่พร้อม
     healthCheckPath: /ready
@@ -50,6 +51,26 @@ services:
       - key: CARE2GO_GROUP_BIND_CODE
         sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
       - key: GEMINI_API_KEY
+        sync: false
+      # Ordinary AI remains on Gemini for this release. Clinical Research has
+      # an independent server-side provider and remains disabled until commissioned.
+      - key: AI_PROVIDER
+        value: "gemini"
+      - key: AI_PROVIDER_CLINICAL_RESEARCH
+        value: "openai"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AI_MODEL_DOCUMENT
+        value: "gpt-5.6-luna"
+      - key: AI_MODEL_EXPLANATION
+        value: "gpt-5.6-terra"
+      - key: AI_MODEL_PHARMACIST
+        value: "gpt-5.6-terra"
+      - key: AI_MODEL_CLINICAL_RESEARCH
+        value: "gpt-5.6-sol"
+      - key: PHARMACIST_AI_RESEARCH_ENABLED
+        value: "false"
+      - key: PDF_DOWNLOAD_SECRET
         sync: false
       # Plus payment V1 is manual renewal only. Keep disabled until migration
       # 0015 and controlled Omise test/production configuration are verified.

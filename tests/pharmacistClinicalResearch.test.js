@@ -206,12 +206,18 @@ test('web search failure stays an evidence limitation and never becomes a no-int
 
 test('disabled flag fails before context/provider and dedicated audit failure returns a safe unavailable state', async () => {
   let contextCalls = 0;
+  let providerCalls = 0;
+  let auditCalls = 0;
   const disabled = createPharmacistClinicalResearchService({
     flags:{ consultation:{ clinicalResearch:false } },
-    contextBuilder:async () => { contextCalls += 1; }, provider:provider(),
+    contextBuilder:async () => { contextCalls += 1; },
+    provider:{ async generateStructured() { providerCalls += 1; } },
+    recordAudit:async () => { auditCalls += 1; return { recorded:true }; },
   });
   await assert.rejects(disabled({ caseId:'CASE-PRIVATE', pharmacistLineUserId:'U-PHARM' }), (error) => error.code === 'CLINICAL_RESEARCH_DISABLED');
   assert.equal(contextCalls, 0);
+  assert.equal(providerCalls, 0);
+  assert.equal(auditCalls, 0);
   const auditFailure = await service({ recordAudit:async () => ({ recorded:false }) })({
     caseId:'CASE-PRIVATE', pharmacistLineUserId:'U-PHARM', now:new Date('2026-09-03T00:00:00Z'),
   });
