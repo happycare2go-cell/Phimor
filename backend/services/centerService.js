@@ -1,12 +1,13 @@
 // services/centerService.js — FR-A (ตั้งค่าศูนย์), FR-B (ทะเบียนผู้พัก), FR-J1/J2 (นำเข้าข้อมูล)
 
-const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, GroupBindingTokens, audit, id, now, withTransaction, withTransactionLocks } = require('../db');
+const { Centers, CenterStaff, StaffContexts, Residents, CareProfiles, Invites, GroupBindings, GroupBindingTokens, AuditLog, audit, id, now, withTransaction, withTransactionLocks } = require('../db');
 const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenterBinding, listActiveBindingsForGroup, isActiveGroupBinding } = require('./groupBindingRepository');
 const richMenuService = require('./richMenuService');
 const { addBangkokCalendarMonth } = require('./subscriptionService');
 const { logOperationalError } = require('../utils/safeOperationalError');
 const { normalizeLineUserId, isValidLineUserId } = require('../utils/lineIdentity');
 const lineClient = require('../providers/lineClient');
+const { displayIdentity, maskedLineReference } = require('../utils/safeIdentity');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
 
@@ -83,6 +84,96 @@ async function verifyOwnerTargetIdentity(newOwnerLineId, verifyLineProfile = lin
   } catch (_) {
     return { ok:false, code:'OWNER_TARGET_NOT_VERIFIED', reason:OWNER_TARGET_NOT_VERIFIED_MESSAGE };
   }
+}
+
+async function resolveOwnerTargetLineId({ centerId, newOwnerLineId, targetStaffId }) {
+  if (targetStaffId) {
+    const staff = await CenterStaff.findOneByFields({
+      staff_id:String(targetStaffId), center_id:String(centerId),
+    });
+    if (!staff || !activeStaff(staff) || !['staff', 'manager'].includes(staff.role)) {
+      return { ok:false, code:'OWNER_TARGET_NOT_ELIGIBLE', reason:'ไม่พบบัญชีทีมงานที่พร้อมรับสิทธิ์เจ้าของศูนย์' };
+    }
+    return { ok:true, lineUserId:staff.line_user_id };
+  }
+  const normalized = normalizeLineUserId(newOwnerLineId);
+  if (!normalized) return { ok:false, code:'OWNER_TARGET_REQUIRED', reason:'กรุณาระบุบัญชี LINE เจ้าของคนใหม่' };
+  return { ok:true, lineUserId:normalized };
+}
+
+async function previewOwnerTransfer({
+  centerId, newOwnerLineId, targetStaffId, keepPreviousAsManager = false,
+  verifyLineProfile = lineClient.verifyUserProfile,
+}) {
+  const center = await Centers.findOneByFields({ center_id:String(centerId) });
+  if (!center) return { ok:false, code:'CENTER_NOT_FOUND', reason:'ไม่พบศูนย์นี้' };
+  const candidate = await resolveOwnerTargetLineId({ centerId, newOwnerLineId, targetStaffId });
+  if (!candidate.ok) return candidate;
+  const ownerRows = await CenterStaff.findWhere((staff) => (
+    staff.center_id === centerId && staff.role === 'owner' && activeStaff(staff)
+  ));
+  const currentOwnerLineId = center.owner_line_id || stableStaffRows(ownerRows)[0]?.line_user_id || null;
+  if (currentOwnerLineId === candidate.lineUserId) {
+    return { ok:false, noChange:true, code:'OWNER_ALREADY_CURRENT', reason:'บัญชีนี้เป็นเจ้าของศูนย์อยู่แล้ว' };
+  }
+  const verifiedTarget = await verifyOwnerTargetIdentity(candidate.lineUserId, verifyLineProfile);
+  if (!verifiedTarget.ok) return verifiedTarget;
+  const targetRows = await CenterStaff.findWhere((staff) => (
+    staff.center_id === centerId && staff.line_user_id === verifiedTarget.lineUserId
+  ));
+  const existingMembership = stableStaffRows(targetRows).find(activeStaff) || null;
+  const currentOwner = stableStaffRows(ownerRows.filter((staff) => staff.line_user_id === currentOwnerLineId))[0] || null;
+  return {
+    ok:true,
+    center:{ centerId:center.center_id, displayName:center.name },
+    currentOwner:{
+      displayName:displayIdentity({ displayName:currentOwner?.display_name, lineUserId:currentOwnerLineId }),
+      maskedIdentity:maskedLineReference(currentOwnerLineId),
+    },
+    newOwner:{
+      displayName:verifiedTarget.profile.displayName,
+      maskedIdentity:maskedLineReference(verifiedTarget.lineUserId),
+      existingCenterRole:existingMembership?.role || null,
+    },
+    previousOwnerOutcome:keepPreviousAsManager ? 'manager' : 'revoked',
+    impact:{
+      centerDataPreserved:true,
+      familyConsentPreserved:true,
+      careProfileOwnershipPreserved:true,
+    },
+  };
+}
+
+async function listOwnershipHistory(centerId, requestedLimit = 20) {
+  const center = await Centers.findOneByFields({ center_id:String(centerId) });
+  if (!center) return null;
+  const [logs, staffRows] = await Promise.all([
+    AuditLog.findCenterOwnershipTransfers(center.center_id, requestedLimit),
+    CenterStaff.findWhereByFields({ center_id:center.center_id }),
+  ]);
+  const identity = (lineUserId) => {
+    const matching = stableStaffRows(staffRows.filter((row) => row.line_user_id === lineUserId));
+    return {
+      displayName:displayIdentity({ displayName:matching[0]?.display_name, lineUserId }),
+      maskedIdentity:maskedLineReference(lineUserId),
+    };
+  };
+  return {
+    center:{ centerId:center.center_id, displayName:center.name },
+    items:logs.map((log) => {
+      const operatorLineId = String(log.actor_line_id || '').startsWith('admin:')
+        ? String(log.actor_line_id).slice(6) : '';
+      return {
+        transferredAt:log.at || log._createdAt || null,
+        previousOwner:identity(log.meta?.previousOwnerLineId),
+        newOwner:identity(log.meta?.newOwnerLineId),
+        previousOwnerOutcome:log.meta?.keepPreviousAsManager ? 'manager' : 'revoked',
+        operator:operatorLineId === 'key'
+          ? { displayName:'ผู้ดูแลระบบผ่านคีย์เดิม', maskedIdentity:null }
+          : identity(operatorLineId),
+      };
+    }),
+  };
 }
 
 // ── FR-A1: ทีมงานสร้างบัญชีศูนย์ ──
@@ -452,10 +543,12 @@ async function revokeStaff({ centerId, targetLineId, requesterLineId, reason = '
 }
 
 async function transferOwner({
-  centerId, newOwnerLineId, actor = 'admin', keepPreviousAsManager = false,
+  centerId, newOwnerLineId, targetStaffId, actor = 'admin', keepPreviousAsManager = false,
   verifyLineProfile = lineClient.verifyUserProfile,
 }) {
-  const normalizedOwnerLineId = normalizeLineUserId(newOwnerLineId);
+  const candidate = await resolveOwnerTargetLineId({ centerId, newOwnerLineId, targetStaffId });
+  if (!candidate.ok) return candidate;
+  const normalizedOwnerLineId = normalizeLineUserId(candidate.lineUserId);
   if (!isValidLineUserId(normalizedOwnerLineId)) {
     return { ok:false, code:'OWNER_TARGET_INVALID', reason:'LINE User ID เจ้าของคนใหม่ไม่ถูกต้อง' };
   }
@@ -1006,5 +1099,6 @@ module.exports = {
   approveStaff, revokeStaff, createCenterManagedCareProfile, getOrCreateResidentInvite,
   transferOwner, reconcileAllCenterStaff,
   setActiveCenterForStaff, getActiveCenterIdForStaff, listCentersByStaffUser,
-  centerStaffLockKey, verifyOwnerTargetIdentity,
+  centerStaffLockKey, verifyOwnerTargetIdentity, resolveOwnerTargetLineId,
+  previewOwnerTransfer, listOwnershipHistory,
 };

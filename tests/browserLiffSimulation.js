@@ -46,6 +46,8 @@ const ADMIN_CARE_OPERATIONS_SOURCE = fs.readFileSync(path.resolve(__dirname, '..
 const ADMIN_CARE_OPERATIONS_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'care-operations-ui.css'), 'utf8');
 const FIELD_PICKER_ADAPTER_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'field-picker-adapter-ui.css'), 'utf8');
 const ADMIN_EXCEPTION_QUEUE_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'exception-queue-ui.js'), 'utf8');
+const ADMIN_OWNERSHIP_TRANSFER_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'ownership-transfer-ui.js'), 'utf8');
+const ADMIN_OWNERSHIP_TRANSFER_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'system-admin', 'ownership-transfer-ui.css'), 'utf8');
 const APP_SHELL_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.js'), 'utf8');
 const APP_SHELL_CSS = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'app-shell.css'), 'utf8');
 const CLINICAL_ACTION_DIALOG_SOURCE = fs.readFileSync(path.resolve(__dirname, '..', 'liff-app', 'shared', 'clinical-action-dialog.js'), 'utf8');
@@ -68,6 +70,7 @@ function localHtml(name) {
     .replace('<script src="./care-history-ui.js"></script>', `<script>${FAMILY_CARE_HISTORY_SOURCE}</script>`)
     .replace('<script src="./care-operations-ui.js"></script>', `<script>${ADMIN_CARE_OPERATIONS_SOURCE}</script>`)
     .replace('<script src="./exception-queue-ui.js"></script>', `<script>${ADMIN_EXCEPTION_QUEUE_SOURCE}</script>`)
+    .replace('<script src="./ownership-transfer-ui.js"></script>', `<script>${ADMIN_OWNERSHIP_TRANSFER_SOURCE}</script>`)
     .replace('<script src="../shared/app-shell.js"></script>', `<script>${APP_SHELL_SOURCE}</script>`)
     .replace('<script src="./family-home-v2.js"></script>', `<script>${FAMILY_HOME_V2_SOURCE}</script>`)
     .replace('<script src="../shared/medication-editor.js"></script>', `<script>${MEDICATION_EDITOR_SOURCE}</script>`)
@@ -81,7 +84,8 @@ function localHtml(name) {
     .replace('<link rel="stylesheet" href="./lab-results-ui.css">', `<style>${FAMILY_LAB_RESULTS_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./care-recording-ui.css">', `<style>${CENTER_CARE_RECORDING_CSS}</style>`)
     .replace('<link rel="stylesheet" href="./care-operations-ui.css">', `<style>${ADMIN_CARE_OPERATIONS_CSS}</style>`)
-    .replace('<link rel="stylesheet" href="./field-picker-adapter-ui.css">', `<style>${FIELD_PICKER_ADAPTER_CSS}</style>`);
+    .replace('<link rel="stylesheet" href="./field-picker-adapter-ui.css">', `<style>${FIELD_PICKER_ADAPTER_CSS}</style>`)
+    .replace('<link rel="stylesheet" href="./ownership-transfer-ui.css">', `<style>${ADMIN_OWNERSHIP_TRANSFER_CSS}</style>`);
 }
 
 async function mockBackend(page, handler) {
@@ -696,6 +700,107 @@ async function adminSubscriptionJourney(browser) {
   await page.close();
 }
 
+async function adminOwnershipTransferJourney(browser) {
+  const page = await browser.newPage({ viewport:{ width:390, height:844 } });
+  let previewBody = null;
+  let transferBody = null;
+  let transferred = false;
+  const centerDirectory = {
+    centerId:'CTR-OWNER', name:'ศูนย์จำลอง', ownerIdentity:'เจ้าของเดิม', status:'active',
+    operationalStatus:'active', directoryStatus:'active', activeResidentCount:1,
+    subscription:{ allowed:true, state:'active' },
+  };
+  const centerDetail = () => ({
+    center:{ centerId:'CTR-OWNER', name:'ศูนย์จำลอง', status:'active', ownerIdentity:transferred ? 'เจ้าของใหม่' : 'เจ้าของเดิม' },
+    entitlement:{ allowed:true, state:'active' },
+    staff:[
+      { staffId:'STF-OWNER', role:transferred ? 'owner_previous' : 'owner', status:transferred ? 'revoked' : 'active', displayIdentity:'เจ้าของเดิม' },
+      { staffId:'STF-MANAGER', role:transferred ? 'owner' : 'manager', status:'active', displayIdentity:'เจ้าของใหม่' },
+    ],
+    currentResidents:[{ displayName:'ผู้พักจำลอง', room:'A1' }], residentHistory:[],
+    counts:{ currentResidents:1, historicalResidents:0 },
+    residentPagination:{ current:{ totalPages:1, total:1 }, history:{ totalPages:0, total:0 } },
+    groupReadiness:{ centerStaffGroupReady:true }, capabilities:[], organization:null,
+  });
+  await mockBackend(page, async (url, request) => {
+    if (url.pathname === '/config/liff') return { systemAdminLiffId:'SIM_ADMIN' };
+    if (url.pathname === '/api/admin/dashboard') return { centers:{ total:1, active:1 }, integrations:{}, exceptions:{}, platform:{ state:'healthy', warningCount:0, configuredSchedulerJobs:0 } };
+    if (url.pathname === '/api/admin/centers' && request.method() === 'GET') return {
+      items:[centerDirectory], centers:[centerDirectory], counts:{ all:1, active:1, trial:0, expired:0, notConfigured:0, notStarted:0, suspended:0 },
+      pagination:{ page:1, limit:20, total:1, totalPages:1 },
+    };
+    if (url.pathname === '/api/admin/centers/CTR-OWNER/ownership-history') return {
+      center:{ centerId:'CTR-OWNER', displayName:'ศูนย์จำลอง' },
+      items:transferred ? [{
+        transferredAt:'2026-09-03T07:30:00.000Z',
+        previousOwner:{ displayName:'เจ้าของเดิม', maskedIdentity:'บัญชี LINE ••••1111' },
+        newOwner:{ displayName:'เจ้าของใหม่', maskedIdentity:'บัญชี LINE ••••2222' },
+        previousOwnerOutcome:'revoked', operator:{ displayName:'ผู้ดูแลระบบ ••••3333', maskedIdentity:'บัญชี LINE ••••3333' },
+      }] : [],
+    };
+    if (url.pathname === '/api/admin/centers/CTR-OWNER/transfer-owner/preview') {
+      previewBody = request.postDataJSON();
+      return {
+        ok:true, center:{ centerId:'CTR-OWNER', displayName:'ศูนย์จำลอง' },
+        currentOwner:{ displayName:'เจ้าของเดิม', maskedIdentity:'บัญชี LINE ••••1111' },
+        newOwner:{ displayName:'เจ้าของใหม่', maskedIdentity:'บัญชี LINE ••••2222', existingCenterRole:'manager' },
+        previousOwnerOutcome:'revoked',
+        impact:{ centerDataPreserved:true, familyConsentPreserved:true, careProfileOwnershipPreserved:true },
+      };
+    }
+    if (url.pathname === '/api/admin/centers/CTR-OWNER/transfer-owner' && request.method() === 'POST') {
+      transferBody = request.postDataJSON();
+      transferred = true;
+      centerDirectory.ownerIdentity = 'เจ้าของใหม่';
+      return { ok:true, center:{ centerId:'CTR-OWNER', displayName:'ศูนย์จำลอง' }, newOwner:{ displayName:'เจ้าของใหม่', maskedIdentity:'บัญชี LINE ••••2222' }, previousOwnerOutcome:'revoked' };
+    }
+    if (url.pathname === '/api/admin/centers/CTR-OWNER') return centerDetail();
+    return { status:404, body:{ message:`unmocked ${url.pathname}` } };
+  });
+  await page.setContent(localHtml('system-admin'), { waitUntil:'domcontentloaded' });
+  await page.waitForSelector('#app:not([hidden])');
+  await page.locator('[data-shell-destination="centers"]').first().click();
+  await page.getByRole('button', { name:'รายละเอียดการดำเนินงาน' }).click();
+  await page.waitForSelector('#detail[open]');
+  await page.getByRole('button', { name:'ทีมงานและสิทธิ์' }).click();
+  await page.getByRole('button', { name:'โอนสิทธิ์เจ้าของศูนย์' }).click();
+  await page.waitForSelector('#ownershipTransferDialog[open]');
+  await page.locator('#ownershipTargetStaff').selectOption('STF-MANAGER');
+  const formLayout = await page.evaluate(() => {
+    const dialog = document.querySelector('#ownershipTransferDialog');
+    const body = document.querySelector('#ownershipTransferBody');
+    const footer = document.querySelector('.ownership-transfer__footer');
+    const bodyBox = body.getBoundingClientRect();
+    const footerBox = footer.getBoundingClientRect();
+    body.scrollTop = body.scrollHeight;
+    return {
+      dialogTop:dialog.getBoundingClientRect().top,
+      dialogBottom:dialog.getBoundingClientRect().bottom,
+      viewport:window.innerHeight,
+      bodyOverflow:getComputedStyle(body).overflowY,
+      nonOverlap:bodyBox.bottom <= footerBox.top + 1,
+      horizontalOverflow:document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      checkHeight:document.querySelector('#ownershipTransferCheck').getBoundingClientRect().height,
+    };
+  });
+  assert.ok(formLayout.dialogTop >= 0 && formLayout.dialogBottom <= formLayout.viewport);
+  assert.equal(formLayout.bodyOverflow, 'auto');
+  assert.equal(formLayout.nonOverlap, true);
+  assert.equal(formLayout.horizontalOverflow, false);
+  assert.ok(formLayout.checkHeight >= 44);
+  await page.getByRole('button', { name:'ตรวจสอบบัญชี' }).click();
+  await page.waitForFunction(() => !document.querySelector('#ownershipTransferConfirm').hidden);
+  assert.deepEqual(previewBody, { targetStaffId:'STF-MANAGER', keepPreviousAsManager:false });
+  assert.match(await page.locator('#ownershipTransferBody').textContent(), /ญาติไม่ต้องอนุญาตใหม่/);
+  assert.ok((await page.locator('#ownershipTransferConfirm').boundingBox()).height >= 44);
+  await page.getByRole('button', { name:'ยืนยันการโอนสิทธิ์' }).click();
+  await page.waitForFunction(() => document.querySelector('#ownershipTransferSuccess')?.textContent.includes('เรียบร้อยแล้ว'));
+  assert.deepEqual(transferBody, previewBody);
+  assert.match(await page.locator('#ownershipHistory').textContent(), /เจ้าของเดิม.*เจ้าของใหม่/s);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+  await page.close();
+}
+
 async function clinicalCorrectionVoidJourney(browser) {
   const page=await browser.newPage({viewport:{width:390,height:844}});
   await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{--navy:#17315d;--teal:#237b78;--gray:#667085}*{box-sizing:border-box}body{margin:0;padding:12px;font-family:Arial,sans-serif}.btn{min-height:44px;border-radius:10px;padding:10px 12px}</style><style>${CLINICAL_ACTION_DIALOG_CSS}</style><style>${CENTER_CARE_RECORDING_CSS}</style><div id="centerCareRoot"></div><div id="toast" style="position:fixed;z-index:99;pointer-events:none"></div><script>${CLINICAL_ACTION_DIALOG_SOURCE}</script><script>${CENTER_CARE_RECORDING_SOURCE}</script>`);
@@ -1166,7 +1271,7 @@ async function pharmacistConsoleJourney(browser) {
   const browser = await chromium.launch({ headless:true, executablePath });
   const results=[];
   const requestedJourney=process.env.PHIMOR_BROWSER_JOURNEY||null;
-  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, medicationManagementV2Journey, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminCareOperationsJourney, unifiedHealthReportJourney, healthReportDeepLinkJourney, roleBasedShellJourney, pharmacistConsoleJourney };
+  const journeys={ familyConsentJourney, familyHealthProfileSwitchJourney, medicationManagementV2Journey, familyMultiProfileGroupJourney, centerFamilyLinkingJourney, familyConsultationJourney, familyLabResultsJourney, familyCareHistoryJourney, familyTransportChoiceJourney, centerPendingJourney, clinicalCorrectionVoidJourney, centerPendingFailureIsVisible, registerJourney, adminSubscriptionJourney, adminOwnershipTransferJourney, adminCareOperationsJourney, unifiedHealthReportJourney, healthReportDeepLinkJourney, roleBasedShellJourney, pharmacistConsoleJourney };
   for (const [name, run] of Object.entries(journeys).filter(([name])=>!requestedJourney||name===requestedJourney)) {
     try { await run(browser); results.push(`PASS ${name}`); }
     catch (error) { results.push(`FAIL ${name}: ${error.stack || error}`); process.exitCode=1; }

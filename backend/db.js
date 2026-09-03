@@ -297,6 +297,22 @@ const AdminUsers = makeTable('adminUsers');
 
 const rawAuditFindAll = AuditLog.findAll.bind(AuditLog);
 AuditLog.findAll = async () => (await rawAuditFindAll()).sort((a, b) => new Date(a.at || a._createdAt) - new Date(b.at || b._createdAt));
+AuditLog.findCenterOwnershipTransfers = async (centerId, requestedLimit = 20) => {
+  const limit = Math.min(50, Math.max(1, Number(requestedLimit) || 20));
+  if (isTest) {
+    return (await rawAuditFindAll())
+      .filter((row) => row.action === 'center.owner_transferred' && row.meta?.centerId === centerId)
+      .sort((left, right) => new Date(right.at || right._createdAt) - new Date(left.at || left._createdAt))
+      .slice(0, limit);
+  }
+  const result = await query(
+    `SELECT data FROM "auditLog"
+     WHERE data->>'action' = $1 AND data->'meta'->>'centerId' = $2
+     ORDER BY created_at DESC, id DESC LIMIT $3::int`,
+    ['center.owner_transferred', String(centerId), limit],
+  );
+  return result.rows.map((row) => row.data);
+};
 
 async function initializeDatabase() {
   if (isTest) return;

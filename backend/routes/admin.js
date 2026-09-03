@@ -201,6 +201,12 @@ router.get('/centers/:centerId', asyncHandler(async (req, res) => {
   res.json(details);
 }));
 
+router.get('/centers/:centerId/ownership-history', asyncHandler(async (req, res) => {
+  const history = await centerService.listOwnershipHistory(req.params.centerId, req.query.limit);
+  if (!history) return res.status(404).json({ error:'not_found', message:'ไม่พบศูนย์นี้' });
+  res.json(history);
+}));
+
 router.patch('/centers/:centerId/subscription', asyncHandler(async (req, res) => {
   try {
     const result = await subscriptionService.setSubscription({
@@ -253,6 +259,22 @@ router.post('/centers/:centerId/subscription/monthly-renew', asyncHandler(async 
   }
 }));
 
+router.post('/centers/:centerId/transfer-owner/preview', asyncHandler(async (req, res) => {
+  const result = await centerService.previewOwnerTransfer({
+    centerId:req.params.centerId,
+    newOwnerLineId:req.body.newOwnerLineId,
+    targetStaffId:req.body.targetStaffId,
+    keepPreviousAsManager:req.body.keepPreviousAsManager === true,
+  });
+  if (!result.ok) {
+    const status = result.code === 'OWNER_ALREADY_CURRENT' ? 409 : 400;
+    return res.status(status).json({
+      error:status === 409 ? 'conflict' : 'bad_request', errorCode:result.code, message:result.reason,
+    });
+  }
+  res.json(result);
+}));
+
 router.post('/centers/:centerId/transfer-owner', asyncHandler(async (req, res) => {
   if (req.admin.authMethod !== 'line') {
     return res.status(403).json({
@@ -260,9 +282,13 @@ router.post('/centers/:centerId/transfer-owner', asyncHandler(async (req, res) =
       message:'การโอนสิทธิ์เจ้าของศูนย์ต้องดำเนินการผ่านบัญชีผู้ดูแลระบบที่ยืนยันตัวตนแล้ว',
     });
   }
-  const newOwnerLineId = String(req.body.newOwnerLineId || '').trim();
-  if (!newOwnerLineId) return res.status(400).json({ error:'bad_request', message:'กรุณาระบุ LINE User ID เจ้าของคนใหม่' });
-  const result = await centerService.transferOwner({ centerId:req.params.centerId, newOwnerLineId, actor:req.admin.actor, keepPreviousAsManager:!!req.body.keepPreviousAsManager });
+  const result = await centerService.transferOwner({
+    centerId:req.params.centerId,
+    newOwnerLineId:req.body.newOwnerLineId,
+    targetStaffId:req.body.targetStaffId,
+    actor:req.admin.actor,
+    keepPreviousAsManager:req.body.keepPreviousAsManager === true,
+  });
   if (!result.ok) {
     const status = result.code === 'OWNER_ALREADY_CURRENT' ? 409 : 400;
     return res.status(status).json({ error:status === 409 ? 'conflict' : 'bad_request', errorCode:result.code, message:result.reason });

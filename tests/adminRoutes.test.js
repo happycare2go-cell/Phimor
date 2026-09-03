@@ -237,6 +237,65 @@ test('ownership transfer rejects shared Admin API key and requires a human LINE 
   assert.equal(audit.actor_line_id, `admin:${adminLineId}`);
 });
 
+test('ownership preview verifies an existing team candidate without mutation or raw identity exposure', async () => {
+  const centerService = require('../backend/services/centerService');
+  const oldOwner = `U${'9'.repeat(32)}`;
+  const target = `U${'a'.repeat(32)}`;
+  const center = await centerService.createCenter({ name:'ศูนย์ตัวอย่าง', ownerLineId:oldOwner });
+  await db.CenterStaff.insert({
+    staff_id:'STF-PREVIEW-TARGET', center_id:center.center_id, line_user_id:target,
+    display_name:'คุณเจ้าของใหม่', role:'manager', status:'active',
+  });
+  const beforeCenter = JSON.stringify(await db.Centers.findOne((row) => row.center_id === center.center_id));
+  const beforeStaff = JSON.stringify(await db.CenterStaff.findWhere((row) => row.center_id === center.center_id));
+  const response = await callAdmin(`/api/admin/centers/${center.center_id}/transfer-owner/preview`, {
+    method:'POST', headers:{ 'X-Admin-Key':REAL_ADMIN_KEY },
+    body:JSON.stringify({ targetStaffId:'STF-PREVIEW-TARGET', keepPreviousAsManager:true }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.newOwner.displayName, 'ผู้ใช้ LINE ทดสอบ');
+  assert.equal(body.newOwner.existingCenterRole, 'manager');
+  assert.equal(body.previousOwnerOutcome, 'manager');
+  assert.deepEqual(body.impact, {
+    centerDataPreserved:true, familyConsentPreserved:true, careProfileOwnershipPreserved:true,
+  });
+  assert.doesNotMatch(JSON.stringify(body), new RegExp(target));
+  assert.equal(JSON.stringify(await db.Centers.findOne((row) => row.center_id === center.center_id)), beforeCenter);
+  assert.equal(JSON.stringify(await db.CenterStaff.findWhere((row) => row.center_id === center.center_id)), beforeStaff);
+});
+
+test('ownership history is bounded, newest-first and projects only safe transfer metadata', async () => {
+  const center = await db.Centers.insert({
+    center_id:'CTR-HISTORY', name:'ศูนย์ประวัติ', owner_line_id:`U${'b'.repeat(32)}`, status:'active',
+  });
+  const previous = `U${'c'.repeat(32)}`;
+  const current = `U${'b'.repeat(32)}`;
+  await db.CenterStaff.insert({ staff_id:'STF-HISTORY-OLD', center_id:center.center_id, line_user_id:previous, display_name:'เจ้าของเดิม', role:'owner_previous', status:'revoked' });
+  await db.CenterStaff.insert({ staff_id:'STF-HISTORY-NEW', center_id:center.center_id, line_user_id:current, display_name:'เจ้าของใหม่', role:'owner', status:'active' });
+  await db.audit('center.owner_transferred', `admin:${`U${'d'.repeat(32)}`}`, {
+    centerId:center.center_id, previousOwnerLineId:previous, newOwnerLineId:current,
+    keepPreviousAsManager:false, rawPayload:'MUST_NOT_LEAK',
+  });
+  await db.audit('center.owner_transferred', `admin:${`U${'e'.repeat(32)}`}`, {
+    centerId:center.center_id, previousOwnerLineId:current, newOwnerLineId:`U${'f'.repeat(32)}`,
+    keepPreviousAsManager:true, secret:'MUST_NOT_LEAK',
+  });
+  await db.audit('unrelated.audit', 'admin:key', { centerId:center.center_id, secret:'UNRELATED' });
+  const response = await callAdmin(`/api/admin/centers/${center.center_id}/ownership-history?limit=1`, {
+    headers:{ 'X-Admin-Key':REAL_ADMIN_KEY },
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.items.length, 1);
+  assert.equal(body.items[0].previousOwnerOutcome, 'manager');
+  assert.deepEqual(Object.keys(body.items[0]).sort(), [
+    'newOwner', 'operator', 'previousOwner', 'previousOwnerOutcome', 'transferredAt',
+  ]);
+  assert.doesNotMatch(JSON.stringify(body), /MUST_NOT_LEAK|UNRELATED|rawPayload|secret/);
+  assert.doesNotMatch(JSON.stringify(body), /U[c-f]{32}/i);
+});
+
 test('ถ้าไม่ได้ตั้งค่า ADMIN_API_KEY บน Server ต้องปิดกั้นทุกคำขอด้วย 503 (กันลืมตั้งค่าตอน Deploy)', async () => {
   const prevKey = process.env.ADMIN_API_KEY;
   delete process.env.ADMIN_API_KEY; // จำลองว่าลืมตั้งค่าตอน Deploy — middleware อ่านค่านี้สดทุกครั้ง ไม่ต้อง Reload
