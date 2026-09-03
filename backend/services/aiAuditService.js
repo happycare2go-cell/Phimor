@@ -15,6 +15,13 @@ function safeCount(value) {
   return Math.min(parsed, 10_000_000);
 }
 
+function safeOptionalCount(value) {
+  if (value === undefined || value === null) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
+  return Math.min(parsed, 10_000_000);
+}
+
 function safeTimestamp(value, fallback = null) {
   if (!value) return fallback;
   const date = new Date(value);
@@ -24,6 +31,13 @@ function safeTimestamp(value, fallback = null) {
 function sanitizeAIInteractionMetadata(input = {}) {
   const requestedAt = safeTimestamp(input.requestedAt, new Date().toISOString());
   const resultStatus = RESULT_STATUSES.has(input.resultStatus) ? input.resultStatus : 'error';
+  const inputTokens = safeOptionalCount(input.inputTokens);
+  const outputTokens = safeOptionalCount(input.outputTokens);
+  const providerTotalTokens = safeOptionalCount(input.totalTokens);
+  // Preserve a provider total when present. Otherwise derive it only when both
+  // constituent provider counts are known; null remains "not reported".
+  const totalTokens = providerTotalTokens === null && inputTokens !== null && outputTokens !== null
+    ? safeOptionalCount(inputTokens + outputTokens) : providerTotalTokens;
   return Object.freeze({
     interactionId: safeString(input.interactionId, 80) || `AI-${randomUUID()}`,
     requesterLineId: safeString(input.requesterLineId, 128),
@@ -44,6 +58,14 @@ function sanitizeAIInteractionMetadata(input = {}) {
     providerRequestId: safeString(input.providerRequestId, 160),
     inputCharacterCount: safeCount(input.inputCharacterCount),
     outputCharacterCount: safeCount(input.outputCharacterCount),
+    researchPlanVersion: safeString(input.researchPlanVersion, 64),
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    reasoningTokens: safeOptionalCount(input.reasoningTokens),
+    webSearchCalls: safeOptionalCount(input.webSearchCalls),
+    sourceCount: safeOptionalCount(input.sourceCount),
+    researchPerformed: input.researchPerformed === true,
   });
 }
 
@@ -59,10 +81,13 @@ async function recordAIInteractionMetadata(input, { queryFn = databaseQuery, log
         interaction_id, requester_line_id, care_profile_id, purpose, intent,
         provider, model, prompt_version, context_version, requested_at,
         completed_at, result_status, error_code, escalation, provider_request_id,
-        input_character_count, output_character_count, consultation_case_id, requester_type
+        input_character_count, output_character_count, consultation_case_id, requester_type,
+        research_plan_version, input_tokens, output_tokens, total_tokens,
+        reasoning_tokens, web_search_calls, source_count, research_performed
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19
+        $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24, $25, $26, $27
       )`,
       [
         record.interactionId, record.requesterLineId, record.careProfileId, record.purpose, record.intent,
@@ -70,6 +95,8 @@ async function recordAIInteractionMetadata(input, { queryFn = databaseQuery, log
         record.completedAt, record.resultStatus, record.errorCode, record.escalation, record.providerRequestId,
         record.inputCharacterCount, record.outputCharacterCount,
         record.consultationCaseId, record.requesterType,
+        record.researchPlanVersion, record.inputTokens, record.outputTokens, record.totalTokens,
+        record.reasoningTokens, record.webSearchCalls, record.sourceCount, record.researchPerformed,
       ]
     );
     return { recorded: true, interactionId: record.interactionId };
@@ -84,5 +111,6 @@ async function recordAIInteractionMetadata(input, { queryFn = databaseQuery, log
 }
 
 module.exports = {
-  RESULT_STATUSES, REQUESTER_TYPES, sanitizeAIInteractionMetadata, recordAIInteractionMetadata, defaultAuditLogger,
+  RESULT_STATUSES, REQUESTER_TYPES, safeOptionalCount,
+  sanitizeAIInteractionMetadata, recordAIInteractionMetadata, defaultAuditLogger,
 };

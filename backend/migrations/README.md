@@ -1,10 +1,11 @@
 # PHIMOR database migrations
 
-The current code sequence ends at `0017_create_integration_field_picker_adapters.js`. The canonical
+The current code sequence ends at `0018_extend_ai_interaction_audit_usage.js`. The canonical
 tail is `0013_add_consultation_payment_recovery.js`, then
 `0014_create_shared_rate_limit_windows.js`, `0015_add_plus_payment_v1.js`, then
 `0016_add_center_family_linking_integrity.js`, then
-`0017_create_integration_field_picker_adapters.js`.
+`0017_create_integration_field_picker_adapters.js`, then
+`0018_extend_ai_interaction_audit_usage.js`.
 Plus payment must remain disabled until migration 0015 is applied after every
 earlier pending migration and the compatible backend is ready to deploy.
 
@@ -19,6 +20,11 @@ commissioning samples. Run `npm run preflight:integration-adapter-v1` before
 applying it. The SELECT-only preflight also blocks the earlier undeployed
 client-owned `integration_adapter_profiles` shape so incompatible 0017 schemas
 cannot be mistaken for one another.
+
+Migration 0018 additively extends `ai_interaction_audit` with nullable token,
+research-plan, web-search, and source-count metadata. Nullable counts preserve
+the distinction between provider-not-reported (`NULL`) and reported zero (`0`);
+the migration stores no prompt, model response, search query, or clinical content.
 
 Migrations are explicit operations. The application does not run them during startup.
 

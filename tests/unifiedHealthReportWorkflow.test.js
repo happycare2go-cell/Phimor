@@ -116,9 +116,11 @@ test('ordinary presentation does not expose internal identity or external integr
   assert.doesNotMatch(familyHtml,/Care Profile ID|Resident ID|Integration Client ID|Group ID/);
 });
 
-test('later Adapter migration remains isolated from the unified clinical workflow',()=>{
+test('later Adapter and AI audit migrations remain isolated from the unified clinical workflow',()=>{
   const migrationNames=fs.readdirSync(path.join(root,'backend','migrations')).filter((name)=>/^\d{4}_.+\.js$/.test(name)).sort();
-  assert.equal(migrationNames.at(-1),'0017_create_integration_field_picker_adapters.js');
-  const adapterMigration=fs.readFileSync(path.join(root,'backend','migrations',migrationNames.at(-1)),'utf8');
-  assert.doesNotMatch(adapterMigration,/ALTER TABLE (?:daily_care|vital|care_profiles|residents)/i);
+  assert.equal(migrationNames.at(-1),'0018_extend_ai_interaction_audit_usage.js');
+  for(const migrationName of ['0017_create_integration_field_picker_adapters.js','0018_extend_ai_interaction_audit_usage.js']){
+    const migration=fs.readFileSync(path.join(root,'backend','migrations',migrationName),'utf8');
+    assert.doesNotMatch(migration,/ALTER TABLE (?:daily_care|vital|care_profiles|residents)/i);
+  }
 });

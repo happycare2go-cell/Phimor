@@ -4,7 +4,7 @@ process.env.NODE_ENV = 'test';
 const migration = require('../backend/migrations/0001_create_ai_interaction_audit');
 const { AI_VERSIONS } = require('../backend/config/aiVersions');
 const {
-  sanitizeAIInteractionMetadata, recordAIInteractionMetadata,
+  safeOptionalCount, sanitizeAIInteractionMetadata, recordAIInteractionMetadata,
 } = require('../backend/services/aiAuditService');
 
 test('AI audit migration creates a relational metadata-only table', async () => {
@@ -52,12 +52,41 @@ test('audit service inserts metadata fields in the expected order', async () => 
   }, { queryFn: async (sql, params) => { captured = { sql, params }; } });
   assert.deepEqual(result, { recorded: true, interactionId: 'AI-test' });
   assert.match(captured.sql, /INSERT INTO ai_interaction_audit/);
-  assert.equal(captured.params.length, 19);
+  assert.equal(captured.params.length, 27);
   assert.equal(captured.params[0], 'AI-test');
   assert.equal(captured.params[3], 'medication_summary');
   assert.equal(captured.params[11], 'success');
   assert.equal(captured.params[15], 20);
   assert.match(captured.sql, /consultation_case_id, requester_type/);
+  assert.deepEqual(captured.params.slice(19), [null, null, null, null, null, null, null, false]);
+});
+
+test('optional AI usage counts preserve null versus reported zero semantics', () => {
+  assert.equal(safeOptionalCount(undefined), null);
+  assert.equal(safeOptionalCount(null), null);
+  assert.equal(safeOptionalCount(-1), null);
+  assert.equal(safeOptionalCount('not-a-count'), null);
+  assert.equal(safeOptionalCount(0), 0);
+  assert.equal(safeOptionalCount(42), 42);
+  const missing = sanitizeAIInteractionMetadata({ purpose:'legacy', resultStatus:'success' });
+  assert.equal(missing.inputTokens, null);
+  assert.equal(missing.webSearchCalls, null);
+  assert.equal(missing.researchPerformed, false);
+});
+
+test('AI audit persists bounded research usage and prefers provider total tokens', async () => {
+  let captured;
+  await recordAIInteractionMetadata({
+    interactionId:'AI-research', purpose:'pharmacist_clinical_research', resultStatus:'success',
+    researchPlanVersion:'p'.repeat(80), inputTokens:120, outputTokens:30, totalTokens:155,
+    reasoningTokens:5, webSearchCalls:0, sourceCount:0, researchPerformed:true,
+  }, { queryFn:async (sql,params)=>{ captured={sql,params}; } });
+  assert.match(captured.sql, /research_plan_version, input_tokens, output_tokens, total_tokens/);
+  assert.equal(captured.params[19].length, 64);
+  assert.deepEqual(captured.params.slice(20), [120,30,155,5,0,0,true]);
+
+  const derived = sanitizeAIInteractionMetadata({ inputTokens:7, outputTokens:3 });
+  assert.equal(derived.totalTokens, 10);
 });
 
 test('audit insert failure is fail-open and logs no health data or secrets', async () => {
