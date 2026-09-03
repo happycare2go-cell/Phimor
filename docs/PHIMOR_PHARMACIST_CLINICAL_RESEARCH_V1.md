@@ -4,7 +4,15 @@
 
 Clinical Research is a private, on-demand support tool for the pharmacist assigned to an authorized consultation case. It does not diagnose, prescribe, change medication, write clinical records, or send a message to the user. The pharmacist must independently review the analysis and may explicitly copy an editable draft into the composer; sending remains a separate human action.
 
-The feature is off by default through `PHARMACIST_AI_RESEARCH_ENABLED=false`. Consultation and pharmacist authorization remain backend-authoritative. The endpoint is rate-limited per case and pharmacist; the default is three requests per ten minutes and is configurable within safe bounds through `CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES`.
+The feature is off by default through `PHARMACIST_AI_RESEARCH_ENABLED=false` and `PHARMACIST_AI_RESEARCH_MODE=disabled`. The emergency flag always wins. Non-disabled modes also require the authenticated pharmacist identity to appear in the server-only `PHARMACIST_AI_RESEARCH_PILOT_USERS` allowlist; an empty list denies everyone. Consultation and pharmacist authorization remain backend-authoritative. The endpoint is rate-limited per case and pharmacist; the default is three requests per ten minutes and is configurable within safe bounds through `CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES`.
+
+## Operating modes
+
+- `disabled`: no research provider request; safe unavailable state.
+- `deidentified_pilot`: the assigned pharmacist supplies and reviews a de-identified summary. The research path performs only pharmacist/case authorization and does not automatically load Care Profile or clinical-domain context into the provider request.
+- `controlled_live`: uses the existing bounded, authorized Care Profile and consultation context. This mode is prepared but remains subject to the separate real-PHI governance approval.
+
+Both pilot modes require explicit pharmacist acknowledgment on each request. The LIFF does not persist the summary or acknowledgment in browser storage.
 
 ## Authorized context
 
@@ -44,7 +52,7 @@ Antibiotic or infectious-disease guidance is likewise informational. The system 
 
 ## Console behavior
 
-The assigned pharmacist explicitly selects **“วิเคราะห์บทสนทนา”**. The mobile-friendly private panel shows:
+The assigned pharmacist explicitly opens **“พี่หมอ Clinical Research”**, reviews the operating-mode notice, and presses **“เริ่มค้นคว้า”**. The mobile-friendly private panel shows:
 
 - context age, truncation, and stale-analysis notices;
 - recorded facts and their PHIMOR source categories;
