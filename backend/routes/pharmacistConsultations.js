@@ -13,6 +13,9 @@ const { createConsultationCaseContextService } = require('../services/consultati
 const { createConsultationRealtimeAccessService } = require('../services/consultationRealtimeAccessService');
 const { createConsultationReadReceiptService } = require('../services/consultationReadReceiptService');
 const { createPharmacistClinicalResearchService } = require('../services/pharmacistClinicalResearchService');
+const {
+  loadClinicalResearchPilotConfig, publicClinicalResearchCapability,
+} = require('../config/clinicalResearchPilot');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -28,6 +31,10 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   const assistant = overrides.assistantService || createPharmacistAssistantService(overrides.assistantDependencies);
   const clinicalResearch = overrides.clinicalResearchService
     || createPharmacistClinicalResearchService(overrides.clinicalResearchDependencies);
+  const clinicalResearchPilotConfig = overrides.clinicalResearchPilotConfig
+    || loadClinicalResearchPilotConfig(overrides.env || process.env);
+  const clinicalResearchCapability = overrides.clinicalResearchCapability
+    || ((lineUserId) => publicClinicalResearchCapability(clinicalResearchPilotConfig, lineUserId));
   const caseContext = overrides.caseContextService
     || createConsultationCaseContextService(overrides.caseContextDependencies);
   const realtimeAccess = overrides.realtimeAccessService
@@ -129,15 +136,29 @@ function createPharmacistConsultationsRouter(overrides = {}) {
     } catch(error) { return consultationError(res,error); }
   }));
 
+  router.get('/clinical-research/capability', asyncHandler(async (req, res) => {
+    res.json(await clinicalResearchCapability(req.user.lineUserId));
+  }));
+
   router.post('/:caseId/clinical-research',asyncHandler(async(req,res)=>{
     if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({status:'invalid_request',errorCode:'INVALID_CASE_ID'});
     const keys=req.body&&typeof req.body==='object'?Object.keys(req.body):[];
-    if (keys.some((key)=>key!=='refresh') || (req.body?.refresh!==undefined && req.body.refresh!==true)) {
+    const allowedFields=['refresh','deidentifiedSummary','privacyReviewed','safetyAcknowledged'];
+    if (keys.some((key)=>!allowedFields.includes(key)) || (req.body?.refresh!==undefined && req.body.refresh!==true)
+      || (req.body?.privacyReviewed!==undefined && typeof req.body.privacyReviewed!=='boolean')
+      || (req.body?.safetyAcknowledged!==undefined && typeof req.body.safetyAcknowledged!=='boolean')
+      || (req.body?.deidentifiedSummary!==undefined && typeof req.body.deidentifiedSummary!=='string')) {
       return res.status(400).json({status:'invalid_request',errorCode:'UNSUPPORTED_FIELD'});
     }
     try {
       await rates.requireClinicalResearch({caseId:req.params.caseId,pharmacistId:req.pharmacist.pharmacistId},req.consultationConfig);
-      return res.json(await clinicalResearch({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
+      return res.json(await clinicalResearch({
+        caseId:req.params.caseId,
+        pharmacistLineUserId:req.user.lineUserId,
+        deidentifiedSummary:req.body?.deidentifiedSummary,
+        privacyReviewed:req.body?.privacyReviewed === true,
+        safetyAcknowledged:req.body?.safetyAcknowledged === true,
+      }));
     } catch(error) { return consultationError(res,error); }
   }));
 

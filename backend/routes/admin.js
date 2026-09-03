@@ -21,6 +21,7 @@ const { createPlusPaymentSupportService } = require('../services/plusPaymentSupp
 const adminCenterDirectoryService = require('../services/adminCenterDirectoryService');
 const { createAdminDashboardService } = require('../services/adminDashboardService');
 const { createAdminExceptionService } = require('../services/adminExceptionService');
+const { createClinicalResearchOperationsService } = require('../services/clinicalResearchOperationsService');
 
 const consultationPaymentSupport = createConsultationPaymentSupportService();
 const plusPaymentSupport = createPlusPaymentSupportService();
@@ -177,6 +178,12 @@ router.get('/centers', asyncHandler(async (req, res) => {
     }
     throw error;
   }
+}));
+
+router.get('/operations/clinical-research', asyncHandler(async (req, res) => {
+  const service = req.app.locals.clinicalResearchOperationsService
+    || createClinicalResearchOperationsService();
+  res.json(await service.getStatus());
 }));
 
 router.get('/centers/:centerId', asyncHandler(async (req, res) => {

@@ -120,8 +120,9 @@ function provider({ planValue = plan(), evidenceValue = evidence(), synthesisVal
 }
 
 function service(overrides = {}) {
-  return createPharmacistClinicalResearchService({
+  const generate = createPharmacistClinicalResearchService({
     flags:{ consultation:{ clinicalResearch:true } },
+    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:['U-PHARM'] },
     config:{ ai:{
       provider:'openai', clinicalResearchModel:'gpt-test', clinicalResearchReasoningEffort:'high',
       clinicalAllowedDomains:['fda.gov', 'who.int'], timeoutMs:1000,
@@ -131,6 +132,7 @@ function service(overrides = {}) {
     recordAudit:async () => ({ recorded:true }),
     ...overrides,
   });
+  return (input) => generate({ safetyAcknowledged:true, ...input });
 }
 
 test('clinical research runs planner, deidentified web evidence, synthesis and aggregates every call', async () => {
@@ -161,6 +163,23 @@ test('clinical research runs planner, deidentified web evidence, synthesis and a
   assert.equal(audit.researchPerformed, true);
   assert.equal(audit.resultStatus, 'needs_review');
   assert.doesNotMatch(JSON.stringify(audit), /Drug A|ผู้ป่วย|draftResponse|conversation|searchTerms/);
+});
+
+test('clinical research requires explicit pharmacist acknowledgment before provider execution', async () => {
+  let providerCalls = 0;
+  const generate = createPharmacistClinicalResearchService({
+    flags:{ consultation:{ clinicalResearch:true } },
+    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:['U-PHARM'] },
+    config:{ ai:{ provider:'openai', clinicalResearchModel:'gpt-test' } },
+    contextBuilder:async () => context(),
+    provider:{ interpretDocument:async () => { providerCalls += 1; return {}; } },
+    recordAudit:async () => ({ recorded:true }),
+  });
+  await assert.rejects(
+    generate({ caseId:'CASE-PRIVATE', pharmacistLineUserId:'U-PHARM' }),
+    (error) => error.code === 'CLINICAL_RESEARCH_ACK_REQUIRED',
+  );
+  assert.equal(providerCalls, 0);
 });
 
 test('planner may skip web research while token usage and zero search/source counts remain authoritative', async () => {
@@ -225,6 +244,42 @@ test('disabled flag fails before context/provider and dedicated audit failure re
     status:'unavailable', errorCode:'AI_AUDIT_WRITE_FAILED',
     message:'ระบบวิเคราะห์บทสนทนายังไม่พร้อม กรุณาดำเนินการสนทนาด้วยตนเอง',
   });
+});
+
+test('deidentified pilot uses only reviewed summary context and never auto-loads Care Profile', async () => {
+  let contextCalls=0, accessCalls=0, audit;
+  const deidentifiedSummary='ผู้ใหญ่ใช้ Drug A และ Drug B และต้องการให้เภสัชกรตรวจข้อมูลการใช้ร่วมกัน';
+  const result=await service({
+    pilotConfig:{emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']},
+    contextBuilder:async()=>{contextCalls+=1;throw new Error('must not load private context');},
+    accessChecker:async()=>{accessCalls+=1;return {pharmacistId:'PH-1',state:'active',databaseNow:'2026-09-03T00:00:00Z'};},
+    recordAudit:async(value)=>{audit=value;return {recorded:true};},
+  })({caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',deidentifiedSummary,privacyReviewed:true});
+  assert.equal(result.status,'available');
+  assert.equal(result.mode,'deidentified_pilot');
+  assert.equal(contextCalls,0);assert.equal(accessCalls,1);
+  assert.equal(audit.careProfileId,null);
+  assert.equal(audit.contextVersion,'consultation-clinical-research-deidentified-pilot-v1');
+  assert.doesNotMatch(JSON.stringify(audit),/Drug A|Drug B|ผู้ใหญ่|ต้องการ/);
+});
+
+test('pilot allowlist and privacy gate fail before provider or automatic context', async () => {
+  let providerCalls=0,contextCalls=0,accessCalls=0;
+  const make=(pilotConfig)=>createPharmacistClinicalResearchService({
+    flags:{consultation:{clinicalResearch:true}},pilotConfig,
+    config:{ai:{provider:'openai',clinicalResearchModel:'gpt-test',clinicalResearchReasoningEffort:'high',clinicalAllowedDomains:['fda.gov'],timeoutMs:1000}},
+    provider:{async generateStructured(){providerCalls+=1;}},
+    contextBuilder:async()=>{contextCalls+=1;},accessChecker:async()=>{accessCalls+=1;},
+  });
+  await assert.rejects(make({emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:[]})({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
+    privacyReviewed:true,deidentifiedSummary:'ข้อมูลทั่วไปที่ไม่มีตัวระบุบุคคลโดยตรงสำหรับทดสอบระบบ',
+  }),(error)=>error.code==='CLINICAL_RESEARCH_NOT_ALLOWED');
+  await assert.rejects(make({emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']})({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
+    privacyReviewed:true,deidentifiedSummary:'ชื่อผู้ป่วย: สมชาย ใจดี ใช้ยาตามข้อมูลที่บันทึก',
+  }),(error)=>error.code==='DEIDENTIFIED_SUMMARY_PRIVACY_REJECTED');
+  assert.equal(providerCalls,0);assert.equal(contextCalls,0);assert.equal(accessCalls,0);
 });
 
 test('clinical contracts reject forbidden auto-send, hallucinated evidence and unsupported no-interaction claims', () => {

@@ -1,3 +1,5 @@
+const { loadClinicalResearchPilotConfig, CLINICAL_RESEARCH_MODES } = require('./clinicalResearchPilot');
+
 const FULL_RUNTIME_REQUIRED_ENV = Object.freeze([
   'DATABASE_URL',
   'LINE_CHANNEL_ACCESS_TOKEN',
@@ -61,7 +63,8 @@ function unsafeRuntimeConfiguration(env = process.env) {
   if (String(env.AI_PROVIDER || 'gemini').trim().toLowerCase() === 'openai' && !hasValue(env.OPENAI_API_KEY)) {
     issues.push('OPENAI_API_KEY_MISSING');
   }
-  if (String(env.PHARMACIST_AI_RESEARCH_ENABLED || '').trim().toLowerCase() === 'true') {
+  const researchPilot = loadClinicalResearchPilotConfig(env);
+  if (researchPilot.mode !== CLINICAL_RESEARCH_MODES.DISABLED) {
     const researchProvider = String(
       env.AI_PROVIDER_CLINICAL_RESEARCH || env.AI_PROVIDER || 'gemini',
     ).trim().toLowerCase();

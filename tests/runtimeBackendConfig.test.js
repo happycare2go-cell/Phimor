@@ -143,6 +143,7 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.match(productionBlueprint, /key:\s*AI_PROVIDER_CLINICAL_RESEARCH\s*\n\s*value:\s*["']openai["']/);
   assert.match(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*sync:\s*false/);
   assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_ENABLED\s*\n\s*value:\s*["']false["']/);
+  assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_MODE\s*\n\s*value:\s*["']disabled["']/);
   assert.match(productionBlueprint, /key:\s*PDF_DOWNLOAD_SECRET\s*\n\s*sync:\s*false/);
   assert.doesNotMatch(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*value:/);
 });

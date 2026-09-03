@@ -51,7 +51,7 @@
         <div id="chatRoomActions" class="chat-room-actions" hidden>
           <button id="showCaseContextButton" class="secondary-button" type="button">ข้อมูลเคส</button>
           <button id="showAssistantButton" class="secondary-button" type="button">ผู้ช่วยเภสัชกร</button>
-          <button id="showClinicalResearchButton" class="primary-button" type="button">✨ วิเคราะห์บทสนทนา</button>
+          <button id="showClinicalResearchButton" class="primary-button" type="button">✨ พี่หมอ Clinical Research</button>
         </div>
         <div id="chatInitialQuestion" class="chat-initial-question" hidden></div>
         <button id="loadOlderMessagesButton" class="load-older-button" type="button" hidden>โหลดข้อความก่อนหน้า</button>
@@ -84,17 +84,31 @@
         <div id="assistantContent" class="assistant-content"><p class="empty-state">เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ</p></div>
       </aside>
 
-      <aside id="clinicalResearchPanel" class="support-panel clinical-research-panel" aria-label="การวิเคราะห์บทสนทนาสำหรับเภสัชกร" hidden>
+      <aside id="clinicalResearchPanel" class="support-panel clinical-research-panel" aria-label="พี่หมอ Clinical Research สำหรับเภสัชกร" hidden>
         <div class="clinical-research-heading support-panel__heading">
-          <div><span class="ai-label">PRIVATE · PHARMACIST REVIEW ONLY</span><h2>วิเคราะห์บทสนทนา</h2></div>
+          <div><span class="ai-label">PHARMACIST REVIEW ONLY</span><h2>พี่หมอ Clinical Research</h2><p>ผู้ช่วยค้นคว้าข้อมูลประกอบการดูแลสำหรับเภสัชกร</p></div>
           <button id="closeClinicalResearchButton" class="icon-button" type="button">ปิด</button>
         </div>
-        <div class="clinical-research-actions">
-          <button id="refreshClinicalResearchButton" class="secondary-button" type="button" disabled>วิเคราะห์ใหม่</button>
-        </div>
-        <div class="ai-boundary" role="note">ข้อมูลนี้เป็นร่างช่วยทบทวนส่วนตัวสำหรับเภสัชกร ไม่ใช่คำสั่งรักษา และจะไม่ถูกส่งให้ผู้ใช้โดยอัตโนมัติ</div>
-        <div id="clinicalResearchContent" class="clinical-research-content">
-          <p class="empty-state">กด “วิเคราะห์บทสนทนา” เมื่อเภสัชกรต้องการให้ระบบช่วยทบทวนข้อมูล</p>
+        <div class="clinical-research-body">
+          <div class="ai-boundary" role="note">พี่หมอช่วยรวบรวมบริบทที่เกี่ยวข้อง ค้นข้อมูลจากแหล่งอ้างอิงที่น่าเชื่อถือ และจัดประเด็นสำคัญให้เภสัชกรตรวจสอบก่อนตอบกลับ ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา</div>
+          <section id="clinicalResearchSetup" class="clinical-research-setup" aria-labelledby="clinicalResearchSetupTitle">
+            <h3 id="clinicalResearchSetupTitle">ก่อนเริ่มค้นคว้า</h3>
+            <p id="clinicalResearchCapabilityMessage" class="clinical-research-capability">กำลังตรวจสอบสิทธิ์การใช้งาน…</p>
+            <div id="clinicalResearchDeidentifiedFields" hidden>
+              <label for="clinicalResearchDeidentifiedSummary">สรุปเคสที่ไม่ระบุตัวตน</label>
+              <textarea id="clinicalResearchDeidentifiedSummary" maxlength="6000" rows="7" placeholder="ใส่เฉพาะข้อมูลทางคลินิกที่จำเป็น โดยตัดชื่อ เลขประจำตัว เบอร์โทร ที่อยู่ วันเกิด และรหัสในระบบออก"></textarea>
+              <label class="clinical-research-check"><input id="clinicalResearchPrivacyReviewed" type="checkbox"> ฉันตรวจแล้วว่าสรุปนี้ไม่มีข้อมูลที่ระบุตัวบุคคลโดยตรง</label>
+            </div>
+            <label id="clinicalResearchAcknowledgmentLabel" class="clinical-research-check" hidden><input id="clinicalResearchAcknowledgment" type="checkbox"> ฉันเข้าใจว่าผลลัพธ์ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา และจะตรวจข้อมูล แหล่งอ้างอิง และร่างคำตอบก่อนใช้</label>
+            <button id="runClinicalResearchButton" class="primary-button" type="button" disabled>เริ่มค้นคว้า</button>
+          </section>
+          <div class="clinical-research-actions">
+            <button id="refreshClinicalResearchButton" class="secondary-button" type="button" disabled hidden>ค้นคว้าใหม่</button>
+          </div>
+          <div id="clinicalResearchContent" class="clinical-research-content">
+            <p class="empty-state">ระบบจะไม่เริ่มค้นคว้าโดยอัตโนมัติ</p>
+          </div>
+          <p class="clinical-research-privacy-note">พี่หมอใช้เฉพาะข้อมูลที่เกี่ยวข้องกับเคสนี้เพื่อช่วยจัดข้อมูลและค้นคว้าประกอบการทำงานของเภสัชกร ผลลัพธ์ทุกครั้งต้องผ่านการตรวจสอบโดยเภสัชกรก่อนนำไปใช้หรือสื่อสารกับผู้รับบริการ ร่างจะไม่ถูกส่งให้ผู้ใช้โดยอัตโนมัติ เภสัชกรเป็นผู้ตัดสินใจและพิมพ์คำตอบเอง</p>
         </div>
       </aside>
     </section>

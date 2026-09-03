@@ -134,6 +134,22 @@ test('GET /api/admin/centers คืนรายชื่อศูนย์ทั
   assert.strictEqual(body.pagination.limit, 20);
 });
 
+test('Clinical Research operations projection is Admin-only and contains no research content', async () => {
+  app.locals.clinicalResearchOperationsService={async getStatus(){return {
+    featureName:'พี่หมอ Clinical Research',mode:'deidentified_pilot',modeLabel:'ทดลองแบบไม่ระบุตัวตน',windowDays:7,
+    metrics:{requests:4,successful:3,failed:1,webSearches:5,approximateTokens:1234},
+    emergencyGuidance:'ปิด Clinical Research ผ่านการตั้งค่าฝั่งเซิร์ฟเวอร์',
+  };}};
+  let response=await callAdmin('/api/admin/operations/clinical-research');
+  assert.strictEqual(response.status,401);
+  response=await callAdmin('/api/admin/operations/clinical-research',{headers:{'X-Admin-Key':REAL_ADMIN_KEY}});
+  assert.strictEqual(response.status,200);
+  const body=await response.json();
+  assert.strictEqual(body.mode,'deidentified_pilot');assert.strictEqual(body.metrics.webSearches,5);
+  assert.doesNotMatch(JSON.stringify(body),/prompt|patient|caseId|careProfile|LINE|provider/i);
+  delete app.locals.clinicalResearchOperationsService;
+});
+
 test('dashboard projection is Admin-only, bounded and contains aggregate values only', async () => {
   app.locals.adminDashboardService = { async getDashboard() {
     return {

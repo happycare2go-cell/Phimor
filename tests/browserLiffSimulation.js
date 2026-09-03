@@ -1178,11 +1178,13 @@ async function roleBasedShellJourney(browser) {
     if(url.pathname==='/api/admin/centers')return{items:[],centers:[],counts:{all:0,active:0,trial:0,expired:0,notConfigured:0,notStarted:0,suspended:0},pagination:{page:1,limit:20,total:0,totalPages:0}};
     if(url.pathname==='/api/admin/platform/operations-foundation')return{organizations:[],centers:[],bounded:{organizationLimit:200,centerLimit:500,organizationsTruncated:false,centersTruncated:false}};
     if(url.pathname==='/api/admin/platform/integration-clients')return{items:[],pagination:{page:1,limit:20,total:0,totalPages:0}};
-    if(url.pathname==='/api/admin/exceptions')return{items:[],pagination:{page:1,pageSize:20,total:0,totalPages:0}};
+    if(url.pathname==='/api/admin/exceptions')return{items:[{category:'scheduler_warning',status:'failed',title:'งานเบื้องหลังต้องตรวจ',summary:'ตรวจสอบสถานะงาน',safeReference:'Scheduler',action:{kind:'inspect_reliability',label:'ดูสถานะระบบ'},occurredAt:'2026-09-03T00:00:00Z'}],pagination:{page:1,pageSize:20,total:1,totalPages:1}};
     if(url.pathname==='/api/admin/platform/pending-subjects')return{items:[]};
     if(url.pathname==='/api/admin/platform/integration-events/status')return{items:[]};
     if(url.pathname==='/api/admin/platform/integration-identity-alerts')return{items:[]};
     if(url.pathname==='/api/admin/data-requests')return{requests:[]};
+    if(url.pathname==='/api/admin/operations/reliability')return{notifications:{pending:0,dead:0},integration:{states:{}},scheduler:{jobs:{}}};
+    if(url.pathname==='/api/admin/operations/clinical-research')return{featureName:'พี่หมอ Clinical Research',mode:'deidentified_pilot',modeLabel:'ทดลองแบบไม่ระบุตัวตน',windowDays:7,metrics:{requests:3,successful:2,failed:1,webSearches:4,approximateTokens:900},emergencyGuidance:'ปิด Clinical Research ผ่านการตั้งค่าฝั่งเซิร์ฟเวอร์'};
     return{status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await admin.setContent(localHtml('system-admin'),{waitUntil:'domcontentloaded'});
@@ -1192,6 +1194,12 @@ async function roleBasedShellJourney(browser) {
     await admin.waitForFunction((value)=>document.querySelector(`[data-shell-destination="${value}"]`).getAttribute('aria-current')==='page',destination);
     assert.equal(await admin.locator(`[data-shell-panel="${destination}"]`).isVisible(),true);
   }
+  await admin.locator('[data-shell-destination="review"]').first().click();
+  await admin.getByRole('button',{name:'ดูสถานะระบบ'}).click();
+  await admin.waitForFunction(()=>document.querySelector('#reliabilityResult').textContent.includes('ทดลองแบบไม่ระบุตัวตน'));
+  const researchOperations=await admin.locator('#reliabilityResult').textContent();
+  assert.match(researchOperations,/พี่หมอ Clinical Research.*คำขอ 3.*สำเร็จ 2.*ไม่สำเร็จ 1.*ค้นเว็บ 4.*โทเคนประมาณ 900/s);
+  assert.doesNotMatch(researchOperations,/prompt|patient|OPENAI_API_KEY|PHARMACIST_AI_RESEARCH_PILOT_USERS/i);
   assert.equal(await admin.locator('.phimor-primary-nav>[data-shell-destination]').count(),5);
   assert.equal(await admin.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
   await admin.setViewportSize({width:1280,height:800});
@@ -1206,6 +1214,7 @@ async function pharmacistConsoleJourney(browser) {
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
     if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
     if(url.pathname==='/api/pharmacist/consultations/active')return {items:[{caseId:'CASE-1',state:'active',waitingOn:'pharmacist',remainingSeconds:3600,effectiveClosed:false}]};
+    if(url.pathname==='/api/pharmacist/consultations/clinical-research/capability')return {status:'available',mode:'deidentified_pilot',allowed:true,requiresDeidentifiedInput:true,requiresAcknowledgment:true};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages'&&request.method()==='POST'){messagePostCalls+=1;return {message:{sequence:1,body:'unexpected'}};}
@@ -1213,8 +1222,8 @@ async function pharmacistConsoleJourney(browser) {
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/context'){contextCalls+=1;return {status:'available',generatedAt:contextCalls>1?'2026-08-25T02:00:00Z':'2026-08-25T01:00:00Z',contact:{displayName:'ญาติตัวอย่าง'},careProfile:{patientName:'ผู้รับการดูแลตัวอย่าง'},currentMedications:[{name:'Metformin',strength:contextCalls>1?'850 mg':'500 mg',instruction:'หลังอาหาร'}],medicationSnapshot:{snapshotId:contextCalls>1?'S-2':'S-1',versionNo:contextCalls>1?2:1},contextVersion:{medicationSnapshotId:contextCalls>1?'S-2':'S-1',medicationVersionNo:contextCalls>1?2:1},recentMedicationChanges:[{snapshot:{recordedAt:'2026-08-24T01:00:00Z'},sourceLabel:'ครอบครัวบันทึก'}],recentVitals:[{occurredAt:'2026-08-24T08:00:00Z',observations:[{measurementType:'blood_pressure_systolic',numericValue:120,canonicalUnit:'mmHg'},{measurementType:'blood_pressure_diastolic',numericValue:75,canonicalUnit:'mmHg'}]}],upcomingAppointments:[]};}
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/clinical-research'&&request.method()==='POST'){
       clinicalResearchCalls+=1;
-      return {status:'available',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:0,totalMessageCount:0,conversationTruncated:false,analysis:{
-        caseSummary:'ทบทวนข้อมูลยาปัจจุบันและคำถามเรื่องเวลาใช้ยา',recordedFacts:['มีข้อมูลยาปัจจุบันใน Care Profile'],relevantMedicationContext:['Metformin 850 mg หลังอาหาร'],medicationChanges:[],missingInformation:['เวลาที่ใช้ยาจริงล่าสุด'],questionsToAsk:['ใช้ยาครั้งล่าสุดเมื่อใด'],keyClinicalIssues:['ควรยืนยันวิธีใช้จากฉลากหรือใบสั่งยา'],safetyConsiderations:[],interactionReview:[{drugs:['Metformin'],finding:'ยังประเมินปฏิกิริยาระหว่างยาไม่ได้ครบ',limitation:'ข้อมูลยาร่วมอาจไม่ครบ'}],guidelineReview:[{topic:'ความปลอดภัยด้านยา',finding:'ควรตรวจสอบกับข้อมูลยาที่ได้รับการยืนยัน',limitation:'ข้อมูลยังไม่ครบ'}],pharmacistRecommendations:['เภสัชกรควรตรวจสอบข้อมูลก่อนตอบ'],escalationConsiderations:[],research:{performed:true,sources:[{title:'Medication safety overview',url:'https://www.who.int/initiatives/medication-without-harm',domain:'who.int'}],limitations:['ข้อมูลจากการสนทนาอาจไม่ครบ']},draftResponseForPharmacistReview:'ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม เพื่อให้เภสัชกรตรวจสอบข้อมูลได้ครบถ้วนค่ะ',disclaimer:'เภสัชกรเป็นผู้ตัดสินใจและต้องตรวจสอบก่อนส่ง',
+      return {status:'available',mode:'deidentified_pilot',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:1,totalMessageCount:1,conversationTruncated:false,analysis:{
+        caseSummary:'ทบทวนข้อมูลยาปัจจุบันและคำถามเรื่องเวลาใช้ยา',recordedFacts:[],relevantMedicationContext:[],medicationChanges:[],missingInformation:['เวลาที่ใช้ยาจริงล่าสุด'],questionsToAsk:['ใช้ยาครั้งล่าสุดเมื่อใด'],keyClinicalIssues:[{text:'ควรยืนยันวิธีใช้จากฉลากหรือใบสั่งยา',evidenceRefs:['SRC-1']}],safetyConsiderations:[],interactionReview:[],guidelineReview:[{topic:'ความปลอดภัยด้านยา',finding:'ควรตรวจสอบกับข้อมูลยาที่ได้รับการยืนยัน',evidenceRefs:['SRC-1'],limitation:'ข้อมูลยังไม่ครบ'}],pharmacistRecommendations:[],escalationConsiderations:[],research:{performed:true,sources:[{referenceId:'SRC-1',title:'Medication safety overview',url:'https://www.who.int/initiatives/medication-without-harm',domain:'who.int'}],limitations:['ข้อมูลจากการสนทนาอาจไม่ครบ']},draftResponseForPharmacistReview:'ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม เพื่อให้เภสัชกรตรวจสอบข้อมูลได้ครบถ้วนค่ะ',disclaimer:'เภสัชกรเป็นผู้ตัดสินใจและต้องตรวจสอบก่อนส่ง',
       },usage:{inputTokens:60,outputTokens:25,totalTokens:85}};
     }
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
@@ -1240,9 +1249,13 @@ async function pharmacistConsoleJourney(browser) {
   await page.waitForFunction(()=>document.querySelector('#caseContext').textContent.includes('850 mg'));
   assert.ok(contextCalls>=2);
   await page.locator('#closeCaseContextButton').click();
+  await page.getByRole('button',{name:/พี่หมอ Clinical Research/}).click();
+  await page.locator('#clinicalResearchDeidentifiedSummary').fill('ผู้ใหญ่ใช้ยาลดน้ำตาลและต้องการให้เภสัชกรตรวจสอบข้อมูลเวลาใช้ยาจากแหล่งอ้างอิง');
+  await page.locator('#clinicalResearchPrivacyReviewed').check();
+  await page.locator('#clinicalResearchAcknowledgment').check();
   const [researchResponse]=await Promise.all([
     page.waitForResponse((response)=>response.url().includes('/api/pharmacist/consultations/CASE-Q/clinical-research')),
-    page.getByRole('button',{name:/วิเคราะห์บทสนทนา/}).click(),
+    page.getByRole('button',{name:'เริ่มค้นคว้า'}).click(),
   ]);
   assert.equal((await researchResponse.json()).status,'available');
   await page.waitForFunction(()=>!document.querySelector('#clinicalResearchPanel').hidden&&document.querySelector('#clinicalResearchContent').textContent.includes('ทบทวนข้อมูลยาปัจจุบัน'));
@@ -1250,10 +1263,10 @@ async function pharmacistConsoleJourney(browser) {
   assert.match(await page.locator('#clinicalResearchContent').textContent(),/Medication safety overview/);
   assert.match(await page.locator('#clinicalResearchContent').textContent(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุด/);
   const researchLayout=await page.evaluate(()=>{
-    const panel=document.querySelector('#clinicalResearchPanel');const content=document.querySelector('#clinicalResearchContent');const link=content.querySelector('a');const copy=content.querySelector('.clinical-research-copy');
+    const panel=document.querySelector('#clinicalResearchPanel');const body=document.querySelector('.clinical-research-body');const content=document.querySelector('#clinicalResearchContent');const link=content.querySelector('a');const copy=content.querySelector('.clinical-research-copy');
     const panelRect=panel.getBoundingClientRect();const copyRect=copy.getBoundingClientRect();const linkRect=link.getBoundingClientRect();
-    content.scrollTop=content.scrollHeight;
-    return {panelTop:panelRect.top,panelBottom:panelRect.bottom,viewportHeight:window.innerHeight,overflowY:getComputedStyle(content).overflowY,linkHeight:linkRect.height,copyHeight:copyRect.height,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};
+    body.scrollTop=body.scrollHeight;
+    return {panelTop:panelRect.top,panelBottom:panelRect.bottom,viewportHeight:window.innerHeight,overflowY:getComputedStyle(body).overflowY,linkHeight:linkRect.height,copyHeight:copyRect.height,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};
   });
   assert.ok(researchLayout.panelTop>=0&&researchLayout.panelBottom<=researchLayout.viewportHeight);
   assert.equal(researchLayout.overflowY,'auto');
@@ -1263,6 +1276,8 @@ async function pharmacistConsoleJourney(browser) {
   assert.equal(await page.locator('#clinicalResearchPanel').isHidden(),true);
   assert.match(await page.locator('#messageComposer').inputValue(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุด/);
   assert.equal(messagePostCalls,0);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.setViewportSize({width:1280,height:800});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
   await page.close();
 }

@@ -262,7 +262,7 @@ test('unexpected database errors become a generic safe unavailable envelope', as
   assert.doesNotMatch(JSON.stringify(operationalEvents),/consultation_messages|PRIVATE_SQL_STACK|ขอข้อมูลเพิ่ม|U-PHARM|CASE-1/);
 });
 
-test('pharmacist clinical research route accepts only refresh, uses a dedicated rate limit and never sends chat',async()=>{
+test('pharmacist clinical research route exposes safe capability, accepts pilot review fields, rate limits and never sends chat',async()=>{
   const calls=[];
   await withApi({pharmacist:{
     readService:reads(),
@@ -271,10 +271,16 @@ test('pharmacist clinical research route accepts only refresh, uses a dedicated 
       calls.push({research:input});
       return {status:'available',generatedAt:'2026-09-03T10:00:00Z',analysis:{caseSummary:'private'}};
     },
+    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']},
     messageService:{async sendMessage(){calls.push({message:true});}},
   }},async(api)=>{
+    const capability=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-PHARM');
+    assert.equal(capability.status,200);
+    const capabilityBody=await capability.json();
+    assert.equal(capabilityBody.mode,'deidentified_pilot');assert.equal(capabilityBody.allowed,true);
+    assert.doesNotMatch(JSON.stringify(capabilityBody),/U-PHARM|pilotUsers|provider/i);
     const response=await api('/api/pharmacist/consultations/CASE-1/clinical-research',{
-      method:'POST',body:JSON.stringify({refresh:true}),
+      method:'POST',body:JSON.stringify({refresh:true,deidentifiedSummary:'ข้อมูลทั่วไปที่ไม่ระบุตัวตนสำหรับเภสัชกรตรวจสอบ',privacyReviewed:true,safetyAcknowledged:true}),
     },'U-PHARM');
     assert.equal(response.status,200);
     assert.equal((await response.json()).status,'available');
@@ -289,6 +295,8 @@ test('pharmacist clinical research route accepts only refresh, uses a dedicated 
   });
   assert.deepEqual(calls[0],{rate:{caseId:'CASE-1',pharmacistId:'PH-1'}});
   assert.equal(calls[1].research.pharmacistLineUserId,'U-PHARM');
+  assert.equal(calls[1].research.privacyReviewed,true);
+  assert.equal(calls[1].research.safetyAcknowledged,true);
   assert.equal(calls.some((item)=>item.message),false);
 });
 

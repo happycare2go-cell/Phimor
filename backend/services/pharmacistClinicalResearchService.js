@@ -10,10 +10,15 @@ const {
   CLINICAL_SYNTHESIS_SCHEMA, validateResearchPlan, validateWebEvidence, validateClinicalSynthesis,
 } = require('../providers/pharmacistClinicalResearch');
 const { buildConsultationResearchContext } = require('./consultationResearchContextBuilder');
-const { sanitizeResearchPlan } = require('./clinicalResearchPrivacy');
+const { sanitizeResearchPlan, validateDeidentifiedPilotSummary } = require('./clinicalResearchPrivacy');
 const { buildEvidenceBundle, createUsageAccumulator } = require('./clinicalEvidenceService');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
 const { ConsultationDomainError } = require('../domain/consultation');
+const { classifyConsultationSafety } = require('./consultationSafetyService');
+const { requireConsultationResearchAccess } = require('./consultationResearchAccessService');
+const {
+  CLINICAL_RESEARCH_MODES, loadClinicalResearchPilotConfig, clinicalResearchAccess,
+} = require('../config/clinicalResearchPilot');
 
 const SAFE_PROVIDER_ERRORS = new Set([
   AI_ERROR_CODES.AI_UNAVAILABLE, AI_ERROR_CODES.AI_TIMEOUT, AI_ERROR_CODES.AI_RATE_LIMIT,
@@ -30,9 +35,13 @@ function unavailable(errorCode) {
 function assertGroundedSynthesis(result, context) {
   const medicationNames = (context.currentMedications || [])
     .map((item) => String(item.name || '').normalize('NFC').trim().toLowerCase()).filter(Boolean);
+  const deidentifiedSummary = String(context.deidentifiedCaseSummary || '').normalize('NFC').toLowerCase();
   for (const item of result.relevantMedicationContext || []) {
     const normalized = item.text.normalize('NFC').toLowerCase();
-    if (!medicationNames.some((name) => normalized.includes(name))) {
+    const deidentifiedTerms = normalized.split(/[^\p{L}\p{N}.]+/u).filter((term) => term.length >= 4);
+    const groundedInManualSummary = context.contextType === 'pharmacist_clinical_research_deidentified'
+      && deidentifiedTerms.some((term) => deidentifiedSummary.includes(term));
+    if (!medicationNames.some((name) => normalized.includes(name)) && !groundedInManualSummary) {
       const error = new Error('Ungrounded medication fact');
       error.code = AI_ERROR_CODES.AI_INVALID_RESPONSE;
       throw error;
@@ -54,6 +63,33 @@ function assertGroundedSynthesis(result, context) {
   return result;
 }
 
+function prepareDeidentifiedContext(summary, access, now) {
+  const at = new Date(access.databaseNow || now).toISOString();
+  const triage = classifyConsultationSafety(summary);
+  const context = Object.freeze({
+    contextType:'pharmacist_clinical_research_deidentified',
+    contextVersion:'consultation-clinical-research-deidentified-pilot-v1',
+    contextTimestamp:at,
+    state:access.state,
+    triage:Object.freeze({ action:triage.action, category:triage.category, reasonCode:triage.reasonCode || null }),
+    deidentifiedCaseSummary:summary,
+    conversation:Object.freeze({
+      initialQuestion:summary, messages:Object.freeze([]), conversationTruncated:false,
+      analyzedMessageCount:1, totalMessageCount:1, analyzedThroughSequence:0,
+    }),
+    recordedFacts:Object.freeze([]), currentMedications:Object.freeze([]),
+    medicationChanges:Object.freeze([]), vitalFacts:Object.freeze([]),
+    confirmedLabs:Object.freeze([]), appointments:Object.freeze([]),
+    missingInformation:Object.freeze(['DEIDENTIFIED_PILOT_NO_AUTOMATIC_CARE_PROFILE_CONTEXT']),
+  });
+  return Object.freeze({
+    context,
+    privacy:Object.freeze({ blockedTerms:Object.freeze([]), conversationTexts:Object.freeze([summary]) }),
+    careProfileId:null,
+    pharmacistId:access.pharmacistId,
+  });
+}
+
 function withDeterministicSafety(result, context) {
   if (context.triage?.action !== 'emergency_block') return result;
   const item = Object.freeze({
@@ -70,9 +106,11 @@ function withDeterministicSafety(result, context) {
 
 function createPharmacistClinicalResearchService(overrides = {}) {
   const config = overrides.config || loadV2Config();
-  const flags = overrides.flags || loadFeatureFlags();
+  const flags = overrides.flags || loadFeatureFlags(overrides.env || process.env);
+  const pilotConfig = overrides.pilotConfig || loadClinicalResearchPilotConfig(overrides.env || process.env);
   const researchProviderName = config.ai.clinicalResearchProvider || config.ai.provider || 'gemini';
   const contextBuilder = overrides.contextBuilder || buildConsultationResearchContext;
+  const accessChecker = overrides.accessChecker || requireConsultationResearchAccess;
   const auditRecorder = overrides.recordAudit || recordAIInteractionMetadata;
   const writeAudit = async (record) => {
     try { return await auditRecorder(record, overrides.auditOptions); } catch (_) {
@@ -95,14 +133,31 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     return defaultProvider;
   };
 
-  return async function generateClinicalResearch({ caseId, pharmacistLineUserId, now = new Date() } = {}) {
-    if (!flags.consultation?.clinicalResearch) {
+  return async function generateClinicalResearch({
+    caseId, pharmacistLineUserId, deidentifiedSummary,
+    privacyReviewed = false, safetyAcknowledged = false, now = new Date(),
+  } = {}) {
+    if (!flags.consultation?.clinicalResearch || !pilotConfig.emergencyEnabled) {
+      throw new ConsultationDomainError('CLINICAL_RESEARCH_DISABLED', 503);
+    }
+    const access = clinicalResearchAccess(pilotConfig, pharmacistLineUserId);
+    if (!access.allowed) throw new ConsultationDomainError('CLINICAL_RESEARCH_NOT_ALLOWED', 403);
+    if (safetyAcknowledged !== true) throw new ConsultationDomainError('CLINICAL_RESEARCH_ACK_REQUIRED', 400);
+    let prepared;
+    if (pilotConfig.mode === CLINICAL_RESEARCH_MODES.DEIDENTIFIED_PILOT) {
+      if (privacyReviewed !== true) throw new ConsultationDomainError('DEIDENTIFIED_REVIEW_REQUIRED', 400);
+      const validation = validateDeidentifiedPilotSummary(deidentifiedSummary);
+      if (!validation.ok) throw new ConsultationDomainError(validation.errorCode, 400);
+      const authorized = await accessChecker({ caseId, pharmacistLineUserId, now });
+      prepared = prepareDeidentifiedContext(validation.summary, authorized, now);
+    } else if (pilotConfig.mode === CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE) {
+      prepared = await contextBuilder({ caseId, pharmacistLineUserId, now });
+    } else {
       throw new ConsultationDomainError('CLINICAL_RESEARCH_DISABLED', 503);
     }
     const interactionId = `AI-${randomUUID()}`;
     const requestedAt = new Date(now).toISOString();
     const usage = createUsageAccumulator();
-    const prepared = await contextBuilder({ caseId, pharmacistLineUserId, now });
     const serializedContext = JSON.stringify(prepared.context);
     let plan;
     let evidence = Object.freeze({ findings:Object.freeze([]), sources:Object.freeze([]), limitations:Object.freeze([]) });
@@ -194,7 +249,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         careProfileId:prepared.careProfileId, consultationCaseId:caseId,
         purpose:'pharmacist_clinical_research', intent:'clinical_research',
         provider:researchProviderName, model:config.ai.clinicalResearchModel,
-        promptVersion:SYNTHESIS_PROMPT_VERSION, contextVersion:RESEARCH_CONTEXT_VERSION,
+        promptVersion:SYNTHESIS_PROMPT_VERSION, contextVersion:prepared.context.contextVersion || RESEARCH_CONTEXT_VERSION,
         researchPlanVersion:RESEARCH_PLAN_VERSION,
         resultStatus:'needs_review', requestedAt, completedAt:generatedAt,
         inputCharacterCount, outputCharacterCount,
@@ -202,7 +257,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
       });
       if (!audit?.recorded) return unavailable('AI_AUDIT_WRITE_FAILED');
       return Object.freeze({
-        status:'available', generatedAt,
+        status:'available', mode:pilotConfig.mode, generatedAt,
         contextTimestamp:prepared.context.contextTimestamp,
         analyzedThroughSequence:prepared.context.conversation.analyzedThroughSequence,
         analyzedMessageCount:prepared.context.conversation.analyzedMessageCount,
@@ -218,7 +273,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         careProfileId:prepared.careProfileId, consultationCaseId:caseId,
         purpose:'pharmacist_clinical_research', intent:'clinical_research',
         provider:researchProviderName, model:config.ai.clinicalResearchModel,
-        promptVersion:SYNTHESIS_PROMPT_VERSION, contextVersion:RESEARCH_CONTEXT_VERSION,
+        promptVersion:SYNTHESIS_PROMPT_VERSION, contextVersion:prepared.context.contextVersion || RESEARCH_CONTEXT_VERSION,
         researchPlanVersion:RESEARCH_PLAN_VERSION,
         resultStatus:'error', errorCode, requestedAt, completedAt:new Date(now).toISOString(),
         inputCharacterCount, outputCharacterCount, ...totals,
@@ -234,6 +289,7 @@ const generatePharmacistClinicalResearch = createPharmacistClinicalResearchServi
 
 module.exports = {
   SAFE_PROVIDER_ERRORS, unavailable, assertGroundedSynthesis, withDeterministicSafety,
+  prepareDeidentifiedContext,
   createPharmacistClinicalResearchService, generatePharmacistClinicalResearch,
   RESEARCH_PROMPT_VERSION,
 };

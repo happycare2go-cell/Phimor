@@ -60,12 +60,24 @@
   function accessStateMessage(access,error){if(access==='allowed')return '';if(access==='loading')return 'กำลังตรวจสอบสิทธิ์…';if(access==='denied')return 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน Pharmacist Console กรุณาติดต่อผู้ดูแลระบบ';if(error==='CONSULTATION_DISABLED')return 'ระบบปรึกษาเภสัชกรยังไม่เปิดใช้งาน';return 'ไม่สามารถเชื่อมต่อ Pharmacist Console ได้ กรุณาลองใหม่';}
   function assistantErrorMessage(code){return ({AI_TIMEOUT:'AI Assistant ใช้เวลานานเกินไป กรุณาลองใหม่ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_RATE_LIMIT:'AI Assistant มีคำขอจำนวนมาก กรุณารอสักครู่แล้วลองใหม่',AI_INVALID_RESPONSE:'AI Assistant ไม่สามารถจัดรูปแบบข้อมูลได้ กรุณาลองใหม่',AI_UNAVAILABLE:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_PROVIDER_ERROR:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ'})[code]||'AI Assistant ไม่พร้อมใช้งานในขณะนี้ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ';}
   function clinicalResearchErrorMessage(code){return ({
-    CLINICAL_RESEARCH_DISABLED:'ระบบวิเคราะห์เชิงคลินิกยังไม่เปิดใช้งาน',
+    CLINICAL_RESEARCH_DISABLED:'พี่หมอ Clinical Research ยังไม่เปิดใช้งาน',
+    CLINICAL_RESEARCH_NOT_ALLOWED:'ยังไม่เปิดให้บัญชีนี้ใช้งานพี่หมอ Clinical Research',
+    CLINICAL_RESEARCH_ACK_REQUIRED:'กรุณายืนยันว่าได้อ่านข้อควรทราบก่อนเริ่มค้นคว้า',
+    DEIDENTIFIED_REVIEW_REQUIRED:'กรุณาตรวจสรุปเคสและยืนยันว่าไม่มีข้อมูลระบุตัวตน',
+    DEIDENTIFIED_SUMMARY_REQUIRED:'กรุณาใส่สรุปเคสที่ไม่ระบุตัวตนให้ครบถ้วน',
+    DEIDENTIFIED_SUMMARY_PRIVACY_REJECTED:'สรุปนี้อาจมีข้อมูลที่ระบุตัวบุคคล กรุณานำข้อมูลนั้นออกก่อนส่ง',
     CONSULTATION_RATE_LIMITED:'มีการวิเคราะห์หลายครั้ง กรุณารอสักครู่แล้วลองใหม่',
     AI_TIMEOUT:'การวิเคราะห์ใช้เวลานานเกินไป กรุณาลองใหม่',
     AI_RATE_LIMIT:'ระบบวิเคราะห์มีคำขอจำนวนมาก กรุณารอสักครู่แล้วลองใหม่',
     AI_AUDIT_WRITE_FAILED:'ไม่สามารถบันทึกหลักฐานการใช้งาน AI ได้ จึงไม่แสดงผลการวิเคราะห์',
   })[code]||'ระบบวิเคราะห์บทสนทนายังไม่พร้อม กรุณาดำเนินการสนทนาด้วยตนเอง';}
+  function clinicalResearchCapabilityMessage(capability={}){
+    if(capability.status==='disabled')return 'ฟีเจอร์นี้ยังปิดอยู่ ระบบจะไม่ส่งคำขอค้นคว้าภายนอก';
+    if(capability.status==='not_allowed')return 'ยังไม่เปิดให้บัญชีนี้ใช้งาน';
+    if(capability.mode==='deidentified_pilot')return 'โหมดทดลองแบบไม่ระบุตัวตน: ใส่สรุปที่ผ่านการตรวจโดยมนุษย์ ระบบจะไม่ดึง Care Profile อัตโนมัติ';
+    if(capability.mode==='controlled_live')return 'Controlled Pilot: ระบบใช้บริบทที่ได้รับอนุญาตของเคสเมื่อเภสัชกรสั่งค้นคว้าเท่านั้น';
+    return 'กำลังตรวจสอบสิทธิ์การใช้งาน…';
+  }
   function researchLimitationLabel(value){return ({
     RESEARCH_QUERY_PRIVACY_REJECTED:'บางหัวข้อไม่ถูกค้นภายนอกเพื่อคุ้มครองข้อมูลส่วนบุคคล',
     RESEARCH_TEMPORARILY_UNAVAILABLE:'การค้นหลักฐานภายนอกไม่พร้อมใช้งานชั่วคราว',
@@ -74,7 +86,7 @@
     NO_VERIFIED_EVIDENCE_SOURCE:'ไม่พบแหล่งอ้างอิงที่ตรวจสอบได้จากผลการค้นครั้งนี้',
     INSUFFICIENT_INTERACTION_EVIDENCE:'ยังไม่มีหลักฐานเพียงพอที่จะสรุปเรื่องปฏิกิริยาระหว่างยา',
   })[value]||'ผลการวิเคราะห์มีข้อจำกัดที่เภสัชกรควรตรวจสอบ';}
-  function clinicalResearchIsStale(result,latestSequence){return result?.status==='available'&&Number(latestSequence)>Number(result.analyzedThroughSequence||0);}
+  function clinicalResearchIsStale(result,latestSequence){return result?.status==='available'&&result.mode!=='deidentified_pilot'&&Number(latestSequence)>Number(result.analyzedThroughSequence||0);}
   function safeExternalUrl(value){try{const url=new URL(value);return url.protocol==='https:'?url.toString():null;}catch(_){return null;}}
   function supportReference(correlationId){return correlationId?` (รหัสอ้างอิง ${correlationId})`:'';}
   function messageSendErrorMessage(code,correlationId=null){if(['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code))return 'เคสนี้หมดเวลาหรือปิดแล้ว จึงไม่สามารถส่งข้อความใหม่ได้';if(['CONSULTATION_ACCESS_DENIED','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED'].includes(code))return 'สิทธิ์เข้าถึงเคสนี้ไม่พร้อมใช้งาน กรุณารีเฟรชหรือติดต่อผู้ดูแลระบบ';if(code==='CONSULTATION_RATE_LIMITED')return 'ส่งข้อความถี่เกินไป กรุณารอสักครู่';if(['CONSULTATION_NOT_ACCEPTED','CONSULTATION_NOT_ACTIVE','INVALID_WAITING_ON_STATE'].includes(code))return 'สถานะเคสยังไม่อนุญาตให้ส่งข้อความ กรุณารีเฟรชเคส';return `ระบบส่งข้อความไม่พร้อมชั่วคราว กรุณาลองใหม่${supportReference(correlationId)}`;}
@@ -101,7 +113,7 @@
       access:'loading',tab:'queue',collections:{queue:[],active:[],resolved:[],closed:[]},
       queueCursor:null,queueHasMore:false,selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,
       caseContext:null,caseContextLoading:false,
-      assistant:null,assistantBusy:false,clinicalResearch:null,clinicalResearchBusy:false,
+      assistant:null,assistantBusy:false,clinicalResearch:null,clinicalResearchBusy:false,clinicalResearchCapability:null,
       sending:false,acceptingCaseId:null,resolving:false,
       error:null,statusMessage:'',retryAfterSeconds:0,connectionStatus:'idle',activePanel:null,
     };
@@ -171,8 +183,17 @@
     }
     async function initialize(){
       const result=await loadCollection('queue');
-      if(state.access==='allowed') await loadCollection('active');
+      if(state.access==='allowed') await Promise.all([loadCollection('active'),loadClinicalResearchCapability()]);
       return result;
+    }
+    async function loadClinicalResearchCapability(){
+      try{
+        const result=await request('/api/pharmacist/consultations/clinical-research/capability');
+        patch({clinicalResearchCapability:result});return result;
+      }catch(error){
+        const result={status:'disabled',mode:'disabled',allowed:false,errorCode:apiErrorCode(error)};
+        patch({clinicalResearchCapability:result});return result;
+      }
     }
     async function switchTab(tab){
       if(!TABS.includes(tab)) return {ignored:true};
@@ -311,13 +332,13 @@
         return {error:apiErrorCode(error)};
       }
     }
-    async function generateClinicalResearch(){
+    async function generateClinicalResearch(input={}){
       const caseId=state.selectedCase?.caseId;
       if(!caseId||state.clinicalResearchBusy||effectiveClosed(state.selectedCase))return {ignored:true};
       const requestRevision=token();
       patch({activePanel:'research',clinicalResearchBusy:true,clinicalResearch:{status:'loading'},error:null});
       try{
-        const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/clinical-research`,{method:'POST',body:JSON.stringify({refresh:true})});
+        const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/clinical-research`,{method:'POST',body:JSON.stringify({refresh:true,...input})});
         if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
         patch({clinicalResearchBusy:false,clinicalResearch:result});return result;
       }catch(error){
@@ -328,7 +349,7 @@
     function clearSelection(){revision+=1;stopPolling();realtime?.stop?.();realtime=null;patch({selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,caseContext:null,caseContextLoading:false,assistant:null,assistantBusy:false,clinicalResearch:null,clinicalResearchBusy:false,statusMessage:'',connectionStatus:'idle',activePanel:null});}
     function setPanel(activePanel){patch({activePanel:activePanel||null});}
     function handleVisibilityChange(){const visible=!documentHidden();realtime?.setVisible?.(visible);if(!visible)stopPolling();else{pollOnce();schedulePoll();}}
-    return {snapshot,initialize,loadCollection,switchTab,selectCase,acceptCase,refreshCaseContext,pollOnce,loadOlderMessages,sendMessage,retryMessage,markRead,resolveCase,generateAssistant,generateClinicalResearch,clearSelection,setPanel,stopPolling,schedulePoll,handleVisibilityChange};
+    return {snapshot,initialize,loadCollection,loadClinicalResearchCapability,switchTab,selectCase,acceptCase,refreshCaseContext,pollOnce,loadOlderMessages,sendMessage,retryMessage,markRead,resolveCase,generateAssistant,generateClinicalResearch,clearSelection,setPanel,stopPolling,schedulePoll,handleVisibilityChange};
   }
 
   function clearNode(node){while(node?.firstChild)node.removeChild(node.firstChild);}
@@ -405,6 +426,24 @@
     });
     section.appendChild(list);container.appendChild(section);
   }
+  function researchEvidenceSupport(analysis={}){
+    const support=new Map();
+    const groups=[
+      ['ประเด็นที่ควรตรวจสอบ',analysis.keyClinicalIssues],
+      ['ข้อมูลปฏิกิริยาระหว่างยา / ข้อควรระวัง',analysis.interactionReview],
+      ['แนวทาง / หลักฐานอ้างอิง',analysis.guidelineReview],
+      ['ข้อเสนอแนะสำหรับเภสัชกร',analysis.pharmacistRecommendations],
+      ['ประเด็นที่ควรส่งต่อแพทย์/ทีมรักษา',analysis.escalationConsiderations],
+    ];
+    groups.forEach(([label,items])=>safeArray(items).forEach((item)=>{
+      const finding=safeText(item?.text||item?.finding||item?.topic).trim();
+      safeArray(item?.evidenceRefs).forEach((reference)=>{
+        const key=safeText(reference).trim();if(!key)return;
+        const values=support.get(key)||[];values.push(finding?`${label}: ${finding}`:label);support.set(key,values);
+      });
+    }));
+    return support;
+  }
   function copyResearchDraftToComposer(result,composer){
     const draft=safeText(result?.analysis?.draftResponseForPharmacistReview).trim();
     if(!draft||!composer||composer.disabled)return false;
@@ -412,8 +451,8 @@
   }
   function renderClinicalResearch(doc,container,result={},options={}){
     clearNode(container);
-    if(!result||!result.status){textElement(doc,container,'p','empty-state','กด “วิเคราะห์บทสนทนา” เมื่อเภสัชกรต้องการให้ระบบช่วยทบทวนข้อมูล');return;}
-    if(result.status==='loading'){textElement(doc,container,'p','clinical-research-loading','กำลังวิเคราะห์บทสนทนาและข้อมูลที่เกี่ยวข้อง…');return;}
+    if(!result||!result.status){textElement(doc,container,'p','empty-state','ระบบจะเริ่มค้นคว้าเมื่อเภสัชกรตรวจข้อมูลและกด “เริ่มค้นคว้า” เท่านั้น');return;}
+    if(result.status==='loading'){textElement(doc,container,'p','clinical-research-loading','กำลังจัดข้อมูลและค้นคว้าจากแหล่งอ้างอิง กรุณารอสักครู่…');return;}
     if(result.status!=='available'){textElement(doc,container,'p','clinical-research-unavailable',clinicalResearchErrorMessage(result.errorCode));return;}
     if(clinicalResearchIsStale(result,options.latestSequence)){
       const stale=doc.createElement('section');stale.className='clinical-research-notice clinical-research-notice--stale';
@@ -429,35 +468,49 @@
       container.appendChild(notice);
     }
     const analysis=result.analysis||{};
-    textElement(doc,container,'p','context-time',`สร้างเมื่อ ${formatClinicalTime(result.generatedAt)} · วิเคราะห์ถึงข้อความลำดับ ${Number(result.analyzedThroughSequence)||0}`);
-    appendResearchList(doc,container,'summary','สรุปคำถามของผู้ใช้',[safeText(analysis.caseSummary,'ยังไม่มีข้อมูลสรุป')]);
+    const contextDescription=result.mode==='deidentified_pilot'
+      ?'ใช้สรุปแบบไม่ระบุตัวตนที่เภสัชกรตรวจแล้ว'
+      :`วิเคราะห์ถึงข้อความลำดับ ${Number(result.analyzedThroughSequence)||0}`;
+    textElement(doc,container,'p','context-time',`สร้างเมื่อ ${formatClinicalTime(result.generatedAt)} · ${contextDescription}`);
+    appendResearchList(doc,container,'summary','สรุปประเด็นจากบทสนทนา',[safeText(analysis.caseSummary,'ยังไม่มีข้อมูลสรุป')]);
     appendResearchList(doc,container,'facts','ข้อมูลจาก Care Profile ที่เกี่ยวข้อง',analysis.recordedFacts);
     appendResearchList(doc,container,'medications','ยาปัจจุบันที่เกี่ยวข้อง',analysis.relevantMedicationContext);
     appendResearchList(doc,container,'changes','การเปลี่ยนแปลงยาที่เกี่ยวข้อง',analysis.medicationChanges);
     appendResearchList(doc,container,'missing','ข้อมูลที่ยังขาด',analysis.missingInformation);
-    appendResearchList(doc,container,'questions','คำถามที่ควรถามเพิ่ม',analysis.questionsToAsk);
-    appendResearchList(doc,container,'issues','ประเด็นทางคลินิกที่ควรพิจารณา',analysis.keyClinicalIssues);
+    appendResearchList(doc,container,'questions','คำถามที่ควรถามเพิ่มเติม',analysis.questionsToAsk);
+    appendResearchList(doc,container,'issues','ประเด็นที่ควรตรวจสอบ',analysis.keyClinicalIssues);
     appendResearchList(doc,container,'safety','ประเด็นความปลอดภัย',analysis.safetyConsiderations);
-    appendResearchList(doc,container,'interactions','การตรวจ Drug Interaction',analysis.interactionReview,(item)=>{
+    const supportedInteractions=safeArray(analysis.interactionReview).filter((item)=>safeArray(item?.evidenceRefs).length>0);
+    appendResearchList(doc,container,'interactions','ข้อมูลปฏิกิริยาระหว่างยา / ข้อควรระวัง',supportedInteractions,(item)=>{
       const drugs=safeArray(item?.drugs).map((value)=>safeText(value)).filter(Boolean).join(' + ');
       return [drugs,safeText(item?.finding),safeText(item?.patientRelevance),safeText(item?.limitation)].filter(Boolean).join(' · ');
     });
-    appendResearchList(doc,container,'guidelines','แนวทาง/หลักฐานที่ควรพิจารณา',analysis.guidelineReview,(item)=>
+    if(safeArray(analysis.interactionReview).length>supportedInteractions.length){
+      appendResearchList(doc,container,'interactions-missing','ข้อมูลปฏิกิริยาระหว่างยา / ข้อควรระวัง',['ยังไม่พบหลักฐานเพียงพอจากแหล่งที่ค้นในครั้งนี้']);
+    }
+    appendResearchList(doc,container,'guidelines','แนวทาง / หลักฐานอ้างอิง',analysis.guidelineReview,(item)=>
       [safeText(item?.topic),safeText(item?.finding),safeText(item?.applicability),safeText(item?.limitation)].filter(Boolean).join(' · '));
     appendResearchList(doc,container,'recommendations','ข้อเสนอแนะสำหรับเภสัชกร',analysis.pharmacistRecommendations);
-    appendResearchList(doc,container,'escalation','ประเด็นที่ควรส่งต่อ',analysis.escalationConsiderations);
+    appendResearchList(doc,container,'escalation','ประเด็นที่ควรส่งต่อแพทย์/ทีมรักษา',analysis.escalationConsiderations);
     const research=analysis.research||{};
     if(research.performed===true&&safeArray(research.sources).length){
       const sourceSection=doc.createElement('section');sourceSection.className='clinical-research-section clinical-research-sources';
-      textElement(doc,sourceSection,'h3','','แหล่งข้อมูล');const list=doc.createElement('ul');
+      textElement(doc,sourceSection,'h3','','แหล่งข้อมูลที่พี่หมอค้นพบ');const list=doc.createElement('ul');
+      const support=researchEvidenceSupport(analysis);
       safeArray(research.sources).forEach((source)=>{
         const url=safeExternalUrl(source?.url);if(!url)return;
-        const li=doc.createElement('li');const link=textElement(doc,li,'a','clinical-research-source-link',safeText(source?.title,safeText(source?.domain,'แหล่งข้อมูล')));
+        const li=doc.createElement('li');textElement(doc,li,'strong','',safeText(source?.title,safeText(source?.domain,'แหล่งข้อมูล')));
+        const link=textElement(doc,li,'a','clinical-research-source-link','เปิดแหล่งอ้างอิง');
         link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';
         textElement(doc,li,'small','',[
           safeText(source?.domain),source?.publishedAt?`เผยแพร่ ${formatClinicalTime(source.publishedAt)}`:'ไม่พบวันที่เผยแพร่',
           source?.accessedAt?`เข้าถึง ${formatClinicalTime(source.accessedAt)}`:'',
-        ].filter(Boolean).join(' · '));list.appendChild(li);
+        ].filter(Boolean).join(' · '));
+        const supported=support.get(safeText(source?.referenceId))||[];
+        textElement(doc,li,'span','clinical-research-source-support',supported.length
+          ?`สนับสนุน: ${supported.join(' · ')}`
+          :'ยังไม่พบประเด็นในผลลัพธ์ที่อ้างถึงแหล่งนี้โดยตรง');
+        list.appendChild(li);
       });
       sourceSection.appendChild(list);container.appendChild(sourceSection);
     }
@@ -465,7 +518,7 @@
     const draft=safeText(analysis.draftResponseForPharmacistReview).trim();
     if(draft){
       const draftSection=doc.createElement('section');draftSection.className='clinical-research-section clinical-research-draft';
-      textElement(doc,draftSection,'h3','','ร่างคำตอบสำหรับเภสัชกรตรวจสอบ');textElement(doc,draftSection,'p','',draft);
+      textElement(doc,draftSection,'h3','','ร่างสำหรับเภสัชกรตรวจสอบ');textElement(doc,draftSection,'p','',draft);
       const copy=textElement(doc,draftSection,'button','primary-button clinical-research-copy','นำร่างไปใส่ช่องตอบ');copy.type='button';copy.addEventListener('click',()=>options.onCopyDraft?.());
       container.appendChild(draftSection);
     }
@@ -532,6 +585,10 @@
       contextPanel:doc.getElementById('caseContextPanel'),assistantPanel:doc.getElementById('assistantPanel'),showContext:doc.getElementById('showCaseContextButton'),showAssistant:doc.getElementById('showAssistantButton'),refreshContext:doc.getElementById('refreshCaseContextButton'),closeContext:doc.getElementById('closeCaseContextButton'),closeAssistant:doc.getElementById('closeAssistantButton'),
       researchPanel:doc.getElementById('clinicalResearchPanel'),research:doc.getElementById('clinicalResearchContent'),
       showResearch:doc.getElementById('showClinicalResearchButton'),refreshResearch:doc.getElementById('refreshClinicalResearchButton'),closeResearch:doc.getElementById('closeClinicalResearchButton'),
+      researchCapabilityMessage:doc.getElementById('clinicalResearchCapabilityMessage'),researchDeidentifiedFields:doc.getElementById('clinicalResearchDeidentifiedFields'),
+      researchSummary:doc.getElementById('clinicalResearchDeidentifiedSummary'),researchPrivacyReviewed:doc.getElementById('clinicalResearchPrivacyReviewed'),
+      researchAcknowledgmentLabel:doc.getElementById('clinicalResearchAcknowledgmentLabel'),researchAcknowledgment:doc.getElementById('clinicalResearchAcknowledgment'),
+      runResearch:doc.getElementById('runClinicalResearchButton'),
     };
     let lastCaseId=null,lastRenderedSequence=0,observer=null;
     const isNearBottom=()=>!elements.messages||elements.messages.scrollHeight-elements.messages.scrollTop-elements.messages.clientHeight<90;
@@ -568,8 +625,19 @@
       elements.assistantRefresh.disabled=elements.assistantButton.disabled;elements.assistantRefresh.hidden=state.assistant?.status!=='available';
       renderAssistant(doc,elements.assistant,state.assistant);
       elements.showResearch.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.clinicalResearchBusy;
-      elements.showResearch.textContent=state.clinicalResearchBusy?'กำลังวิเคราะห์…':'✨ วิเคราะห์บทสนทนา';
+      elements.showResearch.textContent=state.clinicalResearchBusy?'กำลังค้นคว้า…':'✨ พี่หมอ Clinical Research';
+      const capability=state.clinicalResearchCapability||{};
+      elements.researchCapabilityMessage.textContent=clinicalResearchCapabilityMessage(capability);
+      const available=capability.status==='available';
+      const deidentified=available&&capability.mode==='deidentified_pilot';
+      elements.researchDeidentifiedFields.hidden=!deidentified;
+      elements.researchAcknowledgmentLabel.hidden=!available;
+      const setupReady=available&&elements.researchAcknowledgment.checked
+        &&(!deidentified||(elements.researchSummary.value.trim().length>=20&&elements.researchPrivacyReviewed.checked));
+      elements.runResearch.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.clinicalResearchBusy||!setupReady;
+      elements.runResearch.textContent=state.clinicalResearchBusy?'กำลังค้นคว้า…':'เริ่มค้นคว้า';
       elements.refreshResearch.disabled=elements.showResearch.disabled;
+      elements.refreshResearch.hidden=state.clinicalResearch?.status!=='available';
       renderClinicalResearch(doc,elements.research,state.clinicalResearch,{
         latestSequence:state.lastSequence,onRefresh:session.generateClinicalResearch,
         onCopyDraft:()=>{
@@ -601,10 +669,21 @@
     elements.refreshContext.addEventListener('click',()=>session.refreshCaseContext());
     elements.showAssistant.addEventListener('click',()=>session.setPanel('assistant'));
     elements.showResearch.addEventListener('click',()=>{
-      const state=session.snapshot();
-      if(state.clinicalResearch?.status==='available')session.setPanel('research');else session.generateClinicalResearch();
+      session.setPanel('research');
     });
-    elements.refreshResearch.addEventListener('click',()=>session.generateClinicalResearch());
+    const runResearch=()=>session.generateClinicalResearch({
+      safetyAcknowledged:elements.researchAcknowledgment.checked,
+      ...(session.snapshot().clinicalResearchCapability?.mode==='deidentified_pilot'?{
+        deidentifiedSummary:elements.researchSummary.value,
+        privacyReviewed:elements.researchPrivacyReviewed.checked,
+      }:{}),
+    });
+    elements.runResearch.addEventListener('click',runResearch);
+    elements.refreshResearch.addEventListener('click',runResearch);
+    for(const input of [elements.researchSummary,elements.researchPrivacyReviewed,elements.researchAcknowledgment]){
+      input.addEventListener('input',()=>render(session.snapshot()));
+      input.addEventListener('change',()=>render(session.snapshot()));
+    }
     elements.closeContext.addEventListener('click',()=>session.setPanel(null));
     elements.closeAssistant.addEventListener('click',()=>session.setPanel(null));
     elements.closeResearch.addEventListener('click',()=>session.setPanel(null));
@@ -643,5 +722,5 @@
   }
 
   return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,CLINICAL_SOURCE_LABELS,MEDICATION_USE_CONDITION_LABELS,MEDICATION_PERIOD_LABELS,
-    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,clinicalResearchErrorMessage,researchLimitationLabel,clinicalResearchIsStale,safeExternalUrl,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,copyResearchDraftToComposer,createConsoleSession,renderCaseContext,renderAssistant,renderClinicalResearch,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
+    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,clinicalResearchErrorMessage,clinicalResearchCapabilityMessage,researchLimitationLabel,clinicalResearchIsStale,safeExternalUrl,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,copyResearchDraftToComposer,researchEvidenceSupport,createConsoleSession,renderCaseContext,renderAssistant,renderClinicalResearch,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
 }));

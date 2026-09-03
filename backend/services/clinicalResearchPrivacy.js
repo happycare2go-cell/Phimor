@@ -5,6 +5,18 @@ const SAFE_IDENTIFIER_PATTERNS = Object.freeze([
   /(?:\+?66|0)[\s-]?[1-9](?:[\s-]?\d){7,8}\b/,
 ]);
 
+const DEIDENTIFIED_SUMMARY_PATTERNS = Object.freeze([
+  ...SAFE_IDENTIFIER_PATTERNS,
+  /\b\d(?:[\s-]?\d){12}\b/,
+  /(?:ชื่อ(?:ผู้ป่วย|ผู้รับบริการ|นามสกุล)?|patient\s*name|full\s*name)\s*[:=]/i,
+  /(?:เลขบัตร(?:ประชาชน)?|national\s*id|passport)\s*[:=]?/i,
+  /(?:line\s*(?:user\s*)?id|ไลน์ไอดี)\s*[:=]?/i,
+  /(?:วันเดือนปีเกิด|วันเกิด|เกิดวันที่|date\s*of\s*birth|\bdob\b)\s*[:=]?/i,
+  /(?:ที่อยู่|address)\s*[:=]/i,
+]);
+
+const MAX_DEIDENTIFIED_SUMMARY_CHARS = 6000;
+
 function normalized(value) {
   return String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
@@ -47,6 +59,21 @@ function sanitizeResearchPlan(plan, privacy = {}) {
   });
 }
 
+function validateDeidentifiedPilotSummary(value) {
+  if (typeof value !== 'string') {
+    return Object.freeze({ ok:false, errorCode:'DEIDENTIFIED_SUMMARY_REQUIRED' });
+  }
+  const summary = value.normalize('NFC').trim();
+  if (summary.length < 20 || summary.length > MAX_DEIDENTIFIED_SUMMARY_CHARS) {
+    return Object.freeze({ ok:false, errorCode:'DEIDENTIFIED_SUMMARY_REQUIRED' });
+  }
+  if (DEIDENTIFIED_SUMMARY_PATTERNS.some((pattern) => pattern.test(summary))) {
+    return Object.freeze({ ok:false, errorCode:'DEIDENTIFIED_SUMMARY_PRIVACY_REJECTED' });
+  }
+  return Object.freeze({ ok:true, summary });
+}
+
 module.exports = {
-  SAFE_IDENTIFIER_PATTERNS, normalized, privacyViolation, sanitizeResearchPlan,
+  SAFE_IDENTIFIER_PATTERNS, DEIDENTIFIED_SUMMARY_PATTERNS, MAX_DEIDENTIFIED_SUMMARY_CHARS,
+  normalized, privacyViolation, sanitizeResearchPlan, validateDeidentifiedPilotSummary,
 };
