@@ -93,6 +93,49 @@ async function getProfile(userId) {
   }
 }
 
+class LineProfileVerificationError extends Error {
+  constructor(code = 'LINE_PROFILE_NOT_VERIFIED') {
+    super('ยืนยันบัญชี LINE ไม่สำเร็จ');
+    this.name = 'LineProfileVerificationError';
+    this.code = code;
+  }
+}
+
+function createVerifiedProfileLookup({
+  messagingClient = client,
+  environment = () => process.env.NODE_ENV,
+} = {}) {
+  return async function verifyUserProfile(userId) {
+    if (environment() === 'test') {
+      return { userId, displayName:'ผู้ใช้ LINE ทดสอบ' };
+    }
+    let profile;
+    try {
+      profile = await messagingClient.getProfile(userId);
+    } catch (error) {
+      logOperationalError(console.error, {
+        event:'line_profile_verification_failed', errorCode:'LINE_PROFILE_LOOKUP_FAILED',
+        httpStatus:providerStatus(error), routeCategory:'line_provider',
+      });
+      throw new LineProfileVerificationError('LINE_PROFILE_LOOKUP_FAILED');
+    }
+    if (profile?.userId !== userId || typeof profile?.displayName !== 'string' || !profile.displayName.trim()) {
+      logOperationalError(console.error, {
+        event:'line_profile_verification_invalid_response',
+        errorCode:'LINE_PROFILE_INVALID_RESPONSE', routeCategory:'line_provider',
+      });
+      throw new LineProfileVerificationError('LINE_PROFILE_INVALID_RESPONSE');
+    }
+    return {
+      userId:profile.userId,
+      displayName:profile.displayName.trim().slice(0, 160),
+      pictureUrl:typeof profile.pictureUrl === 'string' ? profile.pictureUrl : null,
+    };
+  };
+}
+
+const verifyUserProfile = createVerifiedProfileLookup();
+
 async function getGroupMemberProfile(groupId, userId) {
   if (process.env.NODE_ENV === 'test') return { userId, displayName: `Test ${userId}` };
   try {
@@ -137,8 +180,8 @@ async function linkRichMenuToUser(uid, id) { if (process.env.NODE_ENV === 'test'
 async function unlinkRichMenuFromUser(uid) { if (process.env.NODE_ENV === 'test') { sentLog.push({type:'richmenu_unlink_user',userId:uid}); return {}; } return client.unlinkRichMenuIdFromUser(uid); }
 
 module.exports = {
-  replyMessage, pushMessage, getProfile, getGroupMemberProfile, listGroupMemberUserIds,
+  replyMessage, pushMessage, getProfile, verifyUserProfile, getGroupMemberProfile, listGroupMemberUserIds,
   clearSentLog, getSentLog,
   createRichMenu, uploadRichMenuImage, setDefaultRichMenu, linkRichMenuToUser, unlinkRichMenuFromUser,
-  createPushMessage,
+  createPushMessage, createVerifiedProfileLookup, LineProfileVerificationError,
 };

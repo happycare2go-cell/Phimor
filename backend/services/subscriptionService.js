@@ -124,8 +124,20 @@ function calculateMonthlyRenewal(center, renewalUnits, referenceDate = new Date(
   };
 }
 
+async function listActiveOwnerRecipients(centerId) {
+  const rows = await CenterStaff.findWhere((staff) => (
+    staff.center_id === centerId && staff.role === 'owner'
+    && (!staff.status || staff.status === 'active')
+  ));
+  const unique = new Map();
+  for (const row of rows) {
+    if (row.line_user_id && !unique.has(row.line_user_id)) unique.set(row.line_user_id, row);
+  }
+  return [...unique.values()];
+}
+
 async function deliverSubscriptionUpdatedNotification(center, expiresAt) {
-  const owners = await CenterStaff.findWhere((s) => s.center_id === center.center_id && s.role === 'owner');
+  const owners = await listActiveOwnerRecipients(center.center_id);
   const text = `✅ สิทธิการใช้ระบบพี่หมอของ ${center.name} ได้รับการอัปเดตแล้ว\nท่านสามารถใช้งานระบบได้ถึงวันที่ ${formatThaiDateTime(expiresAt)}`;
   for (const owner of owners) {
     await notificationService.enqueueAndDeliver({
@@ -193,7 +205,7 @@ async function sendExpiryReminders(referenceDate = new Date()) {
     // expiry, the owner should already receive the notice.
     const days = Math.floor((end.getTime() - referenceDate.getTime()) / DAY_MS);
     if (days < 0 || days > 3) continue;
-    const owners = await CenterStaff.findWhere((s) => s.center_id === center.center_id && s.role === 'owner');
+    const owners = await listActiveOwnerRecipients(center.center_id);
     for (const owner of owners) {
       const result = await notificationService.enqueueAndDeliver({
         dedupeKey: `subscription-expiry-3d:${center.center_id}:${end.toISOString()}:${owner.line_user_id}`,
@@ -349,4 +361,5 @@ module.exports = {
   emergencyContact, residentHistoryLabel, projectAdminResident, classifyAdminResidents,
   normalizeAdminDetailPaging, pageRows,
   setSubscription, sendExpiryReminders, getAdminCenterDetails,
+  listActiveOwnerRecipients,
 };

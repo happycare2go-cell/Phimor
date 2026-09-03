@@ -12,7 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { RichMenus, audit } = require('../db');
+const { RichMenus, CenterStaff, audit } = require('../db');
 const lineClient = require('../providers/lineClient');
 
 const CENTER_ADMIN_KEY = 'center_admin';
@@ -97,7 +97,18 @@ async function linkFamilyMenuToUser(lineUserId) {
   return { ok: true, richMenuId };
 }
 
+async function reprojectCenterMenuForUser(lineUserId) {
+  const activeMemberships = await CenterStaff.findWhere((staff) => (
+    staff.line_user_id === lineUserId && (!staff.status || staff.status === 'active')
+  ));
+  if (activeMemberships.length) return linkCenterMenuToUser(lineUserId);
+  await lineClient.unlinkRichMenuFromUser(lineUserId);
+  await audit('richmenu.unlinked', lineUserId, { reason:'no_active_center_membership' });
+  return { ok:true, unlinked:true };
+}
+
 module.exports = {
   CENTER_ADMIN_KEY, FAMILY_KEY, MENU_DEFS,
   ensureMenu, setupAllMenus, linkCenterMenuToUser, linkFamilyMenuToUser,
+  reprojectCenterMenuForUser,
 };

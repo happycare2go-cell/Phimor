@@ -179,6 +179,51 @@ test('renewal audit records safe chronology and intent metadata', async () => {
   assert.doesNotMatch(JSON.stringify(entry), /clinical|patient|LINE message|secret/i);
 });
 
+test('subscription Owner recipients include only active unique current memberships', async () => {
+  const center = await seedCenter({ centerId:'CTR-OWNER-RECIPIENTS' });
+  const activeOwnerId = `U${'a'.repeat(32)}`;
+  const revokedOwnerId = `U${'b'.repeat(32)}`;
+  await db.CenterStaff.insert({
+    staff_id:'STF-ACTIVE-OWNER', center_id:center.center_id,
+    line_user_id:activeOwnerId, role:'owner', status:'active',
+  });
+  await db.CenterStaff.insert({
+    staff_id:'STF-ACTIVE-OWNER-DUP', center_id:center.center_id,
+    line_user_id:activeOwnerId, role:'owner', status:'active',
+  });
+  await db.CenterStaff.insert({
+    staff_id:'STF-REVOKED-OWNER', center_id:center.center_id,
+    line_user_id:revokedOwnerId, role:'owner', status:'revoked',
+  });
+  const recipients = await subscriptionService.listActiveOwnerRecipients(center.center_id);
+  assert.deepEqual(recipients.map((row) => row.line_user_id).sort(), [activeOwnerId, `U-${center.center_id}`].sort());
+
+  lineClient.clearSentLog();
+  await subscriptionService.setSubscription({
+    centerId:center.center_id,
+    startsAt:'2026-09-01T00:00:00.000Z', expiresAt:'2026-12-01T00:00:00.000Z',
+    actor:'admin:test',
+  });
+  const pushes = lineClient.getSentLog().filter((entry) => entry.type === 'push');
+  assert.equal(pushes.filter((entry) => entry.to === activeOwnerId).length, 1);
+  assert.equal(pushes.some((entry) => entry.to === revokedOwnerId), false);
+});
+
+test('subscription expiry reminders exclude revoked historical Owner rows', async () => {
+  const expiresAt = new Date(REFERENCE.getTime() + (2 * subscriptionService.DAY_MS)).toISOString();
+  const center = await seedCenter({ centerId:'CTR-EXPIRY-OWNERS', expiresAt });
+  const revokedOwnerId = `U${'c'.repeat(32)}`;
+  await db.CenterStaff.insert({
+    staff_id:'STF-OLD-OWNER', center_id:center.center_id,
+    line_user_id:revokedOwnerId, role:'owner', status:'revoked',
+  });
+  lineClient.clearSentLog();
+  await subscriptionService.sendExpiryReminders(REFERENCE);
+  const pushes = lineClient.getSentLog().filter((entry) => entry.type === 'push');
+  assert.equal(pushes.some((entry) => entry.to === revokedOwnerId), false);
+  assert.equal(pushes.filter((entry) => entry.to === `U-${center.center_id}`).length, 1);
+});
+
 async function callAdmin(pathname, options = {}) {
   return fetch(`${baseUrl}${pathname}`, {
     ...options,

@@ -5,6 +5,8 @@ const { GROUP_BINDING_TRANSACTION_KEY, findActiveFamilyBinding, findActiveCenter
 const richMenuService = require('./richMenuService');
 const { addBangkokCalendarMonth } = require('./subscriptionService');
 const { logOperationalError } = require('../utils/safeOperationalError');
+const { normalizeLineUserId, isValidLineUserId } = require('../utils/lineIdentity');
+const lineClient = require('../providers/lineClient');
 
 const INVITE_EXPIRY_DAYS = 30; // ตาม Technical Design หมวด 9
 
@@ -16,6 +18,17 @@ function linkMenuBestEffort(lineUserId) {
       event:'center_rich_menu_link_failed', error:err, routeCategory:'line_provider',
     });
   });
+}
+
+async function reprojectMenuBestEffort(lineUserId) {
+  if (!lineUserId) return;
+  try {
+    await richMenuService.reprojectCenterMenuForUser(lineUserId);
+  } catch (error) {
+    logOperationalError(console.error, {
+      event:'center_rich_menu_reprojection_failed', error, routeCategory:'line_provider',
+    });
+  }
 }
 
 const centerStaffLockKey = (centerId, lineUserId) => `center-staff:${centerId}:${lineUserId}`;
@@ -35,15 +48,41 @@ function stableStaffRows(rows) {
 }
 
 async function revokeDuplicateStaffRows(rows, canonicalStaffId, actor, reason = 'duplicate_membership_consolidated',
-  { preserveOwner = true } = {}) {
+  { preserveOwner = true, extraPatch = {} } = {}) {
   const duplicateIds = new Set(rows.filter((row) => row.staff_id !== canonicalStaffId
     && (!preserveOwner || row.role !== 'owner')
     && (!row.status || ['active', 'pending'].includes(row.status))).map((row) => row.staff_id));
   if (!duplicateIds.size) return [];
   const at = now();
   return CenterStaff.updateAll((row) => duplicateIds.has(row.staff_id), {
-    status:'revoked', revoked_at:at, revoked_by:actor, revoke_reason:reason,
+    status:'revoked', revoked_at:at, revoked_by:actor, revoke_reason:reason, ...extraPatch,
   });
+}
+
+const OWNER_TARGET_NOT_VERIFIED_MESSAGE = 'ยังยืนยันบัญชี LINE ของเจ้าของคนใหม่ไม่ได้ กรุณาให้เจ้าของคนใหม่เพิ่มเพื่อนพี่หมอและลองใหม่อีกครั้ง';
+
+async function verifyOwnerTargetIdentity(newOwnerLineId, verifyLineProfile = lineClient.verifyUserProfile) {
+  const normalized = normalizeLineUserId(newOwnerLineId);
+  if (!isValidLineUserId(normalized)) {
+    return { ok:false, code:'OWNER_TARGET_INVALID', reason:'LINE User ID เจ้าของคนใหม่ไม่ถูกต้อง' };
+  }
+  try {
+    const profile = await verifyLineProfile(normalized);
+    if (profile?.userId !== normalized || typeof profile?.displayName !== 'string' || !profile.displayName.trim()) {
+      return { ok:false, code:'OWNER_TARGET_NOT_VERIFIED', reason:OWNER_TARGET_NOT_VERIFIED_MESSAGE };
+    }
+    return {
+      ok:true,
+      lineUserId:normalized,
+      profile:{
+        userId:normalized,
+        displayName:profile.displayName.trim().slice(0, 160),
+        pictureUrl:typeof profile.pictureUrl === 'string' ? profile.pictureUrl : null,
+      },
+    };
+  } catch (_) {
+    return { ok:false, code:'OWNER_TARGET_NOT_VERIFIED', reason:OWNER_TARGET_NOT_VERIFIED_MESSAGE };
+  }
 }
 
 // ── FR-A1: ทีมงานสร้างบัญชีศูนย์ ──
@@ -239,16 +278,21 @@ async function recordStaffFromGroup(groupId, lineUserId) {
   }
   const staff = await withTransactionLocks([centerStaffLockKey(center.center_id, lineUserId)], async () => {
     const rows = await CenterStaff.findWhere((s) => s.center_id === center.center_id && s.line_user_id === lineUserId);
+    const ownershipTransferRevocation = rows.some((row) => (
+      row.revoke_reason === 'ownership_transferred' || row.ownership_transfer_reentry_requires_approval === true
+    ));
     const existing = stableStaffRows(rows.filter((row) => row.role !== 'owner' || activeStaff(row)))[0] || null;
     if (existing) {
       if (existing.status === 'revoked') {
-        const requireApproval = process.env.REQUIRE_STAFF_APPROVAL === 'true'
+        const requireApproval = ownershipTransferRevocation || process.env.REQUIRE_STAFF_APPROVAL === 'true'
           || (process.env.NODE_ENV !== 'test' && process.env.REQUIRE_STAFF_APPROVAL !== 'false');
         const restored = await CenterStaff.update((s) => s.staff_id === existing.staff_id, {
           role:'staff', status:requireApproval ? 'pending' : 'active',
           rejoined_group_at:now(), revoked_at:null, revoked_by:null, revoke_reason:null,
+          ownership_transfer_reentry_requires_approval:ownershipTransferRevocation,
         });
-        await audit('center.staff_rejoined', lineUserId, {
+        await audit(ownershipTransferRevocation
+          ? 'center.former_owner_rejoined_pending' : 'center.staff_rejoined', lineUserId, {
           centerId:center.center_id, requiresApproval:requireApproval,
         });
         if (!requireApproval) {
@@ -362,6 +406,7 @@ async function approveStaff({ centerId, targetLineId, requesterLineId, role = 's
     if (!pending) return { ok:false, reason:'ไม่พบสมาชิกที่รออนุมัติ' };
     const member = await CenterStaff.update((s) => s.staff_id === pending.staff_id, {
       status:'active', role, assigned_at:now(), approved_by:requesterLineId,
+      ownership_transfer_reentry_requires_approval:false,
     });
     await revokeDuplicateStaffRows(rows, member.staff_id, requesterLineId);
     await setActiveCenterForStaff(targetLineId, centerId);
@@ -406,16 +451,28 @@ async function revokeStaff({ centerId, targetLineId, requesterLineId, reason = '
   });
 }
 
-async function transferOwner({ centerId, newOwnerLineId, actor = 'admin', keepPreviousAsManager = false }) {
+async function transferOwner({
+  centerId, newOwnerLineId, actor = 'admin', keepPreviousAsManager = false,
+  verifyLineProfile = lineClient.verifyUserProfile,
+}) {
+  const normalizedOwnerLineId = normalizeLineUserId(newOwnerLineId);
+  if (!isValidLineUserId(normalizedOwnerLineId)) {
+    return { ok:false, code:'OWNER_TARGET_INVALID', reason:'LINE User ID เจ้าของคนใหม่ไม่ถูกต้อง' };
+  }
   const centerProbe = await Centers.findOne((c) => c.center_id === centerId);
   if (!centerProbe) return { ok:false, reason:'ไม่พบศูนย์นี้' };
   const ownerRowsProbe = await CenterStaff.findWhere((staff) => (
     staff.center_id === centerId && staff.role === 'owner' && activeStaff(staff)
   ));
   const ownerHint = centerProbe.owner_line_id || stableStaffRows(ownerRowsProbe)[0]?.line_user_id || null;
+  if (ownerHint === normalizedOwnerLineId) {
+    return { ok:false, noChange:true, code:'OWNER_ALREADY_CURRENT', reason:'บัญชีนี้เป็นเจ้าของศูนย์อยู่แล้ว' };
+  }
+  const verifiedTarget = await verifyOwnerTargetIdentity(normalizedOwnerLineId, verifyLineProfile);
+  if (!verifiedTarget.ok) return verifiedTarget;
   const locks = [
     `center-owner:${centerId}`,
-    centerStaffLockKey(centerId, newOwnerLineId),
+    centerStaffLockKey(centerId, normalizedOwnerLineId),
     ...ownerRowsProbe.map((staff) => centerStaffLockKey(centerId, staff.line_user_id)),
   ];
   if (ownerHint) locks.push(centerStaffLockKey(centerId, ownerHint));
@@ -434,26 +491,34 @@ async function transferOwner({ centerId, newOwnerLineId, actor = 'admin', keepPr
       staff.line_user_id === authoritativeOwnerLineId
     )))[0] || null;
     const targetRows = await CenterStaff.findWhere((staff) => (
-      staff.center_id === centerId && staff.line_user_id === newOwnerLineId
+      staff.center_id === centerId && staff.line_user_id === normalizedOwnerLineId
     ));
     let target = stableStaffRows(targetRows)[0] || null;
     if (target) target = await CenterStaff.update((staff) => staff.staff_id === target.staff_id, {
       role:'owner', status:'active', ownership_started_at:now(), approved_by:actor,
       revoked_at:null, revoked_by:null, revoke_reason:null,
+      display_name:verifiedTarget.profile.displayName,
+      picture_url:verifiedTarget.profile.pictureUrl,
+      ownership_transfer_reentry_requires_approval:false,
     });
     else target = await CenterStaff.insert({
-      staff_id:id('STF'), center_id:centerId, line_user_id:newOwnerLineId,
+      staff_id:id('STF'), center_id:centerId, line_user_id:normalizedOwnerLineId,
       role:'owner', status:'active', assigned_at:now(), ownership_started_at:now(), approved_by:actor,
+      display_name:verifiedTarget.profile.displayName,
+      picture_url:verifiedTarget.profile.pictureUrl,
+      ownership_transfer_reentry_requires_approval:false,
     });
     await revokeDuplicateStaffRows(targetRows, target.staff_id, actor,
       'duplicate_membership_consolidated', { preserveOwner:false });
-    if (oldOwner && oldOwner.line_user_id !== newOwnerLineId && keepPreviousAsManager) {
+    if (oldOwner && oldOwner.line_user_id !== normalizedOwnerLineId && keepPreviousAsManager) {
       await CenterStaff.update((staff) => staff.staff_id === oldOwner.staff_id, {
         role:'manager', status:'active', ownership_ended_at:now(),
+        revoked_at:null, revoked_by:null, revoke_reason:null,
+        ownership_transfer_reentry_requires_approval:false,
       });
     }
     const priorOwnerLineIds = [...new Set(activeOwnerRows
-      .filter((staff) => staff.line_user_id !== newOwnerLineId)
+      .filter((staff) => staff.line_user_id !== normalizedOwnerLineId)
       .map((staff) => staff.line_user_id))];
     for (const priorOwnerLineId of priorOwnerLineIds) {
       const priorRows = await CenterStaff.findWhere((staff) => (
@@ -461,7 +526,9 @@ async function transferOwner({ centerId, newOwnerLineId, actor = 'admin', keepPr
       ));
       if (keepPreviousAsManager && priorOwnerLineId === authoritativeOwnerLineId && oldOwner) {
         await revokeDuplicateStaffRows(priorRows, oldOwner.staff_id, actor,
-          'ownership_transferred', { preserveOwner:false });
+          'ownership_transferred', {
+            preserveOwner:false, extraPatch:{ ownership_transfer_reentry_requires_approval:true },
+          });
         continue;
       }
       const at = now();
@@ -469,25 +536,35 @@ async function transferOwner({ centerId, newOwnerLineId, actor = 'admin', keepPr
         && staff.line_user_id === priorOwnerLineId && activeStaff(staff) && staff.role === 'owner', {
         role:'owner_previous', status:'revoked', ownership_ended_at:at, revoked_at:at,
         revoked_by:actor, revoke_reason:'ownership_transferred',
+        ownership_transfer_reentry_requires_approval:true,
       });
       await CenterStaff.updateAll((staff) => staff.center_id === centerId
         && staff.line_user_id === priorOwnerLineId
         && (!staff.status || ['active', 'pending'].includes(staff.status)) && staff.role !== 'owner', {
         status:'revoked', revoked_at:at, revoked_by:actor, revoke_reason:'ownership_transferred',
+        ownership_transfer_reentry_requires_approval:true,
       });
       await StaffContexts.removeAll((context) => context.center_id === centerId
         && context.line_user_id === priorOwnerLineId);
     }
     const updated = await Centers.update((centerRow) => centerRow.center_id === centerId, {
-      owner_line_id:newOwnerLineId, owner_transferred_at:now(), owner_transferred_by:actor,
+      owner_line_id:normalizedOwnerLineId, owner_transferred_at:now(), owner_transferred_by:actor,
     });
     await audit('center.owner_transferred', actor, {
       centerId, previousOwnerLineId:oldOwner?.line_user_id || center.owner_line_id,
-      newOwnerLineId, keepPreviousAsManager,
+      newOwnerLineId:normalizedOwnerLineId, keepPreviousAsManager,
     });
-    return { ok:true, center:updated, owner:target };
+    return {
+      ok:true, center:updated, owner:target,
+      previousOwnerLineId:oldOwner?.line_user_id || center.owner_line_id,
+    };
   });
-  if (result.ok) linkMenuBestEffort(newOwnerLineId);
+  if (result.ok) {
+    await reprojectMenuBestEffort(normalizedOwnerLineId);
+    if (result.previousOwnerLineId && result.previousOwnerLineId !== normalizedOwnerLineId) {
+      await reprojectMenuBestEffort(result.previousOwnerLineId);
+    }
+  }
   return result;
 }
 
@@ -579,7 +656,6 @@ async function removeStaffFromGroup(groupId, lineUserId) {
   if (removed) {
     const remaining = await CenterStaff.findWhereByFields({ line_user_id:lineUserId });
     if (remaining.length === 0) {
-      const lineClient = require('../providers/lineClient');
       lineClient.unlinkRichMenuFromUser(lineUserId).catch((err) => logOperationalError(console.error, {
         event:'center_rich_menu_unlink_failed', error:err, routeCategory:'line_provider',
       }));
@@ -930,5 +1006,5 @@ module.exports = {
   approveStaff, revokeStaff, createCenterManagedCareProfile, getOrCreateResidentInvite,
   transferOwner, reconcileAllCenterStaff,
   setActiveCenterForStaff, getActiveCenterIdForStaff, listCentersByStaffUser,
-  centerStaffLockKey,
+  centerStaffLockKey, verifyOwnerTargetIdentity,
 };

@@ -50,6 +50,15 @@ function activeStatus(record) {
   return record && (!record.status || record.status === 'active');
 }
 
+const CENTER_ROLE_RANK = Object.freeze({ owner:3, manager:2, staff:1 });
+
+function selectEffectiveCenterStaff(rows = []) {
+  return rows.filter(activeStatus).sort((left, right) => (
+    (CENTER_ROLE_RANK[right.role] || 0) - (CENTER_ROLE_RANK[left.role] || 0)
+    || String(left.staff_id || '').localeCompare(String(right.staff_id || ''))
+  ))[0] || null;
+}
+
 async function authorizeFamily({ lineUserId, careProfile, permission }) {
   if (careProfile.owner_line_id === lineUserId) {
     return {
@@ -90,11 +99,12 @@ async function authorizeCenter({ lineUserId, careProfile, permission, centerId, 
   let sawRevokedStaff = false;
   let sawInactiveSubscription = false;
   for (const resident of linkedResidents) {
-    const staff = await CenterStaff.findOne((member) =>
+    const staffRows = await CenterStaff.findWhere((member) =>
       member.center_id === resident.center_id && member.line_user_id === lineUserId
     );
-    if (!staff) continue;
-    if (!activeStatus(staff)) { sawRevokedStaff = true; continue; }
+    if (!staffRows.length) continue;
+    const staff = selectEffectiveCenterStaff(staffRows);
+    if (!staff) { sawRevokedStaff = true; continue; }
     const allowedPermissions = CENTER_ROLE_PERMISSIONS[staff.role] || [];
     if (!allowedPermissions.includes(permission)) continue;
     const center = await Centers.findOne((item) => item.center_id === resident.center_id);
@@ -140,5 +150,5 @@ async function authorizeCareProfileAccess({
 
 module.exports = {
   authorizeCareProfileAccess, CareProfileAuthorizationError,
-  FAMILY_PERMISSIONS, CENTER_ROLE_PERMISSIONS,
+  FAMILY_PERMISSIONS, CENTER_ROLE_PERMISSIONS, selectEffectiveCenterStaff,
 };

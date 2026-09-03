@@ -16,7 +16,7 @@ const { Centers, Residents, CareProfiles, AuditLog, AdminUsers, audit, id, now }
 const subscriptionService = require('../services/subscriptionService');
 const { createConsultationPaymentSupportService } = require('../services/consultationPaymentSupportService');
 const privacyService = require('../services/privacyService');
-const { displayIdentity } = require('../utils/safeIdentity');
+const { displayIdentity, maskedLineReference } = require('../utils/safeIdentity');
 const { createPlusPaymentSupportService } = require('../services/plusPaymentSupportService');
 const adminCenterDirectoryService = require('../services/adminCenterDirectoryService');
 const { createAdminDashboardService } = require('../services/adminDashboardService');
@@ -254,11 +254,28 @@ router.post('/centers/:centerId/subscription/monthly-renew', asyncHandler(async 
 }));
 
 router.post('/centers/:centerId/transfer-owner', asyncHandler(async (req, res) => {
+  if (req.admin.authMethod !== 'line') {
+    return res.status(403).json({
+      error:'forbidden', errorCode:'HUMAN_ADMIN_REQUIRED',
+      message:'การโอนสิทธิ์เจ้าของศูนย์ต้องดำเนินการผ่านบัญชีผู้ดูแลระบบที่ยืนยันตัวตนแล้ว',
+    });
+  }
   const newOwnerLineId = String(req.body.newOwnerLineId || '').trim();
   if (!newOwnerLineId) return res.status(400).json({ error:'bad_request', message:'กรุณาระบุ LINE User ID เจ้าของคนใหม่' });
   const result = await centerService.transferOwner({ centerId:req.params.centerId, newOwnerLineId, actor:req.admin.actor, keepPreviousAsManager:!!req.body.keepPreviousAsManager });
-  if (!result.ok) return res.status(400).json({ error:'bad_request', message:result.reason });
-  res.json(result);
+  if (!result.ok) {
+    const status = result.code === 'OWNER_ALREADY_CURRENT' ? 409 : 400;
+    return res.status(status).json({ error:status === 409 ? 'conflict' : 'bad_request', errorCode:result.code, message:result.reason });
+  }
+  res.json({
+    ok:true,
+    center:{ centerId:result.center.center_id, displayName:result.center.name },
+    newOwner:{
+      displayName:displayIdentity({ displayName:result.owner.display_name, lineUserId:result.owner.line_user_id }),
+      maskedIdentity:maskedLineReference(result.owner.line_user_id),
+    },
+    previousOwnerOutcome:req.body.keepPreviousAsManager ? 'manager' : 'revoked',
+  });
 }));
 
 router.get('/centers/:centerId/care-profiles', asyncHandler(async (req, res) => {

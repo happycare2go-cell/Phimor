@@ -206,6 +206,37 @@ test('Admin Center directory rejects overlong search and unknown status safely',
   assert.strictEqual(response.status, 400);
 });
 
+test('ownership transfer rejects shared Admin API key and requires a human LINE Admin actor', async () => {
+  const centerService = require('../backend/services/centerService');
+  const oldOwner = `U${'6'.repeat(32)}`;
+  const newOwner = `U${'7'.repeat(32)}`;
+  const adminLineId = `U${'8'.repeat(32)}`;
+  const center = await centerService.createCenter({ name:'ศูนย์โอนสิทธิ์', ownerLineId:oldOwner });
+
+  let response = await callAdmin(`/api/admin/centers/${center.center_id}/transfer-owner`, {
+    method:'POST', headers:{ 'X-Admin-Key':REAL_ADMIN_KEY },
+    body:JSON.stringify({ newOwnerLineId:newOwner }),
+  });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).errorCode, 'HUMAN_ADMIN_REQUIRED');
+  assert.equal((await db.Centers.findOne((row) => row.center_id === center.center_id)).owner_line_id, oldOwner);
+
+  await db.AdminUsers.insert({
+    admin_id:'ADM-HUMAN', line_user_id:adminLineId, role:'system_admin', status:'active',
+  });
+  response = await callAdmin(`/api/admin/centers/${center.center_id}/transfer-owner`, {
+    method:'POST', headers:{ 'X-Line-User-Id':adminLineId },
+    body:JSON.stringify({ newOwnerLineId:newOwner, keepPreviousAsManager:false }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.previousOwnerOutcome, 'revoked');
+  assert.doesNotMatch(JSON.stringify(body), new RegExp(newOwner));
+  const audit = await db.AuditLog.findOne((row) => row.action === 'center.owner_transferred');
+  assert.equal(audit.actor_line_id, `admin:${adminLineId}`);
+});
+
 test('ถ้าไม่ได้ตั้งค่า ADMIN_API_KEY บน Server ต้องปิดกั้นทุกคำขอด้วย 503 (กันลืมตั้งค่าตอน Deploy)', async () => {
   const prevKey = process.env.ADMIN_API_KEY;
   delete process.env.ADMIN_API_KEY; // จำลองว่าลืมตั้งค่าตอน Deploy — middleware อ่านค่านี้สดทุกครั้ง ไม่ต้อง Reload

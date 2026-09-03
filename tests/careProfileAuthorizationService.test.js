@@ -110,6 +110,77 @@ test('revoked CenterStaff is denied even when the Resident relationship is activ
   await expectDenied({ lineUserId: 'U_STAFF', careProfileId: 'CP-1', permission: 'view', centerId: 'CTR-1' }, 'CENTER_ACCESS_REVOKED');
 });
 
+async function authorizeWithLegacyStaffRows(rows, permission = 'manage_medications') {
+  await profile({ status:'linked' });
+  await db.Centers.insert({ center_id:'CTR-LEGACY', name:'legacy', status:'active' });
+  await db.Residents.insert({
+    resident_id:'RES-LEGACY', center_id:'CTR-LEGACY', care_profile_id:'CP-1', status:'active',
+  });
+  for (const [index, row] of rows.entries()) {
+    await db.CenterStaff.insert({
+      staff_id:`STF-LEGACY-${index}`, center_id:'CTR-LEGACY', line_user_id:'U_LEGACY', ...row,
+    });
+  }
+  return authorizeCareProfileAccess({
+    lineUserId:'U_LEGACY', careProfileId:'CP-1', permission, centerId:'CTR-LEGACY',
+  });
+}
+
+test('revoked historical row first cannot shadow a later active Owner membership', async () => {
+  const access = await authorizeWithLegacyStaffRows([
+    { role:'staff', status:'revoked' }, { role:'owner', status:'active' },
+  ]);
+  assert.strictEqual(access.role, 'owner');
+});
+
+test('active Owner remains authoritative when a revoked row follows it', async () => {
+  const access = await authorizeWithLegacyStaffRows([
+    { role:'owner', status:'active' }, { role:'staff', status:'revoked' },
+  ]);
+  assert.strictEqual(access.role, 'owner');
+});
+
+test('effective membership ignores revoked Manager or Owner history', async () => {
+  let access = await authorizeWithLegacyStaffRows([
+    { role:'manager', status:'revoked' }, { role:'owner', status:'active' },
+  ]);
+  assert.strictEqual(access.role, 'owner');
+  db.resetAll();
+  access = await authorizeWithLegacyStaffRows([
+    { role:'owner', status:'revoked' }, { role:'manager', status:'active' },
+  ]);
+  assert.strictEqual(access.role, 'manager');
+});
+
+test('all historical Center memberships revoked returns CENTER_ACCESS_REVOKED', async () => {
+  await assert.rejects(
+    authorizeWithLegacyStaffRows([
+      { role:'owner', status:'revoked' }, { role:'manager', status:'inactive' },
+    ], 'view'),
+    (error) => error.code === 'CENTER_ACCESS_REVOKED',
+  );
+});
+
+test('multiple active legacy memberships use owner-manager-staff precedence deterministically', async () => {
+  const access = await authorizeWithLegacyStaffRows([
+    { role:'staff', status:'active' }, { role:'manager', status:'active' }, { role:'owner', status:'active' },
+  ]);
+  assert.strictEqual(access.role, 'owner');
+});
+
+test('duplicate-safe selection preserves Staff view-only permissions', async () => {
+  const access = await authorizeWithLegacyStaffRows([
+    { role:'manager', status:'revoked' }, { role:'staff', status:'active' },
+  ], 'view');
+  assert.strictEqual(access.role, 'staff');
+  await assert.rejects(
+    authorizeCareProfileAccess({
+      lineUserId:'U_LEGACY', careProfileId:'CP-1', permission:'manage_medications', centerId:'CTR-LEGACY',
+    }),
+    (error) => error.code === 'ACCESS_DENIED',
+  );
+});
+
 test('staff from a different center cannot access the Care Profile', async () => {
   await profile({ status: 'linked' });
   await centerRelationship({ lineUserId: 'U_CENTER_A' });

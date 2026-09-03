@@ -6,6 +6,10 @@ const familyService = require('../backend/services/familyService');
 const groupBindingService = require('../backend/services/groupBindingService');
 const accessService = require('../backend/services/accessService');
 
+const VALID_OWNER_A = `U${'a'.repeat(32)}`;
+const VALID_OWNER_B = `U${'b'.repeat(32)}`;
+const VALID_NEW_OWNER = `U${'c'.repeat(32)}`;
+
 beforeEach(() => db.resetAll());
 
 test('เจ้าของคนเดียวมีหลายสาขาและเลือก active branch ได้', async () => {
@@ -157,8 +161,8 @@ test('concurrent owner transfers serialize and only one stale command succeeds',
   await db.StaffContexts.insert({ context_id:'CTX-OWNER', center_id:center.center_id, line_user_id:'U_OWNER' });
   await db.StaffContexts.insert({ context_id:'CTX-ROGUE', center_id:center.center_id, line_user_id:'U_ROGUE_OWNER' });
   const results = await Promise.all([
-    centerService.transferOwner({ centerId:center.center_id, newOwnerLineId:'U_OWNER_A', actor:'U_ADMIN' }),
-    centerService.transferOwner({ centerId:center.center_id, newOwnerLineId:'U_OWNER_B', actor:'U_ADMIN' }),
+    centerService.transferOwner({ centerId:center.center_id, newOwnerLineId:VALID_OWNER_A, actor:'U_ADMIN' }),
+    centerService.transferOwner({ centerId:center.center_id, newOwnerLineId:VALID_OWNER_B, actor:'U_ADMIN' }),
   ]);
 
   assert.strictEqual(results.filter((result) => result.ok).length, 1);
@@ -168,7 +172,7 @@ test('concurrent owner transfers serialize and only one stale command succeeds',
     && row.role === 'owner' && (!row.status || row.status === 'active'));
   assert.strictEqual(activeOwners.length, 1);
   assert.strictEqual(activeOwners[0].line_user_id, updatedCenter.owner_line_id);
-  assert.ok(['U_OWNER_A', 'U_OWNER_B'].includes(updatedCenter.owner_line_id));
+  assert.ok([VALID_OWNER_A, VALID_OWNER_B].includes(updatedCenter.owner_line_id));
   assert.strictEqual((await db.StaffContexts.findWhere((row) => row.center_id === center.center_id
     && row.line_user_id === 'U_OWNER')).length, 0);
   assert.strictEqual((await db.StaffContexts.findWhere((row) => row.center_id === center.center_id
@@ -187,7 +191,7 @@ test('owner transfer may retain exactly one previous-owner manager membership', 
   await db.StaffContexts.insert({ context_id:'CTX-OWNER', center_id:center.center_id, line_user_id:'U_OWNER' });
 
   const result = await centerService.transferOwner({
-    centerId:center.center_id, newOwnerLineId:'U_NEW_OWNER', actor:'U_ADMIN', keepPreviousAsManager:true,
+    centerId:center.center_id, newOwnerLineId:VALID_NEW_OWNER, actor:'U_ADMIN', keepPreviousAsManager:true,
   });
   assert.strictEqual(result.ok, true);
   const activePreviousRows = await db.CenterStaff.findWhere((row) => row.center_id === center.center_id
