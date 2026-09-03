@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const db = require('../backend/db');
 const centerService = require('../backend/services/centerService');
 const lineClient = require('../backend/providers/lineClient');
+const { authorizeCareProfileAccess } = require('../backend/services/careProfileAuthorizationService');
 
 const OLD_OWNER = `U${'1'.repeat(32)}`;
 const NEW_OWNER = `U${'2'.repeat(32)}`;
@@ -194,4 +195,58 @@ test('ownership transfer changes Center authority without rewriting patient, Fam
   assert.equal((await db.CareProfiles.findOne((row) => row.care_profile_id === 'CP-A')).owner_line_id, familyOwner);
   const provenance = await db.Medications.findOne((row) => row.medication_id === 'MED-A');
   assert.equal(provenance.created_by_center_user_id, OLD_OWNER);
+});
+
+test('synthetic transfer journey moves current Center authority while Family and cross-domain Care Profile access stay valid', async () => {
+  const center = await seedCenter();
+  const familyOwner = `U${'4'.repeat(32)}`;
+  await db.CareProfiles.insert({
+    care_profile_id:'CP-E2E', center_id:center.center_id,
+    owner_line_id:familyOwner, patient_name:'ผู้พักจำลอง', status:'linked',
+  });
+  await db.Residents.insert({
+    resident_id:'RES-E2E', center_id:center.center_id,
+    care_profile_id:'CP-E2E', status:'active',
+  });
+
+  const oldOwnerBefore = await authorizeCareProfileAccess({
+    lineUserId:OLD_OWNER, careProfileId:'CP-E2E', centerId:center.center_id,
+    permission:'manage_medications',
+  });
+  assert.equal(oldOwnerBefore.role, 'owner');
+  await assert.rejects(
+    authorizeCareProfileAccess({
+      lineUserId:NEW_OWNER, careProfileId:'CP-E2E', centerId:center.center_id,
+      permission:'view',
+    }),
+    { code:'ACCESS_DENIED' },
+  );
+  assert.equal((await authorizeCareProfileAccess({
+    lineUserId:familyOwner, careProfileId:'CP-E2E', permission:'view',
+  })).principalType, 'family_owner');
+
+  assert.equal((await centerService.transferOwner({
+    centerId:center.center_id, newOwnerLineId:NEW_OWNER,
+    actor:'admin:test', keepPreviousAsManager:false,
+  })).ok, true);
+
+  for (const permission of ['view', 'edit_profile', 'manage_appointments', 'manage_medications', 'decide_transport']) {
+    const access = await authorizeCareProfileAccess({
+      lineUserId:NEW_OWNER, careProfileId:'CP-E2E', centerId:center.center_id, permission,
+    });
+    assert.equal(access.role, 'owner', `${permission} must follow current Center authority`);
+    await assert.rejects(
+      authorizeCareProfileAccess({
+        lineUserId:OLD_OWNER, careProfileId:'CP-E2E', centerId:center.center_id, permission,
+      }),
+      { code:'CENTER_ACCESS_REVOKED' },
+    );
+  }
+  const familyAfter = await authorizeCareProfileAccess({
+    lineUserId:familyOwner, careProfileId:'CP-E2E', permission:'view',
+  });
+  assert.equal(familyAfter.principalType, 'family_owner');
+  assert.equal(familyAfter.careProfile.owner_line_id, familyOwner);
+  assert.equal(familyAfter.careProfile.center_id, center.center_id);
+  assert.equal((await db.AccessRequests.findWhere((row) => row.care_profile_id === 'CP-E2E')).length, 0);
 });
