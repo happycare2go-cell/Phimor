@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { privacyViolation, sanitizeResearchPlan } = require('../backend/services/clinicalResearchPrivacy');
-const { buildEvidenceBundle, createUsageAccumulator } = require('../backend/services/clinicalEvidenceService');
+const {
+  evidenceUrlKey, buildEvidenceBundle, createUsageAccumulator,
+} = require('../backend/services/clinicalEvidenceService');
 
 const privacy = {
   blockedTerms:['ผู้ป่วย ทดสอบ', 'CP-PRIVATE', 'RES-PRIVATE', 'CASE-PRIVATE', 'CENTER-PRIVATE'],
@@ -48,6 +50,25 @@ test('evidence accepts only actual allowlisted provider citations and preserves 
   assert.equal(evidence.findings[1].conflictDetected, true);
   assert.match(evidence.limitations.join(' '), /EVIDENCE_WITHOUT_VERIFIED_CITATION_REJECTED/);
   assert.doesNotMatch(JSON.stringify(evidence), /invented\.example|blog\.example|unused/);
+});
+
+test('evidence URL matching ignores only non-document URL decoration',()=>{
+  assert.equal(
+    evidenceUrlKey('https://www.fda.gov/a?setid=1&utm_source=test#section'),
+    evidenceUrlKey('https://fda.gov/a?setid=1'),
+  );
+  assert.notEqual(evidenceUrlKey('https://fda.gov/a'),evidenceUrlKey('https://fda.gov/b'));
+  assert.equal(evidenceUrlKey('http://fda.gov/a'),null);
+  const evidence=buildEvidenceBundle({
+    findings:[{
+      topicType:'drug_interaction', summary:'พบหลักฐานที่ต้องประเมิน',
+      citationUrls:['https://fda.gov/a?setid=1'], conflictDetected:false, limitation:null,
+    }], limitations:[],
+  },{ sources:[{
+    url:'https://www.fda.gov/a?utm_source=provider&setid=1#source', title:'FDA source',
+  }]},{ allowedDomains:['fda.gov'] });
+  assert.equal(evidence.findings.length,1);
+  assert.equal(evidence.sources.length,1);
 });
 
 test('absence of evidence cannot become a no-interaction conclusion', () => {

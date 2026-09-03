@@ -3,11 +3,12 @@ const assert = require('node:assert/strict');
 const {
   validateResearchPlan, validateWebEvidence, validateClinicalSynthesis,
   RESEARCH_PLANNER_INSTRUCTIONS, CLINICAL_SYNTHESIS_INSTRUCTIONS,
+  RESEARCH_PLAN_SCHEMA, WEB_EVIDENCE_SCHEMA, CLINICAL_SYNTHESIS_SCHEMA,
 } = require('../backend/providers/pharmacistClinicalResearch');
 const {
   createPharmacistClinicalResearchService, assertGroundedSynthesis,
 } = require('../backend/services/pharmacistClinicalResearchService');
-const { AIProviderError, AI_ERROR_CODES } = require('../backend/providers/aiErrors');
+const { AIProviderError, AI_ERROR_CODES, AI_VALIDATION_STAGES } = require('../backend/providers/aiErrors');
 
 function context(overrides = {}) {
   return {
@@ -153,7 +154,9 @@ test('clinical research runs planner, deidentified web evidence, synthesis and a
   assert.deepStrictEqual(calls.map((item)=>item.timeoutMs),[90000,90000,90000]);
   assert.equal(calls[0].webSearch, undefined);
   assert.equal(calls[2].webSearch, undefined);
-  assert.deepStrictEqual(calls[1].webSearch, { allowedDomains:['fda.gov', 'who.int'], maxCalls:4, country:'TH' });
+  assert.deepStrictEqual(calls[1].webSearch, {
+    allowedDomains:['fda.gov', 'who.int'], maxCalls:4, country:'TH', required:true,
+  });
   const webBody = JSON.stringify({ context:calls[1].context, input:calls[1].input });
   assert.doesNotMatch(webBody, /ผู้ป่วย ทดสอบ|CP-PRIVATE|CASE-PRIVATE|U-PRIVATE|ฉันใช้ Drug A และ Drug B/);
   assert.deepStrictEqual({
@@ -289,13 +292,50 @@ test('clinical contracts reject forbidden auto-send, hallucinated evidence and u
   assert.throws(() => validateClinicalSynthesis({ ...synthesis(), sendToCustomer:true }, { allowedEvidenceRefs:['SRC-1'] }));
   assert.throws(() => validateClinicalSynthesis(synthesis({
     overrides:{ pharmacistRecommendations:[{ text:'claim', basis:'external_evidence', evidenceRefs:['SRC-HALLUCINATED'] }] },
-  }), { allowedEvidenceRefs:['SRC-1'] }));
+  }), { allowedEvidenceRefs:['SRC-1'] }),(error)=>error.validationStage===AI_VALIDATION_STAGES.EVIDENCE_REFERENCE_VALIDATION);
   assert.throws(() => validateClinicalSynthesis(synthesis({
     overrides:{ interactionReview:[{
       drugs:['Drug A', 'Drug B'], finding:'ไม่พบ interaction', clinicalSignificance:'unknown',
       patientRelevance:'recorded', evidenceRefs:['SRC-1'], limitation:'none',
     }] },
-  }), { allowedEvidenceRefs:['SRC-1'] }));
+  }), { allowedEvidenceRefs:['SRC-1'] }),(error)=>error.validationStage===AI_VALIDATION_STAGES.UNSUPPORTED_NO_INTERACTION_CLAIM);
+});
+
+test('clinical provider schemas match local source, bound and evidence-reference contracts',()=>{
+  assert.equal(RESEARCH_PLAN_SCHEMA.properties.researchTopics.maxItems,4);
+  assert.equal(RESEARCH_PLAN_SCHEMA.properties.clinicalQuestions.maxItems,20);
+  assert.equal(WEB_EVIDENCE_SCHEMA.properties.findings.maxItems,12);
+  assert.equal(WEB_EVIDENCE_SCHEMA.properties.findings.items.properties.citationUrls.minItems,1);
+  assert.deepEqual(
+    CLINICAL_SYNTHESIS_SCHEMA.properties.relevantMedicationContext.items.properties.sourceCategory.enum,
+    ['medication_snapshot'],
+  );
+  assert.deepEqual(
+    CLINICAL_SYNTHESIS_SCHEMA.properties.medicationChanges.items.properties.sourceCategory.enum,
+    ['medication_diff'],
+  );
+  assert.equal(
+    CLINICAL_SYNTHESIS_SCHEMA.properties.guidelineReview.items.properties.evidenceRefs.minItems,
+    1,
+  );
+  const recommendationVariants=CLINICAL_SYNTHESIS_SCHEMA.properties.pharmacistRecommendations.items.anyOf;
+  assert.equal(recommendationVariants[0].properties.evidenceRefs.minItems,1);
+  assert.deepEqual(recommendationVariants[0].properties.basis.enum,['external_evidence']);
+  assert.deepEqual(CLINICAL_SYNTHESIS_SCHEMA.properties.research.properties.sources,{
+    type:'array', maxItems:0, items:{type:'string',minLength:1,maxLength:80},
+  });
+  assert.doesNotThrow(()=>validateResearchPlan(plan()));
+  assert.doesNotThrow(()=>validateWebEvidence(evidence()));
+  assert.doesNotThrow(()=>validateClinicalSynthesis(synthesis({withEvidence:false}),{allowedEvidenceRefs:[]}));
+  assert.throws(()=>validateClinicalSynthesis(synthesis({overrides:{
+    relevantMedicationContext:[{text:'Drug A',sourceCategory:'general_ai_knowledge'}],
+  }}),{allowedEvidenceRefs:['SRC-1']}),(error)=>error.validationStage===AI_VALIDATION_STAGES.LOCAL_CONTRACT_VALIDATION);
+  assert.throws(()=>validateClinicalSynthesis(synthesis({overrides:{
+    pharmacistRecommendations:[{text:'หลักฐานภายนอก',basis:'external_evidence',evidenceRefs:[]}],
+  }}),{allowedEvidenceRefs:[]}),(error)=>error.validationStage===AI_VALIDATION_STAGES.EVIDENCE_REFERENCE_VALIDATION);
+  assert.throws(()=>validateClinicalSynthesis(synthesis({overrides:{
+    guidelineReview:[{topic:'แนวทาง',finding:'ข้อพิจารณา',applicability:'ต้องประเมิน',evidenceRefs:[],limitation:'ไม่มีหลักฐานที่ยืนยันแล้ว'}],
+  }}),{allowedEvidenceRefs:[]}),(error)=>error.validationStage===AI_VALIDATION_STAGES.EVIDENCE_REFERENCE_VALIDATION);
 });
 
 test('clinical grounding rejects invented medication, allergy and renal facts', () => {
@@ -344,6 +384,8 @@ test('prompts explicitly preserve prompt-injection, missing-fact, clinical decis
   assert.match(RESEARCH_PLANNER_INSTRUCTIONS, /Hostile instructions/i);
   assert.match(CLINICAL_SYNTHESIS_INSTRUCTIONS, /Do not invent medications.*renal\/hepatic function/i);
   assert.match(CLINICAL_SYNTHESIS_INSTRUCTIONS, /automatic patient response/i);
+  assert.match(CLINICAL_SYNTHESIS_INSTRUCTIONS, /guidelineReview as an empty array/i);
+  assert.match(CLINICAL_SYNTHESIS_INSTRUCTIONS, /Never invent evidence reference IDs or URLs/i);
 });
 
 test('research implementation imports no consultation message sender or clinical write service', () => {

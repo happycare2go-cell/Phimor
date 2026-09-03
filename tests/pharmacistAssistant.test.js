@@ -6,6 +6,8 @@ const path=require('node:path');
 process.env.NODE_ENV='test';
 
 const { AIProviderError,AI_ERROR_CODES }=require('../backend/providers/aiErrors');
+const { AI_VALIDATION_STAGES }=require('../backend/providers/aiErrors');
+const { PHARMACIST_ASSISTANT_RESPONSE_SCHEMA }=require('../backend/providers/aiResponseSchemas');
 const {
   validatePharmacistAssistantResponse,assertGroundedPharmacistAssistant,hasForbiddenOutputKey,
 }=require('../backend/providers/pharmacistAssistant');
@@ -162,6 +164,28 @@ test('structured response separates recorded facts and general guidance with att
   assert.equal(value.responseGuidance[0].sourceCategory,'general_ai_knowledge');
 });
 
+test('assistant provider schema has field-specific source categories matching local validation',()=>{
+  const properties=PHARMACIST_ASSISTANT_RESPONSE_SCHEMA.properties;
+  assert.deepEqual(properties.recordedFacts.items.properties.sourceCategory.enum,[
+    'care_profile','medication_snapshot','medication_diff','vital_sign','appointment','consultation_message',
+  ]);
+  assert.deepEqual(properties.relevantMedicationContext.items.properties.sourceCategory.enum,['medication_snapshot']);
+  assert.deepEqual(properties.medicationChanges.items.properties.sourceCategory.enum,['medication_diff']);
+  for(const field of ['questionsToAsk','safetyConsiderations','responseGuidance','escalationConsiderations']) {
+    assert.deepEqual(properties[field].items.properties.sourceCategory.enum,['general_ai_knowledge']);
+    assert.equal(properties[field].maxItems,30);
+  }
+  assert.doesNotThrow(()=>validatePharmacistAssistantResponse(validAssistant()));
+  assert.throws(()=>validatePharmacistAssistantResponse({
+    ...validAssistant(),
+    relevantMedicationContext:[{text:'ผิดแหล่งข้อมูล',sourceCategory:'general_ai_knowledge'}],
+  }),(error)=>error.code===AI_ERROR_CODES.AI_INVALID_RESPONSE
+    && error.validationStage===AI_VALIDATION_STAGES.LOCAL_CONTRACT_VALIDATION);
+  assert.throws(()=>validatePharmacistAssistantResponse({
+    ...validAssistant(), unexpectedField:'not allowed',
+  }),{code:AI_ERROR_CODES.AI_INVALID_RESPONSE});
+});
+
 test('final patient answer and auto-send fields are rejected recursively',()=>{
   for(const key of ['finalAnswer','patientResponse','sendToCustomer','autoSend','automaticTreatmentDecision','diagnosis','medicationOrder']) {
     assert.equal(hasForbiddenOutputKey({nested:{[key]:'do not send'}}),true);
@@ -176,7 +200,8 @@ test('assistant draft rejects invented medication quantities, direct medication 
   },context));
   assert.throws(()=>assertGroundedPharmacistAssistant({
     ...validAssistant(),draftResponseForPharmacistReview:'ให้รับประทานครั้งละ 2 เม็ด',
-  },context),{code:'AI_INVALID_RESPONSE'});
+  },context),(error)=>error.code==='AI_INVALID_RESPONSE'
+    && error.validationStage===AI_VALIDATION_STAGES.GROUNDING_VALIDATION);
   assert.throws(()=>assertGroundedPharmacistAssistant({
     ...validAssistant(),draftResponseForPharmacistReview:'ควรหยุดยาทันที',
   },context),{code:'AI_INVALID_RESPONSE'});

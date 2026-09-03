@@ -5,6 +5,19 @@ function allowedHost(hostname, allowedDomains) {
   return allowedDomains.some((domain) => normalized === domain || normalized.endsWith(`.${domain}`));
 }
 
+function evidenceUrlKey(value) {
+  let url;
+  try { url = new URL(value); } catch (_) { return null; }
+  if (url.protocol !== 'https:') return null;
+  url.hash = '';
+  url.hostname = url.hostname.replace(/^www\./i, '');
+  for (const key of [...url.searchParams.keys()]) {
+    if (/^(?:utm_.+|fbclid|gclid)$/i.test(key)) url.searchParams.delete(key);
+  }
+  url.searchParams.sort();
+  return url.toString();
+}
+
 function buildEvidenceBundle(rawEvidence, metadata, {
   allowedDomains = [], accessedAt = new Date(), maxSources = 8,
 } = {}) {
@@ -14,8 +27,10 @@ function buildEvidenceBundle(rawEvidence, metadata, {
     let url;
     try { url = new URL(source.url); } catch (_) { continue; }
     if (url.protocol !== 'https:' || !allowedHost(url.hostname, allowedDomains)) continue;
-    if (!unique.has(url.toString())) {
-      unique.set(url.toString(), Object.freeze({
+    const key = evidenceUrlKey(url);
+    if (!key || unique.has(key)) continue;
+    {
+      unique.set(key, Object.freeze({
         referenceId:`SRC-${unique.size + 1}`,
         title:String(source.title || url.hostname).normalize('NFC').trim().slice(0, 300) || url.hostname,
         url:url.toString(), domain:url.hostname.toLowerCase(),
@@ -32,7 +47,7 @@ function buildEvidenceBundle(rawEvidence, metadata, {
       continue;
     }
     const evidenceRefs = [...new Set((finding.citationUrls || [])
-      .map((url) => unique.get(url)?.referenceId).filter(Boolean))];
+      .map((url) => unique.get(evidenceUrlKey(url))?.referenceId).filter(Boolean))];
     if (!evidenceRefs.length) {
       limitations.push('EVIDENCE_WITHOUT_VERIFIED_CITATION_REJECTED');
       continue;
@@ -86,5 +101,5 @@ function createUsageAccumulator() {
 }
 
 module.exports = {
-  NO_INTERACTION_PATTERN, allowedHost, buildEvidenceBundle, createUsageAccumulator,
+  NO_INTERACTION_PATTERN, allowedHost, evidenceUrlKey, buildEvidenceBundle, createUsageAccumulator,
 };

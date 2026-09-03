@@ -16,6 +16,7 @@
     "preflight:consultation-lifecycle": "node scripts/preflight-consultation-lifecycle.js",
     "preflight:integration-adapter-v1": "node scripts/preflight-integration-adapter-v1.js",
     "preflight:openai-v1": "node scripts/preflight-openai-v1.js",
+    "preflight:pharmacist-ai-contracts": "node scripts/preflight-pharmacist-ai-contracts.js",
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate-status.js"
   },

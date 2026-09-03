@@ -1,4 +1,4 @@
-const { AIProviderError, AI_ERROR_CODES } = require('./aiErrors');
+const { AIProviderError, AI_ERROR_CODES, AI_VALIDATION_STAGES } = require('./aiErrors');
 const { AI_VERSIONS } = require('../config/aiVersions');
 const { trustedTaskInstructions } = require('./promptSafety');
 
@@ -22,23 +22,41 @@ medicationChanges, questionsToAsk, safetyConsiderations, responseGuidance, escal
 (each an array of { text, sourceCategory }), missingInformation (string array),
 draftResponseForPharmacistReview (string), and disclaimer (string).
 Recorded sourceCategory must identify care_profile, medication_snapshot, medication_diff,
-vital_sign, appointment, or consultation_message. General professional considerations must use general_ai_knowledge.`);
+vital_sign, appointment, or consultation_message. relevantMedicationContext must use medication_snapshot only.
+medicationChanges must use medication_diff only. questionsToAsk, safetyConsiderations,
+responseGuidance, and escalationConsiderations must use general_ai_knowledge only.
+If a dose or frequency is not present in the supplied context, do not invent it; state the uncertainty
+or ask the pharmacist to verify the missing information.`);
+
+const RESPONSE_FIELDS = Object.freeze([
+  'caseSummary', 'recordedFacts', 'relevantMedicationContext', 'medicationChanges',
+  'missingInformation', 'questionsToAsk', 'safetyConsiderations', 'responseGuidance',
+  'escalationConsiderations', 'draftResponseForPharmacistReview', 'disclaimer',
+]);
+
+function invalid(message, validationStage = AI_VALIDATION_STAGES.LOCAL_CONTRACT_VALIDATION) {
+  throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, message, { validationStage });
+}
 
 function cleanString(value, field, max = 1000) {
   if (typeof value !== 'string' || !value.trim()) {
-    throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, `Missing ${field}`);
+    invalid(`Missing ${field}`);
   }
-  return value.trim().slice(0, max);
+  const normalized = value.normalize('NFC').trim();
+  if (normalized.length > max) invalid(`Invalid ${field}`);
+  return normalized;
 }
 
 function validateAttributedItems(value, field, { maxItems = 30, allowedSources = SOURCE_CATEGORIES } = {}) {
   if (!Array.isArray(value) || value.length > maxItems) {
-    throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, `Invalid ${field}`);
+    invalid(`Invalid ${field}`);
   }
   return Object.freeze(value.map((item) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)
+        || Object.keys(item).length !== 2
+        || !Object.hasOwn(item, 'text') || !Object.hasOwn(item, 'sourceCategory')
         || !allowedSources.includes(item.sourceCategory)) {
-      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, `Invalid ${field} attribution`);
+      invalid(`Invalid ${field} attribution`);
     }
     return Object.freeze({
       text: cleanString(item.text, `${field}.text`, 1000),
@@ -91,18 +109,20 @@ function flattenedClinicalValues(value) {
 function assertGroundedPharmacistAssistant(value, context) {
   const draft = value?.draftResponseForPharmacistReview || '';
   if (INTERNAL_INSTRUCTION_PATTERN.test(draft) || MEDICATION_DIRECTIVE_PATTERN.test(draft)) {
-    throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'Unsafe pharmacist review draft');
+    invalid('Unsafe pharmacist review draft', AI_VALIDATION_STAGES.GROUNDING_VALIDATION);
   }
   const supported = new Set(clinicalQuantityTokens(flattenedClinicalValues(context || {})));
   if (clinicalQuantityTokens(draft).some((token) => !supported.has(token))) {
-    throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'Ungrounded pharmacist review draft');
+    invalid('Ungrounded pharmacist review draft', AI_VALIDATION_STAGES.GROUNDING_VALIDATION);
   }
   return value;
 }
 
 function validatePharmacistAssistantResponse(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || hasForbiddenOutputKey(value)) {
-    throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'Invalid pharmacist assistant response');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || hasForbiddenOutputKey(value)
+      || Object.keys(value).length !== RESPONSE_FIELDS.length
+      || RESPONSE_FIELDS.some((field) => !Object.hasOwn(value, field))) {
+    invalid('Invalid pharmacist assistant response');
   }
   const output = { caseSummary:cleanString(value.caseSummary, 'caseSummary', 3000) };
   output.recordedFacts=validateAttributedItems(value.recordedFacts,'recordedFacts',{
@@ -117,11 +137,12 @@ function validatePharmacistAssistantResponse(value) {
   for (const field of ['questionsToAsk','safetyConsiderations','responseGuidance','escalationConsiderations']) {
     output[field]=validateAttributedItems(value[field],field,{allowedSources:['general_ai_knowledge']});
   }
-  if (!Array.isArray(value.missingInformation) || value.missingInformation.length > 30
-      || value.missingInformation.some((item) => typeof item !== 'string')) {
-    throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'Invalid missingInformation');
+  if (!Array.isArray(value.missingInformation) || value.missingInformation.length > 30) {
+    invalid('Invalid missingInformation');
   }
-  output.missingInformation = Object.freeze(value.missingInformation.map((item) => item.trim().slice(0, 500)).filter(Boolean));
+  output.missingInformation = Object.freeze(value.missingInformation.map((item) => (
+    cleanString(item, 'missingInformation', 500)
+  )));
   output.draftResponseForPharmacistReview = cleanString(
     value.draftResponseForPharmacistReview, 'draftResponseForPharmacistReview', 4000,
   );

@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const { OpenAIProvider, OPENAI_RESPONSES_URL } = require('../backend/providers/OpenAIProvider');
 const { createAIProvider } = require('../backend/providers/AIProviderFactory');
 const { loadV2Config } = require('../backend/config/v2Config');
-const { AI_ERROR_CODES, AIProviderError } = require('../backend/providers/aiErrors');
+const {
+  AI_ERROR_CODES, AI_VALIDATION_STAGES, AI_PROVIDER_FAILURE_KINDS, AIProviderError,
+} = require('../backend/providers/aiErrors');
 
 function response(status, body, requestId = 'req-safe') {
   return {
@@ -80,10 +82,13 @@ test('OpenAI provider returns safe usage and actual web source metadata', async 
   let metadata;
   await generate(createProvider(async () => completed({ answer: 'researched' }, {
     output: [
-      { type: 'web_search_call', action: { sources: [
+      { type: 'web_search_call', action: { type:'search', sources: [
         { url: 'https://www.who.int/example', title: 'WHO' },
         { url: 'javascript:alert(1)', title: 'unsafe' },
       ] } },
+      { type:'web_search_call', action:{ type:'open_page', url:'https://www.who.int/example' } },
+      { type:'web_search_call', action:{ type:'find_in_page', url:'https://www.who.int/example' } },
+      { type:'web_search_call', action:{ sources:[] } },
       { type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ answer: 'researched' }), annotations: [
         { type: 'url_citation', url: 'https://www.who.int/example', title: 'WHO duplicate' },
         { type: 'url_citation', url: 'https://www.fda.gov/example', title: 'FDA' },
@@ -105,21 +110,48 @@ test('web search request includes only configured domains and bounded tool calls
   await generate(createProvider(async (_url, options) => {
     body = JSON.parse(options.body);
     return completed({ answer: 'ok' });
-  }), { webSearch: { allowedDomains: ['WHO.INT', '', 'fda.gov'], maxCalls: 2, searchContextSize: 'low', country:'TH' } });
+  }), { webSearch: { allowedDomains: ['WHO.INT', '', 'fda.gov'], maxCalls: 2, searchContextSize: 'low', country:'TH', required:true } });
   assert.deepStrictEqual(body.tools, [{
     type: 'web_search', search_context_size: 'low', filters: { allowed_domains: ['who.int', 'fda.gov'] },
     user_location:{ type:'approximate', country:'TH' },
   }]);
   assert.strictEqual(body.max_tool_calls, 2);
+  assert.strictEqual(body.tool_choice, 'required');
   assert.deepStrictEqual(body.include, ['web_search_call.action.sources']);
+});
+
+test('web search remains optional unless the caller explicitly requires a tool call', async () => {
+  let body;
+  await generate(createProvider(async (_url, options) => {
+    body = JSON.parse(options.body);
+    return completed({ answer:'ok' });
+  }), { webSearch:{ allowedDomains:['who.int'], maxCalls:1 } });
+  assert.strictEqual(body.tool_choice, 'auto');
 });
 
 test('OpenAI provider maps refusal, incomplete, malformed JSON and local validation safely', async () => {
   const refusal = completed({}, { output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'private' }] }] });
-  await assert.rejects(generate(createProvider(async () => refusal)), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE);
-  await assert.rejects(generate(createProvider(async () => response(200, { status: 'incomplete', output: [] }))), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE);
-  await assert.rejects(generate(createProvider(async () => completed({}, { output_text: '{bad' }))), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE);
-  await assert.rejects(generate(createProvider(async () => completed({ answer: 'ok' })), { outputSchema: () => { throw new Error('private validation'); } }), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE);
+  await assert.rejects(generate(createProvider(async () => refusal)), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE
+    && error.providerFailureKind===AI_PROVIDER_FAILURE_KINDS.REFUSAL);
+  await assert.rejects(generate(createProvider(async () => response(200, { status: 'incomplete', output: [] }))), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE
+    && error.providerFailureKind===AI_PROVIDER_FAILURE_KINDS.RESPONSE_INCOMPLETE);
+  await assert.rejects(generate(createProvider(async () => completed({}, { output_text: '{bad' }))), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE
+    && error.providerFailureKind===AI_PROVIDER_FAILURE_KINDS.STRUCTURED_OUTPUT_INVALID_JSON);
+  await assert.rejects(generate(createProvider(async () => completed({ answer: 'ok' })), { outputSchema: () => { throw new Error('private validation'); } }), (error) => error.code === AI_ERROR_CODES.AI_INVALID_RESPONSE
+    && error.validationStage===AI_VALIDATION_STAGES.LOCAL_CONTRACT_VALIDATION);
+});
+
+test('OpenAI provider logs only bounded validation-stage metadata',async()=>{
+  const logs=[];
+  await assert.rejects(generate(createProvider(async()=>completed({}, {output_text:'{bad'}),{
+    logger:(event)=>logs.push(event),
+  })),(error)=>error.validationStage===AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE);
+  assert.equal(logs.length,1);
+  assert.equal(logs[0].validationStage,AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE);
+  assert.deepEqual(Object.keys(logs[0]).sort(),[
+    'durationMs','errorCode','model','provider','providerFailureKind','requestId','resultStatus','task','validationStage',
+  ].sort());
+  assert.doesNotMatch(JSON.stringify(logs),/private user|patient-context|sk-private|\{bad/);
 });
 
 test('OpenAI provider maps HTTP and network failures with bounded retry', async () => {
@@ -135,12 +167,23 @@ test('OpenAI provider maps HTTP and network failures with bounded retry', async 
   assert.strictEqual(calls, 2);
 });
 
+test('OpenAI structured-contract rejection is safely classified without provider details',async()=>{
+  const logs=[];
+  await assert.rejects(generate(createProvider(async()=>response(400,{error:{message:'raw contract detail'}}),{
+    logger:(event)=>logs.push(event),
+  })),(error)=>error.code===AI_ERROR_CODES.AI_INVALID_RESPONSE
+    && error.validationStage===AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE);
+  assert.equal(logs[0].validationStage,AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE);
+  assert.equal(logs[0].providerFailureKind,AI_PROVIDER_FAILURE_KINDS.SCHEMA_REJECTED);
+  assert.doesNotMatch(JSON.stringify(logs),/raw contract detail/);
+});
+
 test('OpenAI provider timeout is bounded by AbortController', async () => {
   let calls = 0;
   const provider = createProvider(async (_url, { signal }) => new Promise((_resolve, reject) => {
     calls += 1;
     signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-  }), { timeoutMs: 10, maxRetries:1 });
+  }), { timeoutMs: 10, maxRetries:0 });
   await assert.rejects(generate(provider), (error) => error.code === AI_ERROR_CODES.AI_TIMEOUT);
   assert.equal(calls,1);
 });

@@ -1,5 +1,8 @@
 const { BaseAIProvider } = require('./BaseAIProvider');
-const { AI_ERROR_CODES, AIProviderError, isAIProviderError } = require('./aiErrors');
+const {
+  AI_ERROR_CODES, AI_VALIDATION_STAGES, AI_PROVIDER_FAILURE_KINDS,
+  AIProviderError, isAIProviderError, safeValidationStage, safeProviderFailureKind,
+} = require('./aiErrors');
 const { ensureTrustedTaskInstructions, untrustedSourceSection } = require('./promptSafety');
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -33,14 +36,20 @@ function responseText(data) {
     if (item?.type !== 'message') continue;
     for (const content of Array.isArray(item.content) ? item.content : []) {
       if (content?.type === 'refusal') {
-        throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI declined the structured request');
+        throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI declined the structured request', {
+          validationStage:AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE,
+          providerFailureKind:AI_PROVIDER_FAILURE_KINDS.REFUSAL,
+        });
       }
       if (content?.type === 'output_text' && typeof content.text === 'string' && content.text.trim()) {
         return content.text;
       }
     }
   }
-  throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI response has no structured output');
+  throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI response has no structured output', {
+    validationStage:AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE,
+    providerFailureKind:AI_PROVIDER_FAILURE_KINDS.STRUCTURED_OUTPUT_MISSING,
+  });
 }
 
 function responseMetadata(data, response) {
@@ -48,7 +57,8 @@ function responseMetadata(data, response) {
   let webSearchCalls = 0;
   for (const item of Array.isArray(data?.output) ? data.output : []) {
     if (item?.type === 'web_search_call') {
-      webSearchCalls += 1;
+      const actionType = item?.action?.type;
+      if (actionType === 'search') webSearchCalls += 1;
       for (const source of Array.isArray(item?.action?.sources) ? item.action.sources : []) {
         const safe = safeSource(source);
         if (safe) sources.push(safe);
@@ -120,7 +130,12 @@ class OpenAIProvider extends BaseAIProvider {
       return generated.result;
     } catch (error) {
       const mapped = this.mapError(error);
-      this.log({ provider: 'openai', model: selectedModel, task, requestId, durationMs: Date.now() - startedAt, resultStatus: 'error', errorCode: mapped.code });
+      this.log({
+        provider:'openai', model:selectedModel, task, requestId,
+        durationMs:Date.now() - startedAt, resultStatus:'error', errorCode:mapped.code,
+        validationStage:safeValidationStage(mapped.validationStage),
+        providerFailureKind:safeProviderFailureKind(mapped.providerFailureKind),
+      });
       throw mapped;
     }
   }
@@ -156,7 +171,7 @@ class OpenAIProvider extends BaseAIProvider {
         ...(allowedDomains.length ? { filters: { allowed_domains: allowedDomains } } : {}),
         ...(webSearch.country ? { user_location: { type: 'approximate', country: String(webSearch.country).slice(0, 2).toUpperCase() } } : {}),
       }];
-      body.tool_choice = 'auto';
+      body.tool_choice = webSearch.required === true ? 'required' : 'auto';
       body.include = ['web_search_call.action.sources'];
       if (Number.isSafeInteger(webSearch.maxCalls) && webSearch.maxCalls > 0) body.max_tool_calls = webSearch.maxCalls;
     }
@@ -170,24 +185,43 @@ class OpenAIProvider extends BaseAIProvider {
       headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }, options.deadline);
-    if (!response.ok) throw this.httpError(response.status);
+    if (!response.ok) {
+      if (response.status === 400 && options.responseSchema) {
+        throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI rejected the structured response contract', {
+          status:response.status, validationStage:AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE,
+          providerFailureKind:AI_PROVIDER_FAILURE_KINDS.SCHEMA_REJECTED,
+        });
+      }
+      throw this.httpError(response.status);
+    }
     let data;
     try { data = await response.json(); } catch (_) {
-      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI returned invalid JSON');
+      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI returned invalid JSON', {
+        validationStage:AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE,
+        providerFailureKind:AI_PROVIDER_FAILURE_KINDS.HTTP_JSON_INVALID,
+      });
     }
     if (data?.status !== 'completed') {
-      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI response was incomplete');
+      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI response was incomplete', {
+        validationStage:AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE,
+        providerFailureKind:AI_PROVIDER_FAILURE_KINDS.RESPONSE_INCOMPLETE,
+      });
     }
     let parsed;
     try { parsed = JSON.parse(responseText(data)); } catch (error) {
       if (isAIProviderError(error)) throw error;
-      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI structured output was invalid JSON');
+      throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI structured output was invalid JSON', {
+        validationStage:AI_VALIDATION_STAGES.PROVIDER_SCHEMA_OR_PARSE,
+        providerFailureKind:AI_PROVIDER_FAILURE_KINDS.STRUCTURED_OUTPUT_INVALID_JSON,
+      });
     }
     let result = parsed;
     if (typeof options.outputSchema === 'function') {
       try { result = options.outputSchema(parsed); } catch (error) {
         if (isAIProviderError(error)) throw error;
-        throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI output failed local validation');
+        throw new AIProviderError(AI_ERROR_CODES.AI_INVALID_RESPONSE, 'OpenAI output failed local validation', {
+          validationStage:AI_VALIDATION_STAGES.LOCAL_CONTRACT_VALIDATION,
+        });
       }
     }
     return { result, metadata: responseMetadata(data, response) };

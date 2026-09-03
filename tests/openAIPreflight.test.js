@@ -30,7 +30,7 @@ test('OpenAI V1 preflight uses three synthetic model checks and one bounded allo
     return response({
       id:'resp-preflight-safe', status:'completed', model:body.model,
       output:[
-        ...(web ? [{ type:'web_search_call', action:{ sources:[{
+        ...(web ? [{ type:'web_search_call', action:{ type:'search', sources:[{
           url:'https://www.fda.gov/drugs/example', title:'FDA general information',
         }] } }] : []),
         { type:'message', content:[{ type:'output_text', text:'{"status":"ok"}', annotations:[] }] },

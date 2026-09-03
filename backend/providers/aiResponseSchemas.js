@@ -172,23 +172,40 @@ const DOCTOR_VISIT_RESPONSE_SCHEMA = Object.freeze({
   },
 });
 
-const attributedItem = Object.freeze({
-  type: 'object', additionalProperties: false, required: ['text', 'sourceCategory'],
-  properties: {
-    text: { type: 'string' },
-    sourceCategory: { type: 'string', enum: ['care_profile', 'medication_snapshot', 'medication_diff', 'vital_sign', 'appointment', 'consultation_message', 'general_ai_knowledge'] },
+const assistantString = (maxLength) => ({ type:'string', minLength:1, maxLength });
+const assistantStringArray = (maxItems, maxLength) => ({
+  type:'array', maxItems, items:assistantString(maxLength),
+});
+const assistantAttributedItem = (sourceCategories) => ({
+  type:'object', additionalProperties:false, required:['text', 'sourceCategory'],
+  properties:{
+    text:assistantString(1000),
+    sourceCategory:{ type:'string', enum:[...sourceCategories] },
   },
+});
+const recordedFactSources = Object.freeze([
+  'care_profile', 'medication_snapshot', 'medication_diff',
+  'vital_sign', 'appointment', 'consultation_message',
+]);
+const assistantAttributedArray = (sources) => ({
+  type:'array', maxItems:30, items:assistantAttributedItem(sources),
 });
 
 const PHARMACIST_ASSISTANT_RESPONSE_SCHEMA = Object.freeze({
   type: 'object', additionalProperties: false,
   required: ['caseSummary', 'recordedFacts', 'relevantMedicationContext', 'medicationChanges', 'questionsToAsk', 'safetyConsiderations', 'responseGuidance', 'escalationConsiderations', 'missingInformation', 'draftResponseForPharmacistReview', 'disclaimer'],
   properties: {
-    caseSummary: { type: 'string' }, recordedFacts: { type: 'array', items: attributedItem },
-    relevantMedicationContext: { type: 'array', items: attributedItem }, medicationChanges: { type: 'array', items: attributedItem },
-    questionsToAsk: { type: 'array', items: attributedItem }, safetyConsiderations: { type: 'array', items: attributedItem },
-    responseGuidance: { type: 'array', items: attributedItem }, escalationConsiderations: { type: 'array', items: attributedItem },
-    missingInformation: stringArray, draftResponseForPharmacistReview: { type: 'string' }, disclaimer: { type: 'string' },
+    caseSummary:assistantString(3000),
+    recordedFacts:assistantAttributedArray(recordedFactSources),
+    relevantMedicationContext:assistantAttributedArray(['medication_snapshot']),
+    medicationChanges:assistantAttributedArray(['medication_diff']),
+    questionsToAsk:assistantAttributedArray(['general_ai_knowledge']),
+    safetyConsiderations:assistantAttributedArray(['general_ai_knowledge']),
+    responseGuidance:assistantAttributedArray(['general_ai_knowledge']),
+    escalationConsiderations:assistantAttributedArray(['general_ai_knowledge']),
+    missingInformation:assistantStringArray(30, 500),
+    draftResponseForPharmacistReview:assistantString(4000),
+    disclaimer:assistantString(1000),
   },
 });
 

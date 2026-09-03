@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { loadV2Config } = require('../config/v2Config');
 const { AI_VERSIONS } = require('../config/aiVersions');
 const { createAIProvider } = require('../providers/AIProviderFactory');
-const { AI_ERROR_CODES } = require('../providers/aiErrors');
+const { AI_ERROR_CODES, logAIValidationFailure } = require('../providers/aiErrors');
 const {
   PHARMACIST_ASSISTANT_INSTRUCTIONS, PHARMACIST_ASSISTANT_PROMPT_VERSION,
   validatePharmacistAssistantResponse, assertGroundedPharmacistAssistant,
@@ -35,6 +35,7 @@ function createPharmacistAssistantService(overrides={}) {
   };
   const contextBuilder=overrides.contextBuilder || buildConsultationContext;
   const auditRecorder=overrides.recordAudit || recordAIInteractionMetadata;
+  const diagnosticLogger=overrides.diagnosticLogger || console.info;
 
   return async function generatePharmacistAssistance({caseId,pharmacistLineUserId}={}) {
     const interactionId=`AI-${randomUUID()}`;
@@ -77,6 +78,9 @@ function createPharmacistAssistantService(overrides={}) {
       });
     } catch (error) {
       const errorCode=SAFE_PROVIDER_ERRORS.has(error?.code)?error.code:AI_ERROR_CODES.AI_PROVIDER_ERROR;
+      logAIValidationFailure(diagnosticLogger, {
+        event:'pharmacist_assistant_contract_rejected', task:'pharmacist_assistance', error,
+      });
       await audit({resultStatus:'error',errorCode,completedAt:new Date().toISOString()});
       return unavailable(errorCode);
     }

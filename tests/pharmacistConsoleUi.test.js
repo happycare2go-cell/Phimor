@@ -367,6 +367,7 @@ test('clinical research failure remains safe and does not disable manual chat',a
   assert.equal(consoleUI.canMessage(harness.state().selectedCase),true);
   assert.equal(harness.state().clinicalResearch.errorCode,'AI_TIMEOUT');
   assert.doesNotMatch(consoleUI.clinicalResearchErrorMessage('AI_TIMEOUT'),/raw provider|AI_TIMEOUT/);
+  assert.equal(consoleUI.clinicalResearchErrorMessage('AI_INVALID_RESPONSE'),'ผลการวิเคราะห์ไม่ผ่านการตรวจสอบของระบบ กรุณาลองใหม่');
 });
 
 test('known message-send failures map to useful safe Thai states',()=>{

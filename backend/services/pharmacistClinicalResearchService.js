@@ -2,12 +2,15 @@ const { randomUUID } = require('node:crypto');
 const { loadFeatureFlags } = require('../config/featureFlags');
 const { loadV2Config } = require('../config/v2Config');
 const { createAIProvider } = require('../providers/AIProviderFactory');
-const { AI_ERROR_CODES } = require('../providers/aiErrors');
+const {
+  AI_ERROR_CODES, logAIValidationFailure,
+} = require('../providers/aiErrors');
 const {
   RESEARCH_PLAN_VERSION, RESEARCH_PROMPT_VERSION, SYNTHESIS_PROMPT_VERSION,
   RESEARCH_CONTEXT_VERSION, RESEARCH_PLANNER_INSTRUCTIONS, WEB_EVIDENCE_INSTRUCTIONS,
   CLINICAL_SYNTHESIS_INSTRUCTIONS, RESEARCH_PLAN_SCHEMA, WEB_EVIDENCE_SCHEMA,
   CLINICAL_SYNTHESIS_SCHEMA, validateResearchPlan, validateWebEvidence, validateClinicalSynthesis,
+  assertGroundedClinicalSynthesis,
 } = require('../providers/pharmacistClinicalResearch');
 const { buildConsultationResearchContext } = require('./consultationResearchContextBuilder');
 const { sanitizeResearchPlan, validateDeidentifiedPilotSummary } = require('./clinicalResearchPrivacy');
@@ -32,36 +35,7 @@ function unavailable(errorCode) {
   });
 }
 
-function assertGroundedSynthesis(result, context) {
-  const medicationNames = (context.currentMedications || [])
-    .map((item) => String(item.name || '').normalize('NFC').trim().toLowerCase()).filter(Boolean);
-  const deidentifiedSummary = String(context.deidentifiedCaseSummary || '').normalize('NFC').toLowerCase();
-  for (const item of result.relevantMedicationContext || []) {
-    const normalized = item.text.normalize('NFC').toLowerCase();
-    const deidentifiedTerms = normalized.split(/[^\p{L}\p{N}.]+/u).filter((term) => term.length >= 4);
-    const groundedInManualSummary = context.contextType === 'pharmacist_clinical_research_deidentified'
-      && deidentifiedTerms.some((term) => deidentifiedSummary.includes(term));
-    if (!medicationNames.some((name) => normalized.includes(name)) && !groundedInManualSummary) {
-      const error = new Error('Ungrounded medication fact');
-      error.code = AI_ERROR_CODES.AI_INVALID_RESPONSE;
-      throw error;
-    }
-  }
-  const hasAllergyFact = (context.recordedFacts || []).some((item) => item.field === 'drug_allergies');
-  if (!hasAllergyFact && /(?:ไม่แพ้ยา|ไม่มีประวัติแพ้ยา|no known (?:drug )?allerg)/i.test(JSON.stringify(result.recordedFacts))) {
-    const error = new Error('Ungrounded allergy fact');
-    error.code = AI_ERROR_CODES.AI_INVALID_RESPONSE;
-    throw error;
-  }
-  const hasRenalFact = (context.confirmedLabs || []).some((item) =>
-    /(?:creatinine|eGFR|ไต)/i.test(`${item.analyteNameSource} ${item.sourceValueText}`));
-  if (!hasRenalFact && /(?:eGFR|creatinine|การทำงานของไต).{0,40}\d/i.test(JSON.stringify(result.recordedFacts))) {
-    const error = new Error('Ungrounded renal fact');
-    error.code = AI_ERROR_CODES.AI_INVALID_RESPONSE;
-    throw error;
-  }
-  return result;
-}
+const assertGroundedSynthesis = assertGroundedClinicalSynthesis;
 
 function prepareDeidentifiedContext(summary, access, now) {
   const at = new Date(access.databaseNow || now).toISOString();
@@ -112,6 +86,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
   const contextBuilder = overrides.contextBuilder || buildConsultationResearchContext;
   const accessChecker = overrides.accessChecker || requireConsultationResearchAccess;
   const auditRecorder = overrides.recordAudit || recordAIInteractionMetadata;
+  const diagnosticLogger = overrides.diagnosticLogger || console.info;
   const writeAudit = async (record) => {
     try { return await auditRecorder(record, overrides.auditOptions); } catch (_) {
       if (typeof overrides.auditLogger === 'function') {
@@ -164,6 +139,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     let inputCharacterCount = serializedContext.length;
     let outputCharacterCount = 0;
     let researchPerformed = false;
+    let contractTask = 'pharmacist_clinical_research_plan';
     const limitations = [];
     try {
       plan = validateResearchPlan(await provider().generateStructured({
@@ -185,6 +161,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         inputCharacterCount += researchInput.length;
         let metadata = null;
         try {
+          contractTask = 'pharmacist_clinical_web_evidence';
           const rawEvidence = validateWebEvidence(await provider().generateStructured({
             task:'pharmacist_clinical_web_evidence',
             systemInstructions:WEB_EVIDENCE_INSTRUCTIONS,
@@ -194,7 +171,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
             responseSchemaName:'phimor_clinical_web_evidence',
             timeoutMs:config.ai.clinicalResearchTimeoutMs ?? config.ai.timeoutMs, requestId:interactionId,
             model:config.ai.clinicalResearchModel, reasoningEffort:config.ai.clinicalResearchReasoningEffort,
-            webSearch:{ allowedDomains:config.ai.clinicalAllowedDomains, maxCalls:4, country:'TH' },
+            webSearch:{ allowedDomains:config.ai.clinicalAllowedDomains, maxCalls:4, country:'TH', required:true },
             onMetadata:(value) => { metadata = value; usage.record(value); },
           }));
           outputCharacterCount += JSON.stringify(rawEvidence).length;
@@ -204,6 +181,9 @@ function createPharmacistClinicalResearchService(overrides = {}) {
           researchPerformed = Number(metadata?.webSearchCalls || 0) > 0;
           limitations.push(...evidence.limitations);
         } catch (error) {
+          logAIValidationFailure(diagnosticLogger, {
+            event:'pharmacist_clinical_research_contract_rejected', task:contractTask, error,
+          });
           limitations.push(SAFE_PROVIDER_ERRORS.has(error?.code) ? 'RESEARCH_TEMPORARILY_UNAVAILABLE' : 'RESEARCH_INVALID_RESPONSE');
         }
       }
@@ -220,6 +200,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
       });
       inputCharacterCount += synthesisContext.length;
       const allowedEvidenceRefs = evidence.sources.map((source) => source.referenceId);
+      contractTask = 'pharmacist_clinical_research_synthesis';
       const result = assertGroundedSynthesis(validateClinicalSynthesis(await provider().generateStructured({
         task:'pharmacist_clinical_research_synthesis',
         systemInstructions:CLINICAL_SYNTHESIS_INSTRUCTIONS,
@@ -267,6 +248,9 @@ function createPharmacistClinicalResearchService(overrides = {}) {
       });
     } catch (error) {
       const errorCode = SAFE_PROVIDER_ERRORS.has(error?.code) ? error.code : AI_ERROR_CODES.AI_PROVIDER_ERROR;
+      logAIValidationFailure(diagnosticLogger, {
+        event:'pharmacist_clinical_research_contract_rejected', task:contractTask, error,
+      });
       const totals = usage.snapshot();
       const audit = await writeAudit({
         interactionId, requesterLineId:null, requesterType:'pharmacist',
