@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 process.env.NODE_ENV = 'test';
 const { GeminiProvider } = require('../backend/providers/GeminiProvider');
-const { AI_ERROR_CODES } = require('../backend/providers/aiErrors');
+const { AI_ERROR_CODES, AIProviderError } = require('../backend/providers/aiErrors');
 const { validateDocumentResult } = require('../backend/providers/documentAI');
 const aiProvider = require('../backend/providers/aiProvider');
 
@@ -56,24 +56,52 @@ test('unrelated document is a validated domain result, not a provider failure', 
 });
 
 test('request timeout maps to AI_TIMEOUT', async () => {
+  let calls = 0;
   const fetchImpl = async (_url, { signal }) => new Promise((_resolve, reject) => {
+    calls += 1;
     signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
   });
-  await assert.rejects(generate(createProvider(fetchImpl, { timeoutMs: 10 })), (error) => error.code === AI_ERROR_CODES.AI_TIMEOUT);
+  await assert.rejects(generate(createProvider(fetchImpl, { timeoutMs: 10, maxRetries:1 })), (error) => error.code === AI_ERROR_CODES.AI_TIMEOUT);
+  assert.equal(calls,1);
 });
 
-test('a transient timeout retries within the single total timeout budget', async () => {
+test('Gemini first attempt receives the full overall deadline even when a retry is available', async () => {
+  const provider = createProvider(async () => providerResult(medical()), { maxRetries: 1 });
+  const deadline = Date.now() + 10_000;
+  const attemptDeadlines = [];
+  const result = await provider.executeWithRetry(async (attemptDeadline) => {
+    attemptDeadlines.push(attemptDeadline);
+    return 'ok';
+  }, deadline);
+  assert.equal(result, 'ok');
+  assert.deepEqual(attemptDeadlines, [deadline]);
+});
+
+test('Gemini retries early 429 and 5xx failures inside the unchanged overall deadline', async () => {
+  for (const status of [429, 503]) {
+    const provider = createProvider(async () => providerResult(medical()), { maxRetries: 1 });
+    const deadline = Date.now() + 10_000;
+    const attemptDeadlines = [];
+    let calls = 0;
+    const result = await provider.executeWithRetry(async (attemptDeadline) => {
+      attemptDeadlines.push(attemptDeadline);
+      calls += 1;
+      if (calls === 1) throw provider.httpError(status);
+      return 'ok';
+    }, deadline);
+    assert.equal(result, 'ok');
+    assert.deepEqual(attemptDeadlines, [deadline, deadline]);
+  }
+});
+
+test('Gemini does not retry after the overall deadline is exhausted', async () => {
+  const provider = createProvider(async () => providerResult(medical()), { maxRetries: 1 });
   let calls = 0;
-  const fetchImpl = async (_url, { signal }) => {
+  await assert.rejects(provider.executeWithRetry(async () => {
     calls += 1;
-    if (calls > 1) return providerResult(medical());
-    return new Promise((_resolve, reject) => {
-      signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-    });
-  };
-  const result = await generate(createProvider(fetchImpl, { timeoutMs: 80, maxRetries: 1 }));
-  assert.equal(result.documentType, 'medical');
-  assert.equal(calls, 2);
+    throw new AIProviderError(AI_ERROR_CODES.AI_TIMEOUT, 'timed out', { retryable:true });
+  }, Date.now()), (error) => error.code === AI_ERROR_CODES.AI_TIMEOUT);
+  assert.equal(calls, 1);
 });
 
 test('HTTP 429 maps to AI_RATE_LIMIT', async () => {

@@ -1209,7 +1209,7 @@ async function roleBasedShellJourney(browser) {
 }
 
 async function pharmacistConsoleJourney(browser) {
-  const page=await browser.newPage({viewport:{width:390,height:844}});let contextCalls=0;let clinicalResearchCalls=0;let messagePostCalls=0;
+  const page=await browser.newPage({viewport:{width:390,height:844}});let contextCalls=0;let assistantCalls=0;let clinicalResearchCalls=0;let messagePostCalls=0;
   await mockBackend(page,async(url,request)=>{
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
     if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
@@ -1220,6 +1220,9 @@ async function pharmacistConsoleJourney(browser) {
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages'&&request.method()==='POST'){messagePostCalls+=1;return {message:{sequence:1,body:'unexpected'}};}
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages')return {items:[],nextSequence:0,hasMore:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/context'){contextCalls+=1;return {status:'available',generatedAt:contextCalls>1?'2026-08-25T02:00:00Z':'2026-08-25T01:00:00Z',contact:{displayName:'ญาติตัวอย่าง'},careProfile:{patientName:'ผู้รับการดูแลตัวอย่าง'},currentMedications:[{name:'Metformin',strength:contextCalls>1?'850 mg':'500 mg',instruction:'หลังอาหาร'}],medicationSnapshot:{snapshotId:contextCalls>1?'S-2':'S-1',versionNo:contextCalls>1?2:1},contextVersion:{medicationSnapshotId:contextCalls>1?'S-2':'S-1',medicationVersionNo:contextCalls>1?2:1},recentMedicationChanges:[{snapshot:{recordedAt:'2026-08-24T01:00:00Z'},sourceLabel:'ครอบครัวบันทึก'}],recentVitals:[{occurredAt:'2026-08-24T08:00:00Z',observations:[{measurementType:'blood_pressure_systolic',numericValue:120,canonicalUnit:'mmHg'},{measurementType:'blood_pressure_diastolic',numericValue:75,canonicalUnit:'mmHg'}]}],upcomingAppointments:[]};}
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/assistant'&&request.method()==='POST'){
+      assistantCalls+=1;return {status:'available',generatedAt:'2026-08-25T02:03:00Z',contextTimestamp:'2026-08-25T02:00:00Z',assistant:{caseSummary:'สรุปเคสสำหรับเภสัชกร',recordedFacts:[{text:'มีข้อมูลยาที่บันทึกไว้',sourceCategory:'care_profile'}],relevantMedicationContext:[{text:'มี Metformin ในรายการยา',sourceCategory:'medication_snapshot'}],medicationChanges:[],missingInformation:['เวลาใช้ยาจริงล่าสุด'],questionsToAsk:[{text:'ใช้ยาครั้งล่าสุดเมื่อใด',sourceCategory:'general_ai_knowledge'}],safetyConsiderations:[],responseGuidance:[{text:'ยืนยันวิธีใช้ยาก่อนตอบ',sourceCategory:'general_ai_knowledge'}],escalationConsiderations:[],draftResponseForPharmacistReview:'ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม เพื่อให้เภสัชกรตรวจสอบก่อนตอบค่ะ',disclaimer:'ร่างนี้ต้องผ่านการตรวจสอบโดยเภสัชกร'}};
+    }
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/clinical-research'&&request.method()==='POST'){
       clinicalResearchCalls+=1;
       return {status:'available',mode:'deidentified_pilot',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:1,totalMessageCount:1,conversationTruncated:false,analysis:{
@@ -1249,6 +1252,17 @@ async function pharmacistConsoleJourney(browser) {
   await page.waitForFunction(()=>document.querySelector('#caseContext').textContent.includes('850 mg'));
   assert.ok(contextCalls>=2);
   await page.locator('#closeCaseContextButton').click();
+  await page.locator('#showAssistantButton').click();
+  await page.locator('#generateAssistantButton').click();
+  await page.waitForFunction(()=>document.querySelector('#assistantContent')?.textContent.includes('ร่างคำตอบสำหรับเภสัชกรตรวจสอบ'));
+  assert.equal(assistantCalls,1);
+  assert.match(await page.locator('#assistantContent').textContent(),/สรุปเคสสำหรับเภสัชกร|ข้อมูลที่บันทึกไว้|ยาที่เกี่ยวข้อง|ข้อมูลที่ยังขาด|คำถามที่ควรถามเพิ่ม|ประเด็นความปลอดภัย|ประเด็นพิจารณาส่งต่อ|แนวทางประกอบการตอบ|ร่างสำหรับเภสัชกรตรวจสอบ/);
+  const assistantLayout=await page.evaluate(()=>{const panel=document.querySelector('#assistantPanel');const content=document.querySelector('#assistantContent');const copy=content.querySelector('.assistant-copy');const panelRect=panel.getBoundingClientRect();const copyRect=copy.getBoundingClientRect();content.scrollTop=content.scrollHeight;return {panelTop:panelRect.top,panelBottom:panelRect.bottom,viewportHeight:window.innerHeight,overflowY:getComputedStyle(content).overflowY,copyHeight:copyRect.height,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};});
+  assert.ok(assistantLayout.panelTop>=0&&assistantLayout.panelBottom<=assistantLayout.viewportHeight);assert.equal(assistantLayout.overflowY,'auto');assert.ok(assistantLayout.copyHeight>=44);assert.equal(assistantLayout.horizontalOverflow,false);
+  await page.getByRole('button',{name:'คัดลอกร่างไปช่องตอบ'}).click();
+  assert.equal(await page.locator('#assistantPanel').isHidden(),true);
+  assert.match(await page.locator('#messageComposer').inputValue(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม/);
+  assert.equal(messagePostCalls,0);
   await page.getByRole('button',{name:/พี่หมอ Clinical Research/}).click();
   await page.locator('#clinicalResearchDeidentifiedSummary').fill('ผู้ใหญ่ใช้ยาลดน้ำตาลและต้องการให้เภสัชกรตรวจสอบข้อมูลเวลาใช้ยาจากแหล่งอ้างอิง');
   await page.locator('#clinicalResearchPrivacyReviewed').check();

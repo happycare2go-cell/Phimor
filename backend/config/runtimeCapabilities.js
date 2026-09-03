@@ -60,7 +60,9 @@ function unsafeRuntimeConfiguration(env = process.env) {
   if (env.ALLOW_INSECURE_LINE_HEADER === 'true') issues.push('INSECURE_LINE_HEADER_ENABLED');
   if (env.ALLOW_UNSIGNED_LINE_WEBHOOK === 'true') issues.push('UNSIGNED_LINE_WEBHOOK_ENABLED');
   if (!hasValue(env.PDF_DOWNLOAD_SECRET)) issues.push('PDF_DOWNLOAD_SECRET_MISSING');
-  if (String(env.AI_PROVIDER || 'gemini').trim().toLowerCase() === 'openai' && !hasValue(env.OPENAI_API_KEY)) {
+  const ordinaryProvider = String(env.AI_PROVIDER || 'gemini').trim().toLowerCase();
+  const pharmacistProvider = String(env.AI_PROVIDER_PHARMACIST || ordinaryProvider).trim().toLowerCase();
+  if ([ordinaryProvider, pharmacistProvider].includes('openai') && !hasValue(env.OPENAI_API_KEY)) {
     issues.push('OPENAI_API_KEY_MISSING');
   }
   const researchPilot = loadClinicalResearchPilotConfig(env);

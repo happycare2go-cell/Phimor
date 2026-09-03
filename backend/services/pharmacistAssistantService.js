@@ -5,7 +5,7 @@ const { createAIProvider } = require('../providers/AIProviderFactory');
 const { AI_ERROR_CODES } = require('../providers/aiErrors');
 const {
   PHARMACIST_ASSISTANT_INSTRUCTIONS, PHARMACIST_ASSISTANT_PROMPT_VERSION,
-  validatePharmacistAssistantResponse,
+  validatePharmacistAssistantResponse, assertGroundedPharmacistAssistant,
 } = require('../providers/pharmacistAssistant');
 const { buildConsultationContext } = require('./consultationContextBuilder');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
@@ -28,7 +28,9 @@ function createPharmacistAssistantService(overrides={}) {
   const config=overrides.config || loadV2Config();
   const provider=()=>{
     if (overrides.provider) return overrides.provider;
-    if (!defaultProvider) defaultProvider=createAIProvider({config,modelPurpose:'pharmacist'});
+    if (!defaultProvider) defaultProvider=createAIProvider({
+      config,modelPurpose:'pharmacist',logger:overrides.providerLogger || console.info,
+    });
     return defaultProvider;
   };
   const contextBuilder=overrides.contextBuilder || buildConsultationContext;
@@ -44,8 +46,8 @@ function createPharmacistAssistantService(overrides={}) {
         return await auditRecorder({
           interactionId,requesterLineId:pharmacistLineUserId,requesterType:'pharmacist',
           careProfileId:null,consultationCaseId:caseId,purpose:'pharmacist_assistance',
-          intent:'consultation_support',provider:config.ai.provider,
-          model:config.ai.explanationModel||null,promptVersion:PHARMACIST_ASSISTANT_PROMPT_VERSION,
+          intent:'consultation_support',provider:config.ai.pharmacistProvider||config.ai.provider,
+          model:config.ai.pharmacistModel||null,promptVersion:PHARMACIST_ASSISTANT_PROMPT_VERSION,
           contextVersion:AI_VERSIONS.consultationContext,requestedAt,
           inputCharacterCount:serialized.length,...metadata,
         },overrides.auditOptions);
@@ -56,13 +58,17 @@ function createPharmacistAssistantService(overrides={}) {
       }
     };
     try {
+      const validateForContext=(value)=>assertGroundedPharmacistAssistant(
+        validatePharmacistAssistantResponse(value), context,
+      );
       const raw=await provider().generateStructured({
         task:'pharmacist_assistance',systemInstructions:PHARMACIST_ASSISTANT_INSTRUCTIONS,
         context:serialized,input:{text:'Prepare private pharmacist decision-support from the supplied structured context.'},
-        outputSchema:validatePharmacistAssistantResponse,timeoutMs:config.ai.timeoutMs,requestId:interactionId,
+        outputSchema:validateForContext,
+        timeoutMs:config.ai.pharmacistTimeoutMs ?? config.ai.timeoutMs,requestId:interactionId,
         responseSchema:PHARMACIST_ASSISTANT_RESPONSE_SCHEMA,responseSchemaName:'phimor_pharmacist_assistant',
       });
-      const assistant=validatePharmacistAssistantResponse(raw);
+      const assistant=validateForContext(raw);
       const generatedAt=new Date().toISOString();
       await audit({resultStatus:'success',completedAt:generatedAt,outputCharacterCount:JSON.stringify(assistant).length});
       return Object.freeze({

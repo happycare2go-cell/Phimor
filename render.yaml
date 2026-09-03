@@ -52,10 +52,12 @@ services:
         sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
       - key: GEMINI_API_KEY
         sync: false
-      # Ordinary AI remains on Gemini for this release. Clinical Research has
-      # an independent server-side provider and remains disabled until commissioned.
+      # Document/Lab/Plus AI remains on Gemini. Pharmacist Assistant and
+      # Clinical Research select independent server-side OpenAI routes.
       - key: AI_PROVIDER
         value: "gemini"
+      - key: AI_PROVIDER_PHARMACIST
+        value: "openai"
       - key: AI_PROVIDER_CLINICAL_RESEARCH
         value: "openai"
       - key: OPENAI_API_KEY
@@ -68,6 +70,10 @@ services:
         value: "gpt-5.6-terra"
       - key: AI_MODEL_CLINICAL_RESEARCH
         value: "gpt-5.6-sol"
+      - key: AI_TIMEOUT_PHARMACIST_MS
+        value: "45000"
+      - key: AI_TIMEOUT_CLINICAL_RESEARCH_MS
+        value: "90000"
       - key: PHARMACIST_AI_RESEARCH_ENABLED
         value: "false"
       - key: PHARMACIST_AI_RESEARCH_MODE

@@ -10,15 +10,16 @@ until its separate governance and commissioning decision is recorded.
 | Variable | Initial value/status | Classification |
 | --- | --- | --- |
 | `NODE_ENV` | `production` | Required for deploy |
-| `AI_PROVIDER` | `gemini` | Required for deploy; preserves ordinary AI |
+| `AI_PROVIDER` | `gemini` | Required for deploy; preserves document/Lab/Plus/explanation AI |
 | `GEMINI_API_KEY` | existing server secret | Required for existing Gemini flows |
+| `AI_PROVIDER_PHARMACIST` | `openai` | Required for the fast Pharmacist Assistant route |
 | `AI_PROVIDER_CLINICAL_RESEARCH` | `openai` | Required for deploy; independent routing |
 | `PHARMACIST_AI_RESEARCH_ENABLED` | `false` | Required for deploy; fail-closed commissioning gate |
 | `AI_MODEL_DOCUMENT` | `gpt-5.6-luna` | Safe server config; used only when OpenAI owns that purpose |
 | `AI_MODEL_EXPLANATION` | `gpt-5.6-terra` | Safe server config; used only when OpenAI owns that purpose |
 | `AI_MODEL_PHARMACIST` | `gpt-5.6-terra` | Safe server config; used only when OpenAI owns that purpose |
 | `AI_MODEL_CLINICAL_RESEARCH` | `gpt-5.6-sol` | Required before OpenAI preflight |
-| `OPENAI_API_KEY` | server secret | Required before OpenAI preflight and before enabling Clinical Research |
+| `OPENAI_API_KEY` | server secret | Required before using the Pharmacist Assistant OpenAI route, OpenAI preflight, or Clinical Research |
 | `PDF_DOWNLOAD_SECRET` | existing server secret | Required for deploy/readiness |
 | `OPENAI_CLINICAL_ALLOWED_DOMAINS` | reviewed allowlist or safe built-in default | Optional before deploy; review before enabling Clinical Research |
 
@@ -37,7 +38,8 @@ provider makes readiness report a safe configuration issue.
    reviewed Blueprint.
 5. Configure the server-only `OPENAI_API_KEY` without revealing its value.
 6. Keep `PHARMACIST_AI_RESEARCH_ENABLED=false`.
-7. Keep ordinary AI on `AI_PROVIDER=gemini`.
+7. Keep document/Lab/Plus/explanation AI on `AI_PROVIDER=gemini`; route only
+   the Pharmacist Assistant through `AI_PROVIDER_PHARMACIST=openai`.
 8. Push the reviewed HEAD.
 9. Deploy Backend and LIFF from the same SHA.
 10. The Render pre-deploy step applies 0018 before the new backend starts.

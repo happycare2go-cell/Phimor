@@ -108,10 +108,7 @@ class GeminiProvider extends BaseAIProvider {
   async executeWithRetry(operation, deadline) {
     let retries = 0;
     while (true) {
-      const remaining = deadline - Date.now();
-      const attemptsRemaining = this.maxRetries - retries + 1;
-      const attemptDeadline = Math.min(deadline, Date.now() + Math.max(1, Math.floor(remaining / attemptsRemaining)));
-      try { return await operation(attemptDeadline); } catch (error) {
+      try { return await operation(deadline); } catch (error) {
         const mapped = this.mapError(error);
         if (!mapped.retryable || retries >= this.maxRetries || Date.now() >= deadline) throw mapped;
         const delay = mapped.code === AI_ERROR_CODES.AI_TIMEOUT

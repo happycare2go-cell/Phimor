@@ -10,10 +10,10 @@
     consultation_message:'Consultation message',general_ai_knowledge:'General AI guidance',
   });
   const ASSISTANT_SECTIONS=Object.freeze([
-    ['recordedFacts','ข้อมูลที่บันทึกไว้'],['relevantMedicationContext','บริบทยาที่เกี่ยวข้อง'],
-    ['medicationChanges','การเปลี่ยนแปลงรายการยา'],['missingInformation','ข้อมูลที่ยังขาด'],
+    ['recordedFacts','ข้อมูลที่บันทึกไว้'],['relevantMedicationContext','ยาที่เกี่ยวข้อง'],
+    ['medicationChanges','การเปลี่ยนแปลงยา'],['missingInformation','ข้อมูลที่ยังขาด'],
     ['questionsToAsk','คำถามที่ควรถามเพิ่ม'],['safetyConsiderations','ประเด็นความปลอดภัย'],
-    ['responseGuidance','โครงสร้างประกอบการตอบ'],['escalationConsiderations','ประเด็นพิจารณาส่งต่อ'],
+    ['responseGuidance','แนวทางประกอบการตอบ'],['escalationConsiderations','ประเด็นพิจารณาส่งต่อ'],
   ]);
   const CLINICAL_SOURCE_LABELS=Object.freeze({
     care_profile:'Care Profile',medication_snapshot:'รายการยาปัจจุบัน',medication_diff:'ประวัติการเปลี่ยนแปลงยา',
@@ -388,7 +388,12 @@
     const appointments=safeArray(context.upcomingAppointments);if(!appointments.length)textElement(doc,appointmentSection,'p','case-context__hint','ยังไม่มีนัดหมายที่กำลังจะมาถึง');else{const list=doc.createElement('ul');appointments.forEach((item)=>{const when=item.datetime?new Date(item.datetime).toLocaleString('th-TH'):'ไม่ระบุเวลา';textElement(doc,list,'li','',`${contextValue(item.hospital)} · ${when}${item.reasonForVisit?` · ${item.reasonForVisit}`:''}`);});appointmentSection.appendChild(list);}container.appendChild(appointmentSection);
     textElement(doc,container,'small','case-context__timestamp',`ข้อมูล Care Profile ณ ${context.generatedAt?new Date(context.generatedAt).toLocaleString('th-TH'):'เวลาที่เปิดเคส'}`);
   }
-  function renderAssistant(doc,container,result={}){
+  function copyAssistantDraftToComposer(result,composer){
+    const draft=safeText(result?.assistant?.draftResponseForPharmacistReview).trim();
+    if(!draft||!composer||composer.disabled)return false;
+    composer.value=draft;return true;
+  }
+  function renderAssistant(doc,container,result={},options={}){
     clearNode(container);
     if(!result || !result.status){
       textElement(doc,container,'p','empty-state','เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ');return;
@@ -409,6 +414,15 @@
       items.forEach((item)=>{const li=doc.createElement('li');const value=typeof item==='string'?item:item?.text;textElement(doc,li,'span','assistant-item-text',safeText(value));if(item?.sourceCategory)textElement(doc,li,'span',`source-chip source-chip--${item.sourceCategory}`,sourceLabel(item.sourceCategory));list.appendChild(li);});
       section.appendChild(list);container.appendChild(section);
     });
+    const draft=safeText(assistant.draftResponseForPharmacistReview).trim();
+    if(draft){
+      const section=doc.createElement('section');section.className='assistant-section assistant-draft';
+      textElement(doc,section,'h4','','ร่างคำตอบสำหรับเภสัชกรตรวจสอบ');
+      textElement(doc,section,'strong','assistant-draft__label','ร่างสำหรับเภสัชกรตรวจสอบ');
+      textElement(doc,section,'p','assistant-draft__body',draft);
+      const copy=textElement(doc,section,'button','secondary-button assistant-copy','คัดลอกร่างไปช่องตอบ');copy.type='button';copy.addEventListener('click',()=>options.onCopyDraft?.());
+      container.appendChild(section);
+    }
     if(assistant.disclaimer)textElement(doc,container,'p','assistant-disclaimer',assistant.disclaimer);
   }
   function formatClinicalTime(value){
@@ -623,7 +637,12 @@
       elements.assistantButton.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.assistantBusy;
       elements.assistantButton.textContent=state.assistantBusy?'กำลังสร้างสรุป…':'สร้างสรุปช่วยตอบ';
       elements.assistantRefresh.disabled=elements.assistantButton.disabled;elements.assistantRefresh.hidden=state.assistant?.status!=='available';
-      renderAssistant(doc,elements.assistant,state.assistant);
+      renderAssistant(doc,elements.assistant,state.assistant,{
+        onCopyDraft:()=>{
+          if(!copyAssistantDraftToComposer(state.assistant,elements.composer))return;
+          session.setPanel(null);elements.composer.dispatchEvent?.(new Event('input',{bubbles:true}));elements.composer.focus?.();
+        },
+      });
       elements.showResearch.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.clinicalResearchBusy;
       elements.showResearch.textContent=state.clinicalResearchBusy?'กำลังค้นคว้า…':'✨ พี่หมอ Clinical Research';
       const capability=state.clinicalResearchCapability||{};
@@ -722,5 +741,5 @@
   }
 
   return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,CLINICAL_SOURCE_LABELS,MEDICATION_USE_CONDITION_LABELS,MEDICATION_PERIOD_LABELS,
-    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,clinicalResearchErrorMessage,clinicalResearchCapabilityMessage,researchLimitationLabel,clinicalResearchIsStale,safeExternalUrl,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,copyResearchDraftToComposer,researchEvidenceSupport,createConsoleSession,renderCaseContext,renderAssistant,renderClinicalResearch,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
+    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,clinicalResearchErrorMessage,clinicalResearchCapabilityMessage,researchLimitationLabel,clinicalResearchIsStale,safeExternalUrl,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,copyAssistantDraftToComposer,copyResearchDraftToComposer,researchEvidenceSupport,createConsoleSession,renderCaseContext,renderAssistant,renderClinicalResearch,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
 }));

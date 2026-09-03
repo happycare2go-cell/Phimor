@@ -1,6 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { loadV2Config, DEFAULT_AI_TIMEOUT_MS } = require('../backend/config/v2Config');
+const {
+  loadV2Config, DEFAULT_AI_TIMEOUT_MS,
+  DEFAULT_AI_TIMEOUT_PHARMACIST_MS, DEFAULT_AI_TIMEOUT_CLINICAL_RESEARCH_MS,
+} = require('../backend/config/v2Config');
 const { loadFeatureFlags } = require('../backend/config/featureFlags');
 
 test('V2 Plus flags default safely and internal entitlement defaults true', () => {
@@ -45,37 +48,65 @@ test('invalid feature flag values fall back to safe defaults', () => {
 });
 
 test('AI configuration parses bounded numeric timeout and retries', () => {
-  const config = loadV2Config({ AI_TIMEOUT_MS: '25000', AI_MAX_RETRIES: '3' });
+  const config = loadV2Config({
+    AI_TIMEOUT_MS: '25000', AI_TIMEOUT_PHARMACIST_MS:'46000',
+    AI_TIMEOUT_CLINICAL_RESEARCH_MS:'91000', AI_MAX_RETRIES: '3',
+  });
   assert.strictEqual(config.ai.timeoutMs, 25000);
+  assert.strictEqual(config.ai.pharmacistTimeoutMs, 46000);
+  assert.strictEqual(config.ai.clinicalResearchTimeoutMs, 91000);
   assert.strictEqual(config.ai.maxRetries, 3);
 });
 
 test('invalid AI numeric configuration uses safe defaults', () => {
   const config = loadV2Config({ AI_TIMEOUT_MS: '-1', AI_MAX_RETRIES: '99' });
   assert.strictEqual(config.ai.timeoutMs, DEFAULT_AI_TIMEOUT_MS);
+  assert.strictEqual(config.ai.pharmacistTimeoutMs, DEFAULT_AI_TIMEOUT_MS);
+  assert.strictEqual(config.ai.clinicalResearchTimeoutMs, DEFAULT_AI_TIMEOUT_MS);
   assert.strictEqual(config.ai.maxRetries, 1);
+});
+
+test('absent purpose-specific timeouts preserve the global AI timeout fallback', () => {
+  const config = loadV2Config({ AI_TIMEOUT_MS:'25000' });
+  assert.strictEqual(config.ai.pharmacistTimeoutMs, 25000);
+  assert.strictEqual(config.ai.clinicalResearchTimeoutMs, 25000);
+});
+
+test('purpose-specific AI timeouts are bounded between five and 120 seconds', () => {
+  const config = loadV2Config({
+    AI_TIMEOUT_PHARMACIST_MS:'4999', AI_TIMEOUT_CLINICAL_RESEARCH_MS:'120001',
+  });
+  assert.strictEqual(config.ai.pharmacistTimeoutMs, DEFAULT_AI_TIMEOUT_PHARMACIST_MS);
+  assert.strictEqual(config.ai.clinicalResearchTimeoutMs, DEFAULT_AI_TIMEOUT_CLINICAL_RESEARCH_MS);
+  const boundaries = loadV2Config({
+    AI_TIMEOUT_PHARMACIST_MS:'5000', AI_TIMEOUT_CLINICAL_RESEARCH_MS:'120000',
+  });
+  assert.strictEqual(boundaries.ai.pharmacistTimeoutMs, 5000);
+  assert.strictEqual(boundaries.ai.clinicalResearchTimeoutMs, 120000);
 });
 
 test('missing optional V2 environment preserves existing behavior defaults', () => {
   const config = loadV2Config({});
   assert.strictEqual(config.ai.provider, 'gemini');
+  assert.strictEqual(config.ai.pharmacistProvider, 'gemini');
   assert.strictEqual(config.ai.clinicalResearchProvider, 'gemini');
   assert.strictEqual(config.ai.documentModel, '');
   assert.strictEqual(config.ai.explanationModel, '');
   assert.strictEqual(config.ai.clinicalResearchModel, '');
 });
 
-test('Clinical Research provider override stays independent from ordinary Gemini routing', () => {
+test('Pharmacist and Clinical Research provider overrides stay independent from ordinary Gemini routing', () => {
   const config = loadV2Config({
-    AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
+    AI_PROVIDER:'gemini', AI_PROVIDER_PHARMACIST:'openai', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
     AI_MODEL_DOCUMENT:'gpt-5.6-luna', AI_MODEL_EXPLANATION:'gpt-5.6-terra',
     AI_MODEL_PHARMACIST:'gpt-5.6-terra', AI_MODEL_CLINICAL_RESEARCH:'gpt-5.6-sol',
   });
   assert.strictEqual(config.ai.provider, 'gemini');
+  assert.strictEqual(config.ai.pharmacistProvider, 'openai');
   assert.strictEqual(config.ai.clinicalResearchProvider, 'openai');
   assert.strictEqual(config.ai.documentModel, '');
   assert.strictEqual(config.ai.explanationModel, '');
-  assert.strictEqual(config.ai.pharmacistModel, '');
+  assert.strictEqual(config.ai.pharmacistModel, 'gpt-5.6-terra');
   assert.strictEqual(config.ai.clinicalResearchModel, 'gpt-5.6-sol');
   assert.strictEqual(config.ai.providers.openai.models.document, 'gpt-5.6-luna');
 });
@@ -92,6 +123,7 @@ test('legacy Gemini model overrides remain compatible but OpenAI model names nev
 
 test('OpenAI provider has explicit task model and reasoning defaults', () => {
   const config = loadV2Config({ AI_PROVIDER: 'openai' });
+  assert.strictEqual(config.ai.pharmacistProvider, 'openai');
   assert.strictEqual(config.ai.clinicalResearchProvider, 'openai');
   assert.strictEqual(config.ai.documentModel, 'gpt-5.6-luna');
   assert.strictEqual(config.ai.explanationModel, 'gpt-5.6-terra');

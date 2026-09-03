@@ -2,7 +2,7 @@ const AI_VERSIONS = Object.freeze({
   intentClassifierPrompt: 'plus-intent-classifier-v2',
   explanationPrompt: 'plus-explanation-v2',
   careProfileContext: 'care-profile-context-v2',
-  pharmacistAssistantPrompt: 'pharmacist-assistant-v2',
+  pharmacistAssistantPrompt: 'pharmacist-assistant-v3',
   consultationContext: 'consultation-context-v2',
   labExplanationPrompt: 'lab-explanation-v2',
   labExplanationContext: 'lab-confirmed-context-v1',

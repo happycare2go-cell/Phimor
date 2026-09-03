@@ -1,4 +1,6 @@
 const DEFAULT_AI_TIMEOUT_MS = 15000;
+const DEFAULT_AI_TIMEOUT_PHARMACIST_MS = 45000;
+const DEFAULT_AI_TIMEOUT_CLINICAL_RESEARCH_MS = 90000;
 const DEFAULT_AI_MAX_RETRIES = 1;
 const OPENAI_MODEL_DEFAULTS = Object.freeze({
   document: 'gpt-5.6-luna',
@@ -43,6 +45,7 @@ function legacyGeminiModel(value) {
 
 function loadV2Config(env = process.env) {
   const provider = providerName(env.AI_PROVIDER);
+  const pharmacistProvider = providerName(env.AI_PROVIDER_PHARMACIST, provider);
   const clinicalResearchProvider = providerName(env.AI_PROVIDER_CLINICAL_RESEARCH, provider);
   const openAIModels = Object.freeze({
     document:configuredModel(env.AI_MODEL_DOCUMENT, OPENAI_MODEL_DEFAULTS.document),
@@ -68,9 +71,15 @@ function loadV2Config(env = process.env) {
     const normalized = String(value || fallback).trim().toLowerCase();
     return REASONING_EFFORTS.has(normalized) ? normalized : fallback;
   };
+  const timeoutMs = parseInteger(env.AI_TIMEOUT_MS, DEFAULT_AI_TIMEOUT_MS, { min: 1000, max: 120000 });
+  const purposeTimeout = (value, invalidFallback) => {
+    if (value === undefined || value === null || String(value).trim() === '') return timeoutMs;
+    return parseInteger(value, invalidFallback, { min: 5000, max: 120000 });
+  };
   return Object.freeze({
     ai: Object.freeze({
       provider,
+      pharmacistProvider,
       clinicalResearchProvider,
       providers:Object.freeze({
         openai:Object.freeze({ models:openAIModels }),
@@ -80,21 +89,27 @@ function loadV2Config(env = process.env) {
       // Foundation 1A does not change the current Gemini document model selection.
       documentModel:selectedModel(provider, 'document'),
       explanationModel:selectedModel(provider, 'explanation'),
-      pharmacistModel:selectedModel(provider, 'pharmacist'),
+      pharmacistModel:selectedModel(pharmacistProvider, 'pharmacist'),
       clinicalResearchModel:selectedModel(clinicalResearchProvider, 'clinicalResearch'),
       documentReasoningEffort: effort(env.AI_REASONING_DOCUMENT, 'low'),
       explanationReasoningEffort: effort(env.AI_REASONING_EXPLANATION, 'medium'),
       pharmacistReasoningEffort: effort(env.AI_REASONING_PHARMACIST, 'medium'),
       clinicalResearchReasoningEffort: effort(env.AI_REASONING_CLINICAL_RESEARCH, 'high'),
       clinicalAllowedDomains: parseDomainList(env.OPENAI_CLINICAL_ALLOWED_DOMAINS),
-      timeoutMs: parseInteger(env.AI_TIMEOUT_MS, DEFAULT_AI_TIMEOUT_MS, { min: 1000, max: 120000 }),
+      timeoutMs,
+      pharmacistTimeoutMs: purposeTimeout(env.AI_TIMEOUT_PHARMACIST_MS, DEFAULT_AI_TIMEOUT_PHARMACIST_MS),
+      clinicalResearchTimeoutMs: purposeTimeout(
+        env.AI_TIMEOUT_CLINICAL_RESEARCH_MS, DEFAULT_AI_TIMEOUT_CLINICAL_RESEARCH_MS,
+      ),
       maxRetries: parseInteger(env.AI_MAX_RETRIES, DEFAULT_AI_MAX_RETRIES, { min: 0, max: 5 }),
     }),
   });
 }
 
 module.exports = {
-  loadV2Config, parseInteger, DEFAULT_AI_TIMEOUT_MS, DEFAULT_AI_MAX_RETRIES,
+  loadV2Config, parseInteger, DEFAULT_AI_TIMEOUT_MS,
+  DEFAULT_AI_TIMEOUT_PHARMACIST_MS, DEFAULT_AI_TIMEOUT_CLINICAL_RESEARCH_MS,
+  DEFAULT_AI_MAX_RETRIES,
   OPENAI_MODEL_DEFAULTS, DEFAULT_CLINICAL_ALLOWED_DOMAINS,
   parseDomainList, providerName, legacyGeminiModel,
 };

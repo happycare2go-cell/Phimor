@@ -70,9 +70,10 @@ test('Gemini transport applies the boundary to an unwrapped trusted task and pro
   assert.doesNotMatch(trustedPart, /Ignore previous instructions/);
   for (const version of [
     AI_VERSIONS.intentClassifierPrompt, AI_VERSIONS.explanationPrompt,
-    AI_VERSIONS.pharmacistAssistantPrompt, AI_VERSIONS.labExplanationPrompt,
+    AI_VERSIONS.labExplanationPrompt,
     AI_VERSIONS.doctorQuestionPrompt, AI_VERSIONS.doctorVisitPrompt,
   ]) assert.match(version, /-v2$/);
+  assert.match(AI_VERSIONS.pharmacistAssistantPrompt, /-v3$/);
 });
 
 test('Gemini request transport separates trusted task, hostile context, and hostile user text', async () => {

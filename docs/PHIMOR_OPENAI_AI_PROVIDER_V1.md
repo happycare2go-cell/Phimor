@@ -2,7 +2,7 @@
 
 ## Purpose and activation boundary
 
-OpenAI is an optional implementation of the existing PHIMOR AI provider contract. Existing Gemini behavior remains available. Selecting OpenAI for ordinary AI is explicit through `AI_PROVIDER=openai`; Clinical Research may select its server-side provider independently through `AI_PROVIDER_CLINICAL_RESEARCH`. There is no automatic failure fallback, because silently moving clinical content between providers would weaken cost, privacy, and incident boundaries.
+OpenAI is an optional implementation of the existing PHIMOR AI provider contract. Existing Gemini behavior remains available. Global routing is explicit through `AI_PROVIDER`; the Pharmacist Assistant and Clinical Research can select independent server-side providers through `AI_PROVIDER_PHARMACIST` and `AI_PROVIDER_CLINICAL_RESEARCH`. There is no automatic failure fallback, because silently moving clinical content between providers would weaken cost, privacy, and incident boundaries.
 
 This release does not activate OpenAI in production. Before activation, PHIMOR must complete its privacy, security, DPA, data-residency, retention, and Zero Data Retention (ZDR) governance review. Every Responses API request sets `store:false`, but that request setting is not a claim that the account has ZDR or that all provider-side processing/retention is eliminated.
 
@@ -34,25 +34,39 @@ Reasoning effort is independently bounded by `AI_REASONING_DOCUMENT`, `AI_REASON
 
 ## Configuration
 
-Required to select OpenAI for ordinary AI flows:
+Required to select OpenAI for all globally routed AI flows:
 
 - `AI_PROVIDER=openai`
 - `OPENAI_API_KEY` as a server-side secret
 
-For the initial combined release, keep `AI_PROVIDER=gemini`, set
-`AI_PROVIDER_CLINICAL_RESEARCH=openai`, and keep
-`PHARMACIST_AI_RESEARCH_ENABLED=false`. This leaves all ordinary AI flows on
-Gemini and makes the Clinical Research provider explicit without activating it.
+The production routing target keeps `AI_PROVIDER=gemini` for document, Lab,
+Plus, and explanation flows; sets `AI_PROVIDER_PHARMACIST=openai` for the fast
+Pharmacist Assistant; and sets `AI_PROVIDER_CLINICAL_RESEARCH=openai` for the
+deeper research workflow. When either purpose-specific override is absent, it
+falls back to `AI_PROVIDER`. Provider failure never causes cross-provider
+fallback.
 
 Optional controls:
 
 - the four model variables above;
 - the four reasoning variables above;
 - `AI_TIMEOUT_MS` (bounded by configuration validation);
+- `AI_TIMEOUT_PHARMACIST_MS` (recommended production value `45000`, bounded to 5–120 seconds, with `AI_TIMEOUT_MS` as the compatibility fallback when absent);
+- `AI_TIMEOUT_CLINICAL_RESEARCH_MS` (recommended production value `90000`, bounded to 5–120 seconds, with `AI_TIMEOUT_MS` as the compatibility fallback when absent, and applied to each planner, evidence, and synthesis provider call);
 - `AI_MAX_RETRIES` (bounded by configuration validation);
 - `OPENAI_CLINICAL_ALLOWED_DOMAINS` for Clinical Research only.
 
-Readiness reports safe issue codes when OpenAI is selected without a key. Disabled Clinical Research does not require an OpenAI key for backend readiness. If Clinical Research is explicitly enabled, readiness requires the credential for its configured provider. It never projects a key or its value. Gemini configuration and behavior are unchanged when `AI_PROVIDER=gemini`.
+Provider retries share one bounded overall deadline. The first attempt receives
+that full deadline rather than a fraction of it. A retry can occur only after an
+early retryable failure and uses only the time still remaining; a request that
+exhausts the deadline cannot start another full-duration attempt.
+
+Readiness reports safe issue codes when an active globally routed flow or the
+Pharmacist Assistant selects OpenAI without a key. Disabled Clinical Research
+does not by itself require an OpenAI key; if enabled, readiness requires the
+credential for its configured provider. Readiness never projects a key or its
+value. Gemini configuration and behavior are unchanged for purposes still
+routed by `AI_PROVIDER=gemini`.
 
 ## Structured output and compatibility
 

@@ -127,7 +127,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
       defaultProvider = createAIProvider({
         config, providerName:researchProviderName, modelPurpose:'clinical_research',
         env:overrides.env || process.env, fetchImpl:overrides.fetchImpl || global.fetch,
-        logger:overrides.providerLogger || null,
+        logger:overrides.providerLogger || console.info,
       });
     }
     return defaultProvider;
@@ -173,7 +173,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         input:{ text:'Create a strictly de-identified clinical research plan when external evidence is needed.' },
         outputSchema:validateResearchPlan, responseSchema:RESEARCH_PLAN_SCHEMA,
         responseSchemaName:'phimor_clinical_research_plan',
-        timeoutMs:config.ai.timeoutMs, requestId:interactionId,
+        timeoutMs:config.ai.clinicalResearchTimeoutMs ?? config.ai.timeoutMs, requestId:interactionId,
         model:config.ai.clinicalResearchModel, reasoningEffort:config.ai.clinicalResearchReasoningEffort,
         onMetadata:usage.record,
       }));
@@ -192,7 +192,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
             input:{ text:researchInput },
             outputSchema:validateWebEvidence, responseSchema:WEB_EVIDENCE_SCHEMA,
             responseSchemaName:'phimor_clinical_web_evidence',
-            timeoutMs:config.ai.timeoutMs, requestId:interactionId,
+            timeoutMs:config.ai.clinicalResearchTimeoutMs ?? config.ai.timeoutMs, requestId:interactionId,
             model:config.ai.clinicalResearchModel, reasoningEffort:config.ai.clinicalResearchReasoningEffort,
             webSearch:{ allowedDomains:config.ai.clinicalAllowedDomains, maxCalls:4, country:'TH' },
             onMetadata:(value) => { metadata = value; usage.record(value); },
@@ -228,7 +228,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         outputSchema:(value) => validateClinicalSynthesis(value, { allowedEvidenceRefs }),
         responseSchema:CLINICAL_SYNTHESIS_SCHEMA,
         responseSchemaName:'phimor_clinical_research_synthesis',
-        timeoutMs:config.ai.timeoutMs, requestId:interactionId,
+        timeoutMs:config.ai.clinicalResearchTimeoutMs ?? config.ai.timeoutMs, requestId:interactionId,
         model:config.ai.clinicalResearchModel, reasoningEffort:config.ai.clinicalResearchReasoningEffort,
         onMetadata:usage.record,
       }), { allowedEvidenceRefs }), prepared.context);

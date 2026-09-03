@@ -113,6 +113,13 @@ test('production readiness reports safe OpenAI configuration issue codes without
   assert.deepEqual(unsafeRuntimeConfiguration({
     ...base, AI_PROVIDER:'openai', OPENAI_API_KEY:'configured-secret',
   }), []);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', AI_PROVIDER_PHARMACIST:'openai',
+  }), ['OPENAI_API_KEY_MISSING']);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', AI_PROVIDER_PHARMACIST:'openai',
+    OPENAI_API_KEY:'configured-secret',
+  }), []);
   const researchIssues = unsafeRuntimeConfiguration({
     ...base, AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
     PHARMACIST_AI_RESEARCH_ENABLED:'true', PHARMACIST_AI_RESEARCH_MODE:'controlled_live',

@@ -52,13 +52,18 @@ test('deploy-time config generator emits only the validated public backend URL',
   assert.doesNotMatch(source, /TOKEN|SECRET|DATABASE_URL/);
 });
 
-test('/config/liff reports public backend and pharmacist LIFF configuration without secrets', async () => {
-  const keys = ['PUBLIC_BACKEND_URL', 'LIFF_ID_PHARMACIST', 'OMISE_SECRET_KEY', 'GEMINI_API_KEY'];
+test('/config/liff reports public backend and pharmacist LIFF configuration without secrets or provider routing', async () => {
+  const keys = [
+    'PUBLIC_BACKEND_URL', 'LIFF_ID_PHARMACIST', 'OMISE_SECRET_KEY', 'GEMINI_API_KEY',
+    'OPENAI_API_KEY', 'AI_PROVIDER_PHARMACIST',
+  ];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   process.env.PUBLIC_BACKEND_URL = 'https://phimor-backend-staging.onrender.com';
   process.env.LIFF_ID_PHARMACIST = 'pharmacist-liff';
   process.env.OMISE_SECRET_KEY = 'secret-payment-key';
   process.env.GEMINI_API_KEY = 'secret-ai-key';
+  process.env.OPENAI_API_KEY = 'secret-openai-key';
+  process.env.AI_PROVIDER_PHARMACIST = 'openai';
   const app = require('../backend/server');
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
@@ -68,7 +73,7 @@ test('/config/liff reports public backend and pharmacist LIFF configuration with
     const body = await response.json();
     assert.equal(body.publicBackendUrl, process.env.PUBLIC_BACKEND_URL);
     assert.equal(body.pharmacistLiffId, process.env.LIFF_ID_PHARMACIST);
-    assert.doesNotMatch(JSON.stringify(body), /secret-payment|secret-ai/);
+    assert.doesNotMatch(JSON.stringify(body), /secret-payment|secret-ai|secret-openai|AI_PROVIDER|openai/i);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     for (const key of keys) {
@@ -140,7 +145,10 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.doesNotMatch(productionBlueprint, /CONSULTATION_REALTIME_TICKET_SECRET\s*\n\s*value:/);
   assert.match(productionBlueprint, /preDeployCommand:\s*npm run migrate/);
   assert.match(productionBlueprint, /key:\s*AI_PROVIDER\s*\n\s*value:\s*["']gemini["']/);
+  assert.match(productionBlueprint, /key:\s*AI_PROVIDER_PHARMACIST\s*\n\s*value:\s*["']openai["']/);
   assert.match(productionBlueprint, /key:\s*AI_PROVIDER_CLINICAL_RESEARCH\s*\n\s*value:\s*["']openai["']/);
+  assert.match(productionBlueprint, /key:\s*AI_TIMEOUT_PHARMACIST_MS\s*\n\s*value:\s*["']45000["']/);
+  assert.match(productionBlueprint, /key:\s*AI_TIMEOUT_CLINICAL_RESEARCH_MS\s*\n\s*value:\s*["']90000["']/);
   assert.match(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*sync:\s*false/);
   assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_ENABLED\s*\n\s*value:\s*["']false["']/);
   assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_MODE\s*\n\s*value:\s*["']disabled["']/);

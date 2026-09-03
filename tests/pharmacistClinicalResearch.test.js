@@ -125,7 +125,7 @@ function service(overrides = {}) {
     pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:['U-PHARM'] },
     config:{ ai:{
       provider:'openai', clinicalResearchModel:'gpt-test', clinicalResearchReasoningEffort:'high',
-      clinicalAllowedDomains:['fda.gov', 'who.int'], timeoutMs:1000,
+      clinicalAllowedDomains:['fda.gov', 'who.int'], timeoutMs:1000, clinicalResearchTimeoutMs:90000,
     } },
     contextBuilder:async () => context(),
     provider:provider(),
@@ -150,6 +150,7 @@ test('clinical research runs planner, deidentified web evidence, synthesis and a
     'pharmacist_clinical_research_plan', 'pharmacist_clinical_web_evidence',
     'pharmacist_clinical_research_synthesis',
   ]);
+  assert.deepStrictEqual(calls.map((item)=>item.timeoutMs),[90000,90000,90000]);
   assert.equal(calls[0].webSearch, undefined);
   assert.equal(calls[2].webSearch, undefined);
   assert.deepStrictEqual(calls[1].webSearch, { allowedDomains:['fda.gov', 'who.int'], maxCalls:4, country:'TH' });

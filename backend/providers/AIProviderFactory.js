@@ -23,15 +23,37 @@ function purposeConfig(config, modelPurpose, providerName = config?.ai?.provider
   return { model: config.ai.documentModel, reasoningEffort: config.ai.documentReasoningEffort };
 }
 
+function purposeTimeout(config, modelPurpose) {
+  if (modelPurpose === 'clinical_research') {
+    return config?.ai?.clinicalResearchTimeoutMs ?? config?.ai?.timeoutMs;
+  }
+  if (modelPurpose === 'pharmacist') {
+    return config?.ai?.pharmacistTimeoutMs ?? config?.ai?.timeoutMs;
+  }
+  return config?.ai?.timeoutMs;
+}
+
+function purposeProvider(config, modelPurpose, providerName = null) {
+  if (providerName) return String(providerName).trim().toLowerCase();
+  if (modelPurpose === 'clinical_research') {
+    return String(config?.ai?.clinicalResearchProvider || config?.ai?.provider || 'gemini').trim().toLowerCase();
+  }
+  if (modelPurpose === 'pharmacist') {
+    return String(config?.ai?.pharmacistProvider || config?.ai?.provider || 'gemini').trim().toLowerCase();
+  }
+  return String(config?.ai?.provider || 'gemini').trim().toLowerCase();
+}
+
 function createAIProvider({ config, env = process.env, fetchImpl = global.fetch, logger = null, modelPurpose = 'document', providerName = null } = {}) {
-  const provider = String(providerName || config?.ai?.provider || 'gemini').trim().toLowerCase();
+  const provider = purposeProvider(config, modelPurpose, providerName);
   const selected = purposeConfig(config, modelPurpose, provider);
+  const timeoutMs = purposeTimeout(config, modelPurpose);
   if (provider === 'openai') {
     return new OpenAIProvider({
       apiKey: env.OPENAI_API_KEY,
       model: selected.model,
       reasoningEffort: selected.reasoningEffort,
-      timeoutMs: config.ai.timeoutMs,
+      timeoutMs,
       maxRetries: config.ai.maxRetries,
       fetchImpl,
       logger,
@@ -43,11 +65,11 @@ function createAIProvider({ config, env = process.env, fetchImpl = global.fetch,
   return new GeminiProvider({
     apiKey: env.GEMINI_API_KEY,
     model: selected.model,
-    timeoutMs: config.ai.timeoutMs,
+    timeoutMs,
     maxRetries: config.ai.maxRetries,
     fetchImpl,
     logger,
   });
 }
 
-module.exports = { createAIProvider, purposeConfig };
+module.exports = { createAIProvider, purposeConfig, purposeTimeout, purposeProvider };

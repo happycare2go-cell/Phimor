@@ -251,8 +251,19 @@ test('assistant generation exposes an immediate visible loading state and preven
 
 test('assistant structured sections and source attribution render as text',()=>{
   const doc=fakeDocument();const container=new FakeElement();
-  consoleUI.renderAssistant(doc,container,{status:'available',contextTimestamp:'2026-08-25T10:00:00Z',assistant:{caseSummary:'summary',recordedFacts:[{text:'recorded',sourceCategory:'care_profile'}],responseGuidance:[{text:'guidance',sourceCategory:'general_ai_knowledge'}],disclaimer:'review'}});
-  const serialized=walkText(container).join('|');assert.match(serialized,/summary|recorded|Care Profile|guidance|General AI guidance|review/);
+  let copies=0;
+  consoleUI.renderAssistant(doc,container,{status:'available',contextTimestamp:'2026-08-25T10:00:00Z',assistant:{caseSummary:'summary',recordedFacts:[{text:'recorded',sourceCategory:'care_profile'}],responseGuidance:[{text:'guidance',sourceCategory:'general_ai_knowledge'}],draftResponseForPharmacistReview:'editable draft',disclaimer:'review'}},{onCopyDraft:()=>{copies+=1;}});
+  const serialized=walkText(container).join('|');assert.match(serialized,/summary|recorded|Care Profile|guidance|General AI guidance|ร่างคำตอบสำหรับเภสัชกรตรวจสอบ|ร่างสำหรับเภสัชกรตรวจสอบ|editable draft|review/);
+  const buttons=[];const collect=(node)=>{if(node.tagName==='button')buttons.push(node);node.children.forEach(collect);};collect(container);
+  buttons.find((button)=>button.textContent==='คัดลอกร่างไปช่องตอบ').listeners.click();assert.equal(copies,1);
+});
+
+test('copying the ordinary assistant draft fills the composer but never sends',()=>{
+  const composer={value:'',disabled:false};
+  assert.equal(consoleUI.copyAssistantDraftToComposer({status:'available',assistant:{draftResponseForPharmacistReview:'ร่างที่เภสัชกรต้องตรวจ'}},composer),true);
+  assert.equal(composer.value,'ร่างที่เภสัชกรต้องตรวจ');
+  assert.equal(consoleUI.copyAssistantDraftToComposer({status:'available',assistant:{}},composer),false);
+  assert.equal(consoleUI.copyAssistantDraftToComposer({status:'available',assistant:{draftResponseForPharmacistReview:'draft'}},{value:'',disabled:true}),false);
 });
 
 test('assistant HTML/script payload is rendered via textContent without execution surface',()=>{
@@ -372,6 +383,7 @@ test('known message-send failures map to useful safe Thai states',()=>{
 test('there is no AI auto-send and draft transfer remains an explicit pharmacist action',()=>{
   assert.doesNotMatch(source,/sendAI|autoSend|finalAnswer|patientResponse|sendToCustomer/);
   assert.doesNotMatch(html,/Send AI answer|ส่งคำตอบจาก AI/);
+  assert.match(source,/copyAssistantDraftToComposer/);
   assert.match(source,/copyResearchDraftToComposer/);
   assert.match(html,/จะไม่ถูกส่งให้ผู้ใช้โดยอัตโนมัติ/);
   assert.match(html,/เภสัชกรเป็นผู้ตัดสินใจและพิมพ์คำตอบ/);

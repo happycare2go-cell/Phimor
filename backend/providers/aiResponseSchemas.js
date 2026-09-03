@@ -182,13 +182,13 @@ const attributedItem = Object.freeze({
 
 const PHARMACIST_ASSISTANT_RESPONSE_SCHEMA = Object.freeze({
   type: 'object', additionalProperties: false,
-  required: ['caseSummary', 'recordedFacts', 'relevantMedicationContext', 'medicationChanges', 'questionsToAsk', 'safetyConsiderations', 'responseGuidance', 'escalationConsiderations', 'missingInformation', 'disclaimer'],
+  required: ['caseSummary', 'recordedFacts', 'relevantMedicationContext', 'medicationChanges', 'questionsToAsk', 'safetyConsiderations', 'responseGuidance', 'escalationConsiderations', 'missingInformation', 'draftResponseForPharmacistReview', 'disclaimer'],
   properties: {
     caseSummary: { type: 'string' }, recordedFacts: { type: 'array', items: attributedItem },
     relevantMedicationContext: { type: 'array', items: attributedItem }, medicationChanges: { type: 'array', items: attributedItem },
     questionsToAsk: { type: 'array', items: attributedItem }, safetyConsiderations: { type: 'array', items: attributedItem },
     responseGuidance: { type: 'array', items: attributedItem }, escalationConsiderations: { type: 'array', items: attributedItem },
-    missingInformation: stringArray, disclaimer: { type: 'string' },
+    missingInformation: stringArray, draftResponseForPharmacistReview: { type: 'string' }, disclaimer: { type: 'string' },
   },
 });
 
