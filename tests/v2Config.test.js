@@ -57,6 +57,7 @@ test('missing optional V2 environment preserves existing behavior defaults', () 
   assert.strictEqual(config.ai.provider, 'gemini');
   assert.strictEqual(config.ai.documentModel, '');
   assert.strictEqual(config.ai.explanationModel, '');
+  assert.strictEqual(config.ai.clinicalResearchModel, 'gpt-5.6-sol');
 });
 
 test('OpenAI provider has explicit task model and reasoning defaults', () => {

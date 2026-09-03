@@ -672,6 +672,22 @@ function createConsultationRepository({ queryFn = databaseQuery } = {}) {
       return result.rows;
     },
 
+    async listResearchMessages(caseId, { limit = 200 } = {}) {
+      const result = await queryFn(
+        `SELECT message_id, case_id, message_sequence, sender_type, body, created_at,
+                COUNT(*) OVER () AS total_message_count
+         FROM consultation_messages
+         WHERE case_id = $1
+         ORDER BY message_sequence
+         LIMIT $2`,
+        [caseId, limit]
+      );
+      return {
+        rows:result.rows,
+        totalCount:Number(result.rows[0]?.total_message_count || 0),
+      };
+    },
+
     async acceptCase(caseId, pharmacistId) {
       const result = await queryFn(
         `UPDATE consultation_cases SET

@@ -12,6 +12,7 @@ const { createPharmacistAssistantService } = require('../services/pharmacistAssi
 const { createConsultationCaseContextService } = require('../services/consultationCaseContextService');
 const { createConsultationRealtimeAccessService } = require('../services/consultationRealtimeAccessService');
 const { createConsultationReadReceiptService } = require('../services/consultationReadReceiptService');
+const { createPharmacistClinicalResearchService } = require('../services/pharmacistClinicalResearchService');
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -25,6 +26,8 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   const messages = overrides.messageService || createConsultationMessageService(overrides.messageDependencies);
   const rates = overrides.rateLimitService || createConsultationRateLimitService(overrides.rateLimitDependencies);
   const assistant = overrides.assistantService || createPharmacistAssistantService(overrides.assistantDependencies);
+  const clinicalResearch = overrides.clinicalResearchService
+    || createPharmacistClinicalResearchService(overrides.clinicalResearchDependencies);
   const caseContext = overrides.caseContextService
     || createConsultationCaseContextService(overrides.caseContextDependencies);
   const realtimeAccess = overrides.realtimeAccessService
@@ -123,6 +126,18 @@ function createPharmacistConsultationsRouter(overrides = {}) {
     try {
       await rates.requireAssistant({caseId:req.params.caseId,pharmacistId:req.pharmacist.pharmacistId},req.consultationConfig);
       return res.json(await assistant({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
+    } catch(error) { return consultationError(res,error); }
+  }));
+
+  router.post('/:caseId/clinical-research',asyncHandler(async(req,res)=>{
+    if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({status:'invalid_request',errorCode:'INVALID_CASE_ID'});
+    const keys=req.body&&typeof req.body==='object'?Object.keys(req.body):[];
+    if (keys.some((key)=>key!=='refresh') || (req.body?.refresh!==undefined && req.body.refresh!==true)) {
+      return res.status(400).json({status:'invalid_request',errorCode:'UNSUPPORTED_FIELD'});
+    }
+    try {
+      await rates.requireClinicalResearch({caseId:req.params.caseId,pharmacistId:req.pharmacist.pharmacistId},req.consultationConfig);
+      return res.json(await clinicalResearch({caseId:req.params.caseId,pharmacistLineUserId:req.user.lineUserId}));
     } catch(error) { return consultationError(res,error); }
   }));
 

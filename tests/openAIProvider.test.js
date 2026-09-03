@@ -105,8 +105,11 @@ test('web search request includes only configured domains and bounded tool calls
   await generate(createProvider(async (_url, options) => {
     body = JSON.parse(options.body);
     return completed({ answer: 'ok' });
-  }), { webSearch: { allowedDomains: ['WHO.INT', '', 'fda.gov'], maxCalls: 2, searchContextSize: 'low' } });
-  assert.deepStrictEqual(body.tools, [{ type: 'web_search', search_context_size: 'low', filters: { allowed_domains: ['who.int', 'fda.gov'] } }]);
+  }), { webSearch: { allowedDomains: ['WHO.INT', '', 'fda.gov'], maxCalls: 2, searchContextSize: 'low', country:'TH' } });
+  assert.deepStrictEqual(body.tools, [{
+    type: 'web_search', search_context_size: 'low', filters: { allowed_domains: ['who.int', 'fda.gov'] },
+    user_location:{ type:'approximate', country:'TH' },
+  }]);
   assert.strictEqual(body.max_tool_calls, 2);
   assert.deepStrictEqual(body.include, ['web_search_call.action.sources']);
 });

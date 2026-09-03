@@ -20,6 +20,7 @@ function loadFeatureFlags(env = process.env) {
     consultation: Object.freeze({
       enabled: parseBoolean(env.CONSULTATION_ENABLED, false),
       internalOnly: parseBoolean(env.CONSULTATION_INTERNAL_ONLY, true),
+      clinicalResearch: parseBoolean(env.PHARMACIST_AI_RESEARCH_ENABLED, false),
     }),
   });
 }

@@ -37,6 +37,11 @@ function createConsultationRateLimitService({ limiter = rateLimiter, configLoade
       limits(config).assistantRequestsPer10Minutes,10*60*1000);
   }
 
+  function checkClinicalResearch({caseId,pharmacistId},config=configLoader()) {
+    return check(`consultation:clinical-research:${caseId}:${pharmacistId}`,
+      limits(config).clinicalResearchRequestsPer10Minutes,10*60*1000);
+  }
+
   return {
     checkCheckout(lineUserId, config = configLoader()) {
       return check(`consultation:checkout:${lineUserId}`, limits(config).checkoutAttemptsPer10Minutes, 10*60*1000);
@@ -51,11 +56,13 @@ function createConsultationRateLimitService({ limiter = rateLimiter, configLoade
       return checkPharmacistAccept(pharmacistId,config);
     },
     checkAssistant(input,config=configLoader()) { return checkAssistant(input,config); },
+    checkClinicalResearch(input,config=configLoader()) { return checkClinicalResearch(input,config); },
     requireMessage(input,config=configLoader()) { return enforce(checkMessage(input,config)); },
     requirePharmacistAccept(pharmacistId,config=configLoader()) {
       return enforce(checkPharmacistAccept(pharmacistId,config));
     },
     requireAssistant(input,config=configLoader()) { return enforce(checkAssistant(input,config)); },
+    requireClinicalResearch(input,config=configLoader()) { return enforce(checkClinicalResearch(input,config)); },
   };
 }
 

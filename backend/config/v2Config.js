@@ -7,6 +7,18 @@ const OPENAI_MODEL_DEFAULTS = Object.freeze({
   clinicalResearch: 'gpt-5.6-sol',
 });
 const REASONING_EFFORTS = new Set(['low', 'medium', 'high']);
+const DEFAULT_CLINICAL_ALLOWED_DOMAINS = Object.freeze([
+  'moph.go.th', 'fda.moph.go.th', 'ddc.moph.go.th', 'who.int', 'cdc.gov',
+  'fda.gov', 'dailymed.nlm.nih.gov', 'ema.europa.eu', 'nice.org.uk',
+  'idsociety.org', 'pubmed.ncbi.nlm.nih.gov',
+]);
+
+function parseDomainList(value, fallback = DEFAULT_CLINICAL_ALLOWED_DOMAINS) {
+  if (typeof value !== 'string' || !value.trim()) return Object.freeze([...fallback]);
+  const domains = [...new Set(value.split(',').map((item) => item.trim().toLowerCase())
+    .filter((item) => /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/.test(item)))].slice(0, 50);
+  return Object.freeze(domains.length ? domains : [...fallback]);
+}
 
 function parseInteger(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   if (value === undefined || value === null || String(value).trim() === '') return fallback;
@@ -30,11 +42,15 @@ function loadV2Config(env = process.env) {
       documentModel: model(env.AI_MODEL_DOCUMENT, OPENAI_MODEL_DEFAULTS.document),
       explanationModel: model(env.AI_MODEL_EXPLANATION, OPENAI_MODEL_DEFAULTS.explanation),
       pharmacistModel: model(env.AI_MODEL_PHARMACIST, OPENAI_MODEL_DEFAULTS.pharmacist),
-      clinicalResearchModel: model(env.AI_MODEL_CLINICAL_RESEARCH, OPENAI_MODEL_DEFAULTS.clinicalResearch),
+      // Clinical Research always uses the dedicated OpenAI provider even when
+      // ordinary PHIMOR AI flows remain configured for Gemini.
+      clinicalResearchModel:String(env.AI_MODEL_CLINICAL_RESEARCH
+        || OPENAI_MODEL_DEFAULTS.clinicalResearch).trim(),
       documentReasoningEffort: effort(env.AI_REASONING_DOCUMENT, 'low'),
       explanationReasoningEffort: effort(env.AI_REASONING_EXPLANATION, 'medium'),
       pharmacistReasoningEffort: effort(env.AI_REASONING_PHARMACIST, 'medium'),
       clinicalResearchReasoningEffort: effort(env.AI_REASONING_CLINICAL_RESEARCH, 'high'),
+      clinicalAllowedDomains: parseDomainList(env.OPENAI_CLINICAL_ALLOWED_DOMAINS),
       timeoutMs: parseInteger(env.AI_TIMEOUT_MS, DEFAULT_AI_TIMEOUT_MS, { min: 1000, max: 120000 }),
       maxRetries: parseInteger(env.AI_MAX_RETRIES, DEFAULT_AI_MAX_RETRIES, { min: 0, max: 5 }),
     }),
@@ -43,5 +59,5 @@ function loadV2Config(env = process.env) {
 
 module.exports = {
   loadV2Config, parseInteger, DEFAULT_AI_TIMEOUT_MS, DEFAULT_AI_MAX_RETRIES,
-  OPENAI_MODEL_DEFAULTS,
+  OPENAI_MODEL_DEFAULTS, DEFAULT_CLINICAL_ALLOWED_DOMAINS, parseDomainList,
 };

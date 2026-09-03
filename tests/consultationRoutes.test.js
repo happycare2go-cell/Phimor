@@ -15,7 +15,10 @@ const ENABLED = Object.freeze({
   enabled:true, internalOnly:false, internalLineUserIds:[], priceMinor:10000,
   currency:'THB', durationMinutes:1440, pollSeconds:5, maxMessageChars:4000,
   termsVersion:'consult-v1',
-  rateLimits:Object.freeze({checkoutAttemptsPer10Minutes:3,messageSendsPerMinute:10,pharmacistAcceptsPerMinute:10,assistantRequestsPer10Minutes:5}),
+  rateLimits:Object.freeze({
+    checkoutAttemptsPer10Minutes:3,messageSendsPerMinute:10,pharmacistAcceptsPerMinute:10,
+    assistantRequestsPer10Minutes:5,clinicalResearchRequestsPer10Minutes:3,
+  }),
 });
 
 function reads(overrides = {}) {
@@ -257,6 +260,36 @@ test('unexpected database errors become a generic safe unavailable envelope', as
     safeErrorCode:'CONSULTATION_UNAVAILABLE',
   }]);
   assert.doesNotMatch(JSON.stringify(operationalEvents),/consultation_messages|PRIVATE_SQL_STACK|ขอข้อมูลเพิ่ม|U-PHARM|CASE-1/);
+});
+
+test('pharmacist clinical research route accepts only refresh, uses a dedicated rate limit and never sends chat',async()=>{
+  const calls=[];
+  await withApi({pharmacist:{
+    readService:reads(),
+    rateLimitService:{requireClinicalResearch(input){calls.push({rate:input});}},
+    clinicalResearchService:async(input)=>{
+      calls.push({research:input});
+      return {status:'available',generatedAt:'2026-09-03T10:00:00Z',analysis:{caseSummary:'private'}};
+    },
+    messageService:{async sendMessage(){calls.push({message:true});}},
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/CASE-1/clinical-research',{
+      method:'POST',body:JSON.stringify({refresh:true}),
+    },'U-PHARM');
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).status,'available');
+    for (const injected of [
+      {model:'other'}, {patientContext:{medications:['Drug A']}}, {refresh:false},
+    ]) {
+      const rejected=await api('/api/pharmacist/consultations/CASE-1/clinical-research',{
+        method:'POST',body:JSON.stringify(injected),
+      },'U-PHARM');
+      assert.equal(rejected.status,400);
+    }
+  });
+  assert.deepEqual(calls[0],{rate:{caseId:'CASE-1',pharmacistId:'PH-1'}});
+  assert.equal(calls[1].research.pharmacistLineUserId,'U-PHARM');
+  assert.equal(calls.some((item)=>item.message),false);
 });
 
 test('current checkout discovery is scoped to authenticated Family actor and selected Care Profile', async () => {

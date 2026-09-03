@@ -18,9 +18,12 @@ function safeSource(value) {
     return null;
   }
   if (url.protocol !== 'https:') return null;
+  const publishedAt = typeof value.published_at === 'string' && !Number.isNaN(new Date(value.published_at).getTime())
+    ? new Date(value.published_at).toISOString() : null;
   return Object.freeze({
     url: url.toString(),
     title: typeof value.title === 'string' ? value.title.normalize('NFC').trim().slice(0, 300) : '',
+    publishedAt,
   });
 }
 
@@ -151,6 +154,7 @@ class OpenAIProvider extends BaseAIProvider {
       body.tools = [{
         type: 'web_search', search_context_size: webSearch.searchContextSize || 'medium',
         ...(allowedDomains.length ? { filters: { allowed_domains: allowedDomains } } : {}),
+        ...(webSearch.country ? { user_location: { type: 'approximate', country: String(webSearch.country).slice(0, 2).toUpperCase() } } : {}),
       }];
       body.tool_choice = 'auto';
       body.include = ['web_search_call.action.sources'];

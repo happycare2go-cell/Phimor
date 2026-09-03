@@ -27,7 +27,10 @@ test('consultation configuration defaults disabled and internal-only with approv
   assert.equal(config.durationMinutes, 1440);
   assert.equal(config.pollSeconds, 5);
   assert.equal(config.maxMessageChars, 4000);
-  assert.deepEqual(loadFeatureFlags({}).consultation, { enabled:false, internalOnly:true });
+  assert.deepEqual(loadFeatureFlags({}).consultation, {
+    enabled:false, internalOnly:true, clinicalResearch:false,
+  });
+  assert.equal(config.rateLimits.clinicalResearchRequestsPer10Minutes, 3);
 });
 
 test('invalid commercial environment values cannot change backend invariants', () => {

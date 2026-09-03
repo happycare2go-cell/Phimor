@@ -12,6 +12,7 @@ const DEFAULT_CHECKOUT_ATTEMPTS_PER_10_MINUTES = 3;
 const DEFAULT_MESSAGE_SENDS_PER_MINUTE = 10;
 const DEFAULT_PHARMACIST_ACCEPTS_PER_MINUTE = 10;
 const DEFAULT_ASSISTANT_REQUESTS_PER_10_MINUTES = 5;
+const DEFAULT_CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES = 3;
 
 function approvedInteger(value, approved) {
   const parsed = parseInteger(value, approved, { min: approved, max: approved });
@@ -52,6 +53,10 @@ function loadConsultationConfig(env = process.env) {
         env.CONSULTATION_ASSISTANT_REQUESTS_PER_10_MINUTES,
         DEFAULT_ASSISTANT_REQUESTS_PER_10_MINUTES, {min:1,max:20}
       ),
+      clinicalResearchRequestsPer10Minutes:parseInteger(
+        env.CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES,
+        DEFAULT_CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES, {min:1,max:10}
+      ),
     }),
   });
 }
@@ -66,6 +71,7 @@ module.exports = {
   DEFAULT_MESSAGE_SENDS_PER_MINUTE,
   DEFAULT_PHARMACIST_ACCEPTS_PER_MINUTE,
   DEFAULT_ASSISTANT_REQUESTS_PER_10_MINUTES,
+  DEFAULT_CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES,
   approvedInteger,
   parseInternalLineUsers,
   loadConsultationConfig,
