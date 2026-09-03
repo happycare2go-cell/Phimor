@@ -15,6 +15,10 @@
     ['questionsToAsk','คำถามที่ควรถามเพิ่ม'],['safetyConsiderations','ประเด็นความปลอดภัย'],
     ['responseGuidance','โครงสร้างประกอบการตอบ'],['escalationConsiderations','ประเด็นพิจารณาส่งต่อ'],
   ]);
+  const CLINICAL_SOURCE_LABELS=Object.freeze({
+    care_profile:'Care Profile',medication_snapshot:'รายการยาปัจจุบัน',medication_diff:'ประวัติการเปลี่ยนแปลงยา',
+    vital_sign:'สัญญาณชีพ',lab_result:'ผลตรวจที่ยืนยันแล้ว',appointment:'นัดหมาย',consultation_message:'บทสนทนา',
+  });
   const MEDICATION_USE_CONDITION_LABELS=Object.freeze({before_meal:'ก่อนอาหาร',after_meal:'หลังอาหาร',with_meal:'พร้อมอาหาร',as_needed:'เมื่อมีอาการ'});
   const MEDICATION_PERIOD_LABELS=Object.freeze({morning:'เช้า',noon:'กลางวัน',evening:'เย็น',bedtime:'ก่อนนอน'});
 
@@ -55,6 +59,23 @@
   function waitingOnLabel(value,state){if(['queued','resolved','closed'].includes(state))return 'ไม่มีฝ่ายที่กำลังรอคำตอบ';return value==='pharmacist'?'รอเภสัชกรตอบ':value==='customer'?'รอข้อมูลจากผู้ใช้':'ไม่มีฝ่ายที่กำลังรอคำตอบ';}
   function accessStateMessage(access,error){if(access==='allowed')return '';if(access==='loading')return 'กำลังตรวจสอบสิทธิ์…';if(access==='denied')return 'บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน Pharmacist Console กรุณาติดต่อผู้ดูแลระบบ';if(error==='CONSULTATION_DISABLED')return 'ระบบปรึกษาเภสัชกรยังไม่เปิดใช้งาน';return 'ไม่สามารถเชื่อมต่อ Pharmacist Console ได้ กรุณาลองใหม่';}
   function assistantErrorMessage(code){return ({AI_TIMEOUT:'AI Assistant ใช้เวลานานเกินไป กรุณาลองใหม่ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_RATE_LIMIT:'AI Assistant มีคำขอจำนวนมาก กรุณารอสักครู่แล้วลองใหม่',AI_INVALID_RESPONSE:'AI Assistant ไม่สามารถจัดรูปแบบข้อมูลได้ กรุณาลองใหม่',AI_UNAVAILABLE:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ',AI_PROVIDER_ERROR:'AI Assistant ยังไม่พร้อมใช้งาน คุณยังสามารถตอบผู้ใช้ได้ตามปกติ'})[code]||'AI Assistant ไม่พร้อมใช้งานในขณะนี้ คุณยังสามารถตอบผู้ใช้ได้ตามปกติ';}
+  function clinicalResearchErrorMessage(code){return ({
+    CLINICAL_RESEARCH_DISABLED:'ระบบวิเคราะห์เชิงคลินิกยังไม่เปิดใช้งาน',
+    CONSULTATION_RATE_LIMITED:'มีการวิเคราะห์หลายครั้ง กรุณารอสักครู่แล้วลองใหม่',
+    AI_TIMEOUT:'การวิเคราะห์ใช้เวลานานเกินไป กรุณาลองใหม่',
+    AI_RATE_LIMIT:'ระบบวิเคราะห์มีคำขอจำนวนมาก กรุณารอสักครู่แล้วลองใหม่',
+    AI_AUDIT_WRITE_FAILED:'ไม่สามารถบันทึกหลักฐานการใช้งาน AI ได้ จึงไม่แสดงผลการวิเคราะห์',
+  })[code]||'ระบบวิเคราะห์บทสนทนายังไม่พร้อม กรุณาดำเนินการสนทนาด้วยตนเอง';}
+  function researchLimitationLabel(value){return ({
+    RESEARCH_QUERY_PRIVACY_REJECTED:'บางหัวข้อไม่ถูกค้นภายนอกเพื่อคุ้มครองข้อมูลส่วนบุคคล',
+    RESEARCH_TEMPORARILY_UNAVAILABLE:'การค้นหลักฐานภายนอกไม่พร้อมใช้งานชั่วคราว',
+    RESEARCH_INVALID_RESPONSE:'ผลการค้นหลักฐานภายนอกไม่ผ่านการตรวจสอบ',
+    EVIDENCE_WITHOUT_VERIFIED_CITATION_REJECTED:'ตัดข้อมูลที่ไม่มีแหล่งอ้างอิงที่ตรวจสอบได้ออกแล้ว',
+    NO_VERIFIED_EVIDENCE_SOURCE:'ไม่พบแหล่งอ้างอิงที่ตรวจสอบได้จากผลการค้นครั้งนี้',
+    INSUFFICIENT_INTERACTION_EVIDENCE:'ยังไม่มีหลักฐานเพียงพอที่จะสรุปเรื่องปฏิกิริยาระหว่างยา',
+  })[value]||'ผลการวิเคราะห์มีข้อจำกัดที่เภสัชกรควรตรวจสอบ';}
+  function clinicalResearchIsStale(result,latestSequence){return result?.status==='available'&&Number(latestSequence)>Number(result.analyzedThroughSequence||0);}
+  function safeExternalUrl(value){try{const url=new URL(value);return url.protocol==='https:'?url.toString():null;}catch(_){return null;}}
   function supportReference(correlationId){return correlationId?` (รหัสอ้างอิง ${correlationId})`:'';}
   function messageSendErrorMessage(code,correlationId=null){if(['CONSULTATION_EXPIRED','CONSULTATION_CLOSED'].includes(code))return 'เคสนี้หมดเวลาหรือปิดแล้ว จึงไม่สามารถส่งข้อความใหม่ได้';if(['CONSULTATION_ACCESS_DENIED','PHARMACIST_INACTIVE','PHARMACIST_LICENSE_NOT_VERIFIED'].includes(code))return 'สิทธิ์เข้าถึงเคสนี้ไม่พร้อมใช้งาน กรุณารีเฟรชหรือติดต่อผู้ดูแลระบบ';if(code==='CONSULTATION_RATE_LIMITED')return 'ส่งข้อความถี่เกินไป กรุณารอสักครู่';if(['CONSULTATION_NOT_ACCEPTED','CONSULTATION_NOT_ACTIVE','INVALID_WAITING_ON_STATE'].includes(code))return 'สถานะเคสยังไม่อนุญาตให้ส่งข้อความ กรุณารีเฟรชเคส';return `ระบบส่งข้อความไม่พร้อมชั่วคราว กรุณาลองใหม่${supportReference(correlationId)}`;}
   function createIdempotencyKey(cryptoApi=globalThis.crypto){
@@ -80,7 +101,8 @@
       access:'loading',tab:'queue',collections:{queue:[],active:[],resolved:[],closed:[]},
       queueCursor:null,queueHasMore:false,selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,
       caseContext:null,caseContextLoading:false,
-      assistant:null,assistantBusy:false,sending:false,acceptingCaseId:null,resolving:false,
+      assistant:null,assistantBusy:false,clinicalResearch:null,clinicalResearchBusy:false,
+      sending:false,acceptingCaseId:null,resolving:false,
       error:null,statusMessage:'',retryAfterSeconds:0,connectionStatus:'idle',activePanel:null,
     };
     const snapshot=()=>({...state,collections:{...state.collections},messages:[...state.messages],pendingMessages:[...state.pendingMessages]});
@@ -160,7 +182,7 @@
       revision+=1; stopPolling();realtime?.stop?.();realtime=null;highestReadRequested=0;
       if(rateLimitTimer!==null){cancelSchedule(rateLimitTimer);rateLimitTimer=null;}
       const requestRevision=token();
-      patch({selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,caseContext:null,caseContextLoading:false,assistant:null,error:null,statusMessage:'กำลังโหลดเคส…',sending:false,resolving:false,retryAfterSeconds:0,connectionStatus:'idle',activePanel:null});
+      patch({selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,caseContext:null,caseContextLoading:false,assistant:null,assistantBusy:false,clinicalResearch:null,clinicalResearchBusy:false,error:null,statusMessage:'กำลังโหลดเคส…',sending:false,resolving:false,retryAfterSeconds:0,connectionStatus:'idle',activePanel:null});
       try{
         const detail=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}`);
         if(!current(requestRevision)) return {ignored:true,stale:true};
@@ -289,10 +311,24 @@
         return {error:apiErrorCode(error)};
       }
     }
-    function clearSelection(){revision+=1;stopPolling();realtime?.stop?.();realtime=null;patch({selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,caseContext:null,caseContextLoading:false,assistant:null,statusMessage:'',connectionStatus:'idle',activePanel:null});}
+    async function generateClinicalResearch(){
+      const caseId=state.selectedCase?.caseId;
+      if(!caseId||state.clinicalResearchBusy||effectiveClosed(state.selectedCase))return {ignored:true};
+      const requestRevision=token();
+      patch({activePanel:'research',clinicalResearchBusy:true,clinicalResearch:{status:'loading'},error:null});
+      try{
+        const result=await request(`/api/pharmacist/consultations/${encodeURIComponent(caseId)}/clinical-research`,{method:'POST',body:JSON.stringify({refresh:true})});
+        if(!current(requestRevision)||state.selectedCase?.caseId!==caseId)return {ignored:true,stale:true};
+        patch({clinicalResearchBusy:false,clinicalResearch:result});return result;
+      }catch(error){
+        if(current(requestRevision)&&state.selectedCase?.caseId===caseId){const code=apiErrorCode(error);patch({clinicalResearchBusy:false,clinicalResearch:{status:'unavailable',errorCode:code},error:code});}
+        return {error:apiErrorCode(error)};
+      }
+    }
+    function clearSelection(){revision+=1;stopPolling();realtime?.stop?.();realtime=null;patch({selectedCase:null,roomOpen:false,messages:[],pendingMessages:[],lastSequence:0,beforeSequence:0,hasMoreOlder:false,caseContext:null,caseContextLoading:false,assistant:null,assistantBusy:false,clinicalResearch:null,clinicalResearchBusy:false,statusMessage:'',connectionStatus:'idle',activePanel:null});}
     function setPanel(activePanel){patch({activePanel:activePanel||null});}
     function handleVisibilityChange(){const visible=!documentHidden();realtime?.setVisible?.(visible);if(!visible)stopPolling();else{pollOnce();schedulePoll();}}
-    return {snapshot,initialize,loadCollection,switchTab,selectCase,acceptCase,refreshCaseContext,pollOnce,loadOlderMessages,sendMessage,retryMessage,markRead,resolveCase,generateAssistant,clearSelection,setPanel,stopPolling,schedulePoll,handleVisibilityChange};
+    return {snapshot,initialize,loadCollection,switchTab,selectCase,acceptCase,refreshCaseContext,pollOnce,loadOlderMessages,sendMessage,retryMessage,markRead,resolveCase,generateAssistant,generateClinicalResearch,clearSelection,setPanel,stopPolling,schedulePoll,handleVisibilityChange};
   }
 
   function clearNode(node){while(node?.firstChild)node.removeChild(node.firstChild);}
@@ -354,6 +390,87 @@
     });
     if(assistant.disclaimer)textElement(doc,container,'p','assistant-disclaimer',assistant.disclaimer);
   }
+  function formatClinicalTime(value){
+    const date=new Date(value);return Number.isNaN(date.getTime())?'ไม่ระบุเวลา':date.toLocaleString('th-TH');
+  }
+  function appendResearchList(doc,container,key,title,items,itemText){
+    const safeItems=safeArray(items);if(!safeItems.length)return;
+    const section=doc.createElement('section');section.className=`clinical-research-section clinical-research-section--${key}`;
+    textElement(doc,section,'h3','',title);const list=doc.createElement('ul');
+    safeItems.forEach((item)=>{
+      const li=doc.createElement('li');const value=itemText?itemText(item):typeof item==='string'?item:item?.text;
+      textElement(doc,li,'span','clinical-research-item',safeText(value,'ข้อมูลไม่ครบ'));
+      if(item?.sourceCategory)textElement(doc,li,'span','source-chip',CLINICAL_SOURCE_LABELS[item.sourceCategory]||'ข้อมูลในระบบ');
+      list.appendChild(li);
+    });
+    section.appendChild(list);container.appendChild(section);
+  }
+  function copyResearchDraftToComposer(result,composer){
+    const draft=safeText(result?.analysis?.draftResponseForPharmacistReview).trim();
+    if(!draft||!composer||composer.disabled)return false;
+    composer.value=draft;return true;
+  }
+  function renderClinicalResearch(doc,container,result={},options={}){
+    clearNode(container);
+    if(!result||!result.status){textElement(doc,container,'p','empty-state','กด “วิเคราะห์บทสนทนา” เมื่อเภสัชกรต้องการให้ระบบช่วยทบทวนข้อมูล');return;}
+    if(result.status==='loading'){textElement(doc,container,'p','clinical-research-loading','กำลังวิเคราะห์บทสนทนาและข้อมูลที่เกี่ยวข้อง…');return;}
+    if(result.status!=='available'){textElement(doc,container,'p','clinical-research-unavailable',clinicalResearchErrorMessage(result.errorCode));return;}
+    if(clinicalResearchIsStale(result,options.latestSequence)){
+      const stale=doc.createElement('section');stale.className='clinical-research-notice clinical-research-notice--stale';
+      textElement(doc,stale,'strong','','มีข้อความใหม่หลังการวิเคราะห์');
+      textElement(doc,stale,'p','','ผลเดิมยังไม่รวมข้อความล่าสุด กรุณาทบทวนหรือวิเคราะห์ใหม่');
+      const refresh=textElement(doc,stale,'button','secondary-button','วิเคราะห์ใหม่');refresh.type='button';refresh.addEventListener('click',()=>options.onRefresh?.());
+      container.appendChild(stale);
+    }
+    if(result.conversationTruncated===true){
+      const notice=doc.createElement('section');notice.className='clinical-research-notice clinical-research-notice--truncated';
+      textElement(doc,notice,'strong','','การวิเคราะห์นี้ไม่ครอบคลุมข้อความทั้งหมด');
+      textElement(doc,notice,'p','',`วิเคราะห์ ${Number(result.analyzedMessageCount)||0} จาก ${Number(result.totalMessageCount)||0} ข้อความ`);
+      container.appendChild(notice);
+    }
+    const analysis=result.analysis||{};
+    textElement(doc,container,'p','context-time',`สร้างเมื่อ ${formatClinicalTime(result.generatedAt)} · วิเคราะห์ถึงข้อความลำดับ ${Number(result.analyzedThroughSequence)||0}`);
+    appendResearchList(doc,container,'summary','สรุปคำถามของผู้ใช้',[safeText(analysis.caseSummary,'ยังไม่มีข้อมูลสรุป')]);
+    appendResearchList(doc,container,'facts','ข้อมูลจาก Care Profile ที่เกี่ยวข้อง',analysis.recordedFacts);
+    appendResearchList(doc,container,'medications','ยาปัจจุบันที่เกี่ยวข้อง',analysis.relevantMedicationContext);
+    appendResearchList(doc,container,'changes','การเปลี่ยนแปลงยาที่เกี่ยวข้อง',analysis.medicationChanges);
+    appendResearchList(doc,container,'missing','ข้อมูลที่ยังขาด',analysis.missingInformation);
+    appendResearchList(doc,container,'questions','คำถามที่ควรถามเพิ่ม',analysis.questionsToAsk);
+    appendResearchList(doc,container,'issues','ประเด็นทางคลินิกที่ควรพิจารณา',analysis.keyClinicalIssues);
+    appendResearchList(doc,container,'safety','ประเด็นความปลอดภัย',analysis.safetyConsiderations);
+    appendResearchList(doc,container,'interactions','การตรวจ Drug Interaction',analysis.interactionReview,(item)=>{
+      const drugs=safeArray(item?.drugs).map((value)=>safeText(value)).filter(Boolean).join(' + ');
+      return [drugs,safeText(item?.finding),safeText(item?.patientRelevance),safeText(item?.limitation)].filter(Boolean).join(' · ');
+    });
+    appendResearchList(doc,container,'guidelines','แนวทาง/หลักฐานที่ควรพิจารณา',analysis.guidelineReview,(item)=>
+      [safeText(item?.topic),safeText(item?.finding),safeText(item?.applicability),safeText(item?.limitation)].filter(Boolean).join(' · '));
+    appendResearchList(doc,container,'recommendations','ข้อเสนอแนะสำหรับเภสัชกร',analysis.pharmacistRecommendations);
+    appendResearchList(doc,container,'escalation','ประเด็นที่ควรส่งต่อ',analysis.escalationConsiderations);
+    const research=analysis.research||{};
+    if(research.performed===true&&safeArray(research.sources).length){
+      const sourceSection=doc.createElement('section');sourceSection.className='clinical-research-section clinical-research-sources';
+      textElement(doc,sourceSection,'h3','','แหล่งข้อมูล');const list=doc.createElement('ul');
+      safeArray(research.sources).forEach((source)=>{
+        const url=safeExternalUrl(source?.url);if(!url)return;
+        const li=doc.createElement('li');const link=textElement(doc,li,'a','clinical-research-source-link',safeText(source?.title,safeText(source?.domain,'แหล่งข้อมูล')));
+        link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';
+        textElement(doc,li,'small','',[
+          safeText(source?.domain),source?.publishedAt?`เผยแพร่ ${formatClinicalTime(source.publishedAt)}`:'ไม่พบวันที่เผยแพร่',
+          source?.accessedAt?`เข้าถึง ${formatClinicalTime(source.accessedAt)}`:'',
+        ].filter(Boolean).join(' · '));list.appendChild(li);
+      });
+      sourceSection.appendChild(list);container.appendChild(sourceSection);
+    }
+    appendResearchList(doc,container,'limitations','ข้อจำกัดของหลักฐาน',safeArray(research.limitations).map(researchLimitationLabel));
+    const draft=safeText(analysis.draftResponseForPharmacistReview).trim();
+    if(draft){
+      const draftSection=doc.createElement('section');draftSection.className='clinical-research-section clinical-research-draft';
+      textElement(doc,draftSection,'h3','','ร่างคำตอบสำหรับเภสัชกรตรวจสอบ');textElement(doc,draftSection,'p','',draft);
+      const copy=textElement(doc,draftSection,'button','primary-button clinical-research-copy','นำร่างไปใส่ช่องตอบ');copy.type='button';copy.addEventListener('click',()=>options.onCopyDraft?.());
+      container.appendChild(draftSection);
+    }
+    if(analysis.disclaimer)textElement(doc,container,'p','assistant-disclaimer',analysis.disclaimer);
+  }
   function renderMessages(doc,container,messages,{pendingMessages=[],caseDetail={},onRetry=()=>{},now=new Date()}={}){
     clearNode(container);let currentDate='';
     const persisted=normalizedMessages(messages),latestOwnRead=persisted.filter((item)=>item.senderType==='pharmacist'&&receiptState(item,caseDetail)==='read').at(-1)?.sequence;
@@ -413,6 +530,8 @@
       closeChat:doc.getElementById('closeChatButton'),connection:doc.getElementById('chatConnectionState'),roomActions:doc.getElementById('chatRoomActions'),
       initial:doc.getElementById('chatInitialQuestion'),loadOlder:doc.getElementById('loadOlderMessagesButton'),newMessages:doc.getElementById('newMessagesButton'),closed:doc.getElementById('chatClosedState'),
       contextPanel:doc.getElementById('caseContextPanel'),assistantPanel:doc.getElementById('assistantPanel'),showContext:doc.getElementById('showCaseContextButton'),showAssistant:doc.getElementById('showAssistantButton'),refreshContext:doc.getElementById('refreshCaseContextButton'),closeContext:doc.getElementById('closeCaseContextButton'),closeAssistant:doc.getElementById('closeAssistantButton'),
+      researchPanel:doc.getElementById('clinicalResearchPanel'),research:doc.getElementById('clinicalResearchContent'),
+      showResearch:doc.getElementById('showClinicalResearchButton'),refreshResearch:doc.getElementById('refreshClinicalResearchButton'),closeResearch:doc.getElementById('closeClinicalResearchButton'),
     };
     let lastCaseId=null,lastRenderedSequence=0,observer=null;
     const isNearBottom=()=>!elements.messages||elements.messages.scrollHeight-elements.messages.scrollTop-elements.messages.clientHeight<90;
@@ -443,11 +562,21 @@
       elements.connection.textContent=connectionLabel(state.connectionStatus);elements.connection.dataset.state=state.connectionStatus;
       elements.roomActions.hidden=!state.selectedCase;elements.initial.hidden=!state.selectedCase?.initialQuestion;elements.initial.textContent=state.selectedCase?.initialQuestion?`คำถามเริ่มต้น\n${state.selectedCase.initialQuestion}`:'';
       elements.loadOlder.hidden=!state.hasMoreOlder;
-      elements.contextPanel.hidden=state.activePanel!=='context';elements.assistantPanel.hidden=state.activePanel!=='assistant';
+      elements.contextPanel.hidden=state.activePanel!=='context';elements.assistantPanel.hidden=state.activePanel!=='assistant';elements.researchPanel.hidden=state.activePanel!=='research';
       elements.assistantButton.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.assistantBusy;
       elements.assistantButton.textContent=state.assistantBusy?'กำลังสร้างสรุป…':'สร้างสรุปช่วยตอบ';
       elements.assistantRefresh.disabled=elements.assistantButton.disabled;elements.assistantRefresh.hidden=state.assistant?.status!=='available';
       renderAssistant(doc,elements.assistant,state.assistant);
+      elements.showResearch.disabled=!state.selectedCase||effectiveClosed(state.selectedCase)||state.clinicalResearchBusy;
+      elements.showResearch.textContent=state.clinicalResearchBusy?'กำลังวิเคราะห์…':'✨ วิเคราะห์บทสนทนา';
+      elements.refreshResearch.disabled=elements.showResearch.disabled;
+      renderClinicalResearch(doc,elements.research,state.clinicalResearch,{
+        latestSequence:state.lastSequence,onRefresh:session.generateClinicalResearch,
+        onCopyDraft:()=>{
+          if(!copyResearchDraftToComposer(state.clinicalResearch,elements.composer))return;
+          session.setPanel(null);elements.composer.dispatchEvent?.(new Event('input',{bubbles:true}));elements.composer.focus?.();
+        },
+      });
       const newest=state.messages.at(-1)?.sequence||0;
       if(state.roomOpen&&newest>lastRenderedSequence){if(beforeNear)elements.messages.scrollTop=elements.messages.scrollHeight;else elements.newMessages.hidden=false;lastRenderedSequence=newest;}
       if(state.roomOpen&&beforeHeight&&state.hasMoreOlder&&!beforeNear)elements.messages.scrollTop+=Math.max(0,elements.messages.scrollHeight-beforeHeight);
@@ -471,8 +600,14 @@
     elements.showContext.addEventListener('click',()=>session.setPanel('context'));
     elements.refreshContext.addEventListener('click',()=>session.refreshCaseContext());
     elements.showAssistant.addEventListener('click',()=>session.setPanel('assistant'));
+    elements.showResearch.addEventListener('click',()=>{
+      const state=session.snapshot();
+      if(state.clinicalResearch?.status==='available')session.setPanel('research');else session.generateClinicalResearch();
+    });
+    elements.refreshResearch.addEventListener('click',()=>session.generateClinicalResearch());
     elements.closeContext.addEventListener('click',()=>session.setPanel(null));
     elements.closeAssistant.addEventListener('click',()=>session.setPanel(null));
+    elements.closeResearch.addEventListener('click',()=>session.setPanel(null));
     doc.addEventListener('visibilitychange',session.handleVisibilityChange);
     render(session.snapshot());return {render};
   }
@@ -507,6 +642,6 @@
     }catch(error){access.hidden=false;access.textContent=error?.message==='LIFF_ID_PHARMACIST_MISSING'?'ยังไม่ได้ตั้งค่า Pharmacist LIFF กรุณาติดต่อผู้ดูแลระบบ':'ไม่สามารถเปิด Pharmacist Console ได้';return null;}
   }
 
-  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,MEDICATION_USE_CONDITION_LABELS,MEDICATION_PERIOD_LABELS,
-    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,createConsoleSession,renderCaseContext,renderAssistant,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
+  return {TABS,SOURCE_LABELS,ASSISTANT_SECTIONS,CLINICAL_SOURCE_LABELS,MEDICATION_USE_CONDITION_LABELS,MEDICATION_PERIOD_LABELS,
+    safeText,safeArray,medicationSchedule,normalizedMessages,mergeMessages,formatDuration,effectiveClosed,canMessage,sourceLabel,closeReasonLabel,stateLabel,waitingOnLabel,accessStateMessage,assistantErrorMessage,clinicalResearchErrorMessage,researchLimitationLabel,clinicalResearchIsStale,safeExternalUrl,supportReference,messageSendErrorMessage,createIdempotencyKey,connectionLabel,readState,receiptState,latestIncomingSequence,shouldMarkRead,copyResearchDraftToComposer,createConsoleSession,renderCaseContext,renderAssistant,renderClinicalResearch,formatMessageTime,messageDateLabel,renderMessages,renderQueue,renderCaseHeader,createController,createHttpClient,bootstrap};
 }));

@@ -11,6 +11,21 @@ const OPEN_CASE={caseId:'CASE-1',state:'active',waitingOn:'pharmacist',acceptedA
 const RESOLVED_CASE={...OPEN_CASE,state:'resolved',waitingOn:'none'};
 const CLOSED_CASE={...OPEN_CASE,state:'closed',waitingOn:'none',remainingSeconds:0,effectiveClosed:true,closeReason:'expired'};
 const QUEUE_ITEM={caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300};
+const CLINICAL_RESEARCH_RESULT={
+  status:'available',generatedAt:'2026-09-03T10:00:00Z',contextTimestamp:'2026-09-03T09:59:00Z',
+  analyzedThroughSequence:2,analyzedMessageCount:3,totalMessageCount:5,conversationTruncated:true,
+  analysis:{
+    caseSummary:'ผู้ใช้สอบถามเรื่องการใช้ยาร่วมกัน',
+    recordedFacts:[{text:'มีข้อมูลจากบทสนทนา',sourceCategory:'consultation_message'}],
+    relevantMedicationContext:[{text:'มี Drug A ในรายการยาปัจจุบัน',sourceCategory:'medication_snapshot'}],
+    medicationChanges:[],missingInformation:['ยังไม่มีข้อมูลการแพ้ยาที่บันทึกไว้'],questionsToAsk:['มีอาการผิดปกติหรือไม่'],
+    keyClinicalIssues:[{text:'ควรประเมินหลักฐาน',importance:'important',basis:'external_evidence',evidenceRefs:['SRC-1']}],
+    safetyConsiderations:[],interactionReview:[{drugs:['Drug A','Drug B'],finding:'มีประเด็นที่ต้องทบทวน',patientRelevance:'พบชื่อยาในข้อมูลที่บันทึก',limitation:'ข้อมูลยังไม่ครบ'}],
+    guidelineReview:[],pharmacistRecommendations:[{text:'เภสัชกรควรตรวจสอบก่อนตอบ',basis:'external_evidence',evidenceRefs:['SRC-1']}],escalationConsiderations:[],
+    research:{performed:true,sources:[{referenceId:'SRC-1',title:'Official <script> source',url:'https://www.fda.gov/example',domain:'fda.gov',publishedAt:null,accessedAt:'2026-09-03T10:00:00Z'}],limitations:['INSUFFICIENT_INTERACTION_EVIDENCE']},
+    draftResponseForPharmacistReview:'ร่างคำตอบที่ต้องตรวจสอบก่อนส่ง',disclaimer:'เภสัชกรเป็นผู้ตัดสินใจ',
+  },
+};
 
 function createHarness(handler){
   const calls=[];const scheduled=[];
@@ -257,6 +272,62 @@ test('assistant failure leaves manual chat messageable and hides raw provider er
   assert.doesNotMatch(walkText(container).join('|'),/gemini|AI_TIMEOUT|stack/);
 });
 
+test('clinical research is explicit, duplicate protected and uses its dedicated route',async()=>{
+  let release;const pending=new Promise((resolve)=>{release=resolve;});
+  const harness=createHarness(async(pathValue)=>{
+    if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;
+    if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};
+    if(pathValue.endsWith('/clinical-research'))return pending;
+    return standardHandler(pathValue);
+  });
+  await harness.session.selectCase('CASE-1');await harness.session.pollOnce();
+  assert.equal(harness.calls.some((item)=>item.path.endsWith('/clinical-research')),false);
+  const first=harness.session.generateClinicalResearch();
+  assert.equal(harness.state().clinicalResearch.status,'loading');assert.equal(harness.state().activePanel,'research');
+  assert.deepEqual(await harness.session.generateClinicalResearch(),{ignored:true});
+  release(CLINICAL_RESEARCH_RESULT);await first;
+  const call=harness.calls.find((item)=>item.path.endsWith('/clinical-research'));
+  assert.deepEqual(JSON.parse(call.options.body),{refresh:true});
+  assert.equal(harness.state().clinicalResearch.analysis.caseSummary,CLINICAL_RESEARCH_RESULT.analysis.caseSummary);
+});
+
+test('clinical research panel renders truncation, stale state, citations and private draft safely',()=>{
+  const doc=fakeDocument();const container=new FakeElement();let refreshes=0,copies=0;
+  consoleUI.renderClinicalResearch(doc,container,CLINICAL_RESEARCH_RESULT,{
+    latestSequence:3,onRefresh:()=>{refreshes+=1;},onCopyDraft:()=>{copies+=1;},
+  });
+  const visible=walkText(container).join('|');
+  assert.match(visible,/มีข้อความใหม่หลังการวิเคราะห์|ไม่ครอบคลุมข้อความทั้งหมด|3 จาก 5/);
+  assert.match(visible,/สรุปคำถามของผู้ใช้|ยาปัจจุบันที่เกี่ยวข้อง|การตรวจ Drug Interaction|ร่างคำตอบสำหรับเภสัชกรตรวจสอบ/);
+  assert.match(visible,/Official <script> source|fda\.gov|ไม่พบวันที่เผยแพร่|ยังไม่มีหลักฐานเพียงพอ/);
+  const buttons=[];const collect=(node)=>{if(node.tagName==='button')buttons.push(node);node.children.forEach(collect);};collect(container);
+  buttons.find((button)=>button.textContent==='วิเคราะห์ใหม่').listeners.click();
+  buttons.find((button)=>button.textContent==='นำร่างไปใส่ช่องตอบ').listeners.click();
+  assert.equal(refreshes,1);assert.equal(copies,1);assert.equal(container.children.some((child)=>child.tagName==='script'),false);
+});
+
+test('copying the pharmacist-reviewed draft only fills the composer and never invokes send',()=>{
+  const composer={value:'',disabled:false};
+  assert.equal(consoleUI.copyResearchDraftToComposer(CLINICAL_RESEARCH_RESULT,composer),true);
+  assert.equal(composer.value,'ร่างคำตอบที่ต้องตรวจสอบก่อนส่ง');
+  assert.equal(consoleUI.copyResearchDraftToComposer({status:'available',analysis:{}},composer),false);
+  assert.equal(consoleUI.clinicalResearchIsStale(CLINICAL_RESEARCH_RESULT,3),true);
+  assert.equal(consoleUI.clinicalResearchIsStale(CLINICAL_RESEARCH_RESULT,2),false);
+});
+
+test('clinical research failure remains safe and does not disable manual chat',async()=>{
+  const harness=createHarness(async(pathValue)=>{
+    if(pathValue==='/api/pharmacist/consultations/CASE-1')return OPEN_CASE;
+    if(pathValue.includes('/messages?'))return {items:[],nextSequence:0};
+    if(pathValue.endsWith('/clinical-research'))throw Object.assign(new Error('raw provider payload'),{errorCode:'AI_TIMEOUT'});
+    return standardHandler(pathValue);
+  });
+  await harness.session.selectCase('CASE-1');await harness.session.generateClinicalResearch();
+  assert.equal(consoleUI.canMessage(harness.state().selectedCase),true);
+  assert.equal(harness.state().clinicalResearch.errorCode,'AI_TIMEOUT');
+  assert.doesNotMatch(consoleUI.clinicalResearchErrorMessage('AI_TIMEOUT'),/raw provider|AI_TIMEOUT/);
+});
+
 test('known message-send failures map to useful safe Thai states',()=>{
   assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_EXPIRED'),/หมดเวลา/);
   assert.match(consoleUI.messageSendErrorMessage('CONSULTATION_ACCESS_DENIED'),/สิทธิ์/);
@@ -268,9 +339,11 @@ test('known message-send failures map to useful safe Thai states',()=>{
   assert.match(consoleUI.assistantErrorMessage('AI_RATE_LIMIT'),/รอสักครู่/);
 });
 
-test('there is no AI auto-send or automatic copy-to-composer path',()=>{
+test('there is no AI auto-send and draft transfer remains an explicit pharmacist action',()=>{
   assert.doesNotMatch(source,/sendAI|autoSend|finalAnswer|patientResponse|sendToCustomer/);
-  assert.doesNotMatch(html,/Send AI answer|ส่งคำตอบจาก AI|คัดลอก.*ช่องตอบ/);
+  assert.doesNotMatch(html,/Send AI answer|ส่งคำตอบจาก AI/);
+  assert.match(source,/copyResearchDraftToComposer/);
+  assert.match(html,/จะไม่ถูกส่งให้ผู้ใช้โดยอัตโนมัติ/);
   assert.match(html,/เภสัชกรเป็นผู้ตัดสินใจและพิมพ์คำตอบ/);
 });
 
@@ -387,6 +460,8 @@ test('dedicated desktop-first console contains three professional workspace colu
   const css=fs.readFileSync(path.join(__dirname,'..','liff-app','pharmacist','console.css'),'utf8');assert.match(css,/grid-template-columns:minmax\(250px,300px\).*minmax\(420px,1fr\).*minmax\(310px,380px\)/);
   assert.match(css,/@media\(max-width:720px\)/);
   assert.match(css,/min-height:44px/);assert.match(css,/safe-area-inset-bottom/);assert.match(css,/case-card--closed/);assert.match(css,/case-header--closed/);
+  for(const id of ['showClinicalResearchButton','clinicalResearchPanel','clinicalResearchContent','refreshClinicalResearchButton'])assert.match(html,new RegExp(`id="${id}"`));
+  assert.match(css,/clinical-research-content\{[^}]*overflow-y:auto/);
 });
 
 function walkText(element){return [element.textContent,...element.children.flatMap(walkText)].filter(Boolean);}

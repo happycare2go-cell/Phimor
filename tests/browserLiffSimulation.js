@@ -1093,15 +1093,22 @@ async function roleBasedShellJourney(browser) {
 }
 
 async function pharmacistConsoleJourney(browser) {
-  const page=await browser.newPage({viewport:{width:390,height:844}});let contextCalls=0;
+  const page=await browser.newPage({viewport:{width:390,height:844}});let contextCalls=0;let clinicalResearchCalls=0;let messagePostCalls=0;
   await mockBackend(page,async(url,request)=>{
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
     if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
     if(url.pathname==='/api/pharmacist/consultations/active')return {items:[{caseId:'CASE-1',state:'active',waitingOn:'pharmacist',remainingSeconds:3600,effectiveClosed:false}]};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages'&&request.method()==='POST'){messagePostCalls+=1;return {message:{sequence:1,body:'unexpected'}};}
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages')return {items:[],nextSequence:0,hasMore:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/context'){contextCalls+=1;return {status:'available',generatedAt:contextCalls>1?'2026-08-25T02:00:00Z':'2026-08-25T01:00:00Z',contact:{displayName:'ญาติตัวอย่าง'},careProfile:{patientName:'ผู้รับการดูแลตัวอย่าง'},currentMedications:[{name:'Metformin',strength:contextCalls>1?'850 mg':'500 mg',instruction:'หลังอาหาร'}],medicationSnapshot:{snapshotId:contextCalls>1?'S-2':'S-1',versionNo:contextCalls>1?2:1},contextVersion:{medicationSnapshotId:contextCalls>1?'S-2':'S-1',medicationVersionNo:contextCalls>1?2:1},recentMedicationChanges:[{snapshot:{recordedAt:'2026-08-24T01:00:00Z'},sourceLabel:'ครอบครัวบันทึก'}],recentVitals:[{occurredAt:'2026-08-24T08:00:00Z',observations:[{measurementType:'blood_pressure_systolic',numericValue:120,canonicalUnit:'mmHg'},{measurementType:'blood_pressure_diastolic',numericValue:75,canonicalUnit:'mmHg'}]}],upcomingAppointments:[]};}
+    if(url.pathname==='/api/pharmacist/consultations/CASE-Q/clinical-research'&&request.method()==='POST'){
+      clinicalResearchCalls+=1;
+      return {status:'available',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:0,totalMessageCount:0,conversationTruncated:false,analysis:{
+        caseSummary:'ทบทวนข้อมูลยาปัจจุบันและคำถามเรื่องเวลาใช้ยา',recordedFacts:['มีข้อมูลยาปัจจุบันใน Care Profile'],relevantMedicationContext:['Metformin 850 mg หลังอาหาร'],medicationChanges:[],missingInformation:['เวลาที่ใช้ยาจริงล่าสุด'],questionsToAsk:['ใช้ยาครั้งล่าสุดเมื่อใด'],keyClinicalIssues:['ควรยืนยันวิธีใช้จากฉลากหรือใบสั่งยา'],safetyConsiderations:[],interactionReview:[{drugs:['Metformin'],finding:'ยังประเมินปฏิกิริยาระหว่างยาไม่ได้ครบ',limitation:'ข้อมูลยาร่วมอาจไม่ครบ'}],guidelineReview:[{topic:'ความปลอดภัยด้านยา',finding:'ควรตรวจสอบกับข้อมูลยาที่ได้รับการยืนยัน',limitation:'ข้อมูลยังไม่ครบ'}],pharmacistRecommendations:['เภสัชกรควรตรวจสอบข้อมูลก่อนตอบ'],escalationConsiderations:[],research:{performed:true,sources:[{title:'Medication safety overview',url:'https://www.who.int/initiatives/medication-without-harm',domain:'who.int'}],limitations:['ข้อมูลจากการสนทนาอาจไม่ครบ']},draftResponseForPharmacistReview:'ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม เพื่อให้เภสัชกรตรวจสอบข้อมูลได้ครบถ้วนค่ะ',disclaimer:'เภสัชกรเป็นผู้ตัดสินใจและต้องตรวจสอบก่อนส่ง',
+      },usage:{inputTokens:60,outputTokens:25,totalTokens:85}};
+    }
     return {status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await page.setContent(localHtml('pharmacist'),{waitUntil:'domcontentloaded'});
@@ -1116,14 +1123,39 @@ async function pharmacistConsoleJourney(browser) {
   await page.waitForFunction(()=>document.querySelector('#caseHeader').textContent.includes('ผู้รับการดูแลตัวอย่าง'));
   assert.match(await page.locator('#caseHeader').textContent(),/เหลือเวลา/);
   assert.strictEqual(await page.locator('#messageComposer').isEnabled(),true);
-  assert.match(await page.locator('.ai-boundary').textContent(),/เภสัชกรเป็นผู้ตัดสินใจ/);
+  assert.match(await page.locator('#assistantPanel .ai-boundary').textContent(),/เภสัชกรเป็นผู้ตัดสินใจ/);
   await page.getByRole('button',{name:/ข้อมูลเคส/}).click();
   assert.match(await page.locator('#caseContext').textContent(),/Metformin/);
   assert.match(await page.locator('#caseContext').textContent(),/120 mmHg.*75 mmHg/);
   assert.match(await page.locator('#caseContext').textContent(),/การเปลี่ยนแปลงยาล่าสุด/);
   await page.locator('#refreshCaseContextButton').click();
   await page.waitForFunction(()=>document.querySelector('#caseContext').textContent.includes('850 mg'));
-  assert.ok(contextCalls>=2);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  assert.ok(contextCalls>=2);
+  await page.locator('#closeCaseContextButton').click();
+  const [researchResponse]=await Promise.all([
+    page.waitForResponse((response)=>response.url().includes('/api/pharmacist/consultations/CASE-Q/clinical-research')),
+    page.getByRole('button',{name:/วิเคราะห์บทสนทนา/}).click(),
+  ]);
+  assert.equal((await researchResponse.json()).status,'available');
+  await page.waitForFunction(()=>!document.querySelector('#clinicalResearchPanel').hidden&&document.querySelector('#clinicalResearchContent').textContent.includes('ทบทวนข้อมูลยาปัจจุบัน'));
+  assert.equal(clinicalResearchCalls,1);
+  assert.match(await page.locator('#clinicalResearchContent').textContent(),/Medication safety overview/);
+  assert.match(await page.locator('#clinicalResearchContent').textContent(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุด/);
+  const researchLayout=await page.evaluate(()=>{
+    const panel=document.querySelector('#clinicalResearchPanel');const content=document.querySelector('#clinicalResearchContent');const link=content.querySelector('a');const copy=content.querySelector('.clinical-research-copy');
+    const panelRect=panel.getBoundingClientRect();const copyRect=copy.getBoundingClientRect();const linkRect=link.getBoundingClientRect();
+    content.scrollTop=content.scrollHeight;
+    return {panelTop:panelRect.top,panelBottom:panelRect.bottom,viewportHeight:window.innerHeight,overflowY:getComputedStyle(content).overflowY,linkHeight:linkRect.height,copyHeight:copyRect.height,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};
+  });
+  assert.ok(researchLayout.panelTop>=0&&researchLayout.panelBottom<=researchLayout.viewportHeight);
+  assert.equal(researchLayout.overflowY,'auto');
+  assert.ok(researchLayout.linkHeight>=44);assert.ok(researchLayout.copyHeight>=44);
+  assert.equal(researchLayout.horizontalOverflow,false);
+  await page.getByRole('button',{name:'นำร่างไปใส่ช่องตอบ'}).click();
+  assert.equal(await page.locator('#clinicalResearchPanel').isHidden(),true);
+  assert.match(await page.locator('#messageComposer').inputValue(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุด/);
+  assert.equal(messagePostCalls,0);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
   await page.close();
 }
 

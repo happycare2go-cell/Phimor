@@ -51,6 +51,7 @@
         <div id="chatRoomActions" class="chat-room-actions" hidden>
           <button id="showCaseContextButton" class="secondary-button" type="button">ข้อมูลเคส</button>
           <button id="showAssistantButton" class="secondary-button" type="button">ผู้ช่วยเภสัชกร</button>
+          <button id="showClinicalResearchButton" class="primary-button" type="button">✨ วิเคราะห์บทสนทนา</button>
         </div>
         <div id="chatInitialQuestion" class="chat-initial-question" hidden></div>
         <button id="loadOlderMessagesButton" class="load-older-button" type="button" hidden>โหลดข้อความก่อนหน้า</button>
@@ -81,6 +82,20 @@
         <div class="assistant-actions"><button id="generateAssistantButton" class="primary-button" type="button" disabled>สร้างสรุปช่วยตอบ</button><button id="refreshAssistantButton" class="secondary-button" type="button" disabled hidden>รีเฟรชข้อมูล</button></div>
         <div class="ai-boundary" role="note">AI ช่วยสรุปและเสนอประเด็นประกอบการพิจารณาเท่านั้น เภสัชกรเป็นผู้ตัดสินใจและพิมพ์คำตอบให้ผู้ใช้เอง</div>
         <div id="assistantContent" class="assistant-content"><p class="empty-state">เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ</p></div>
+      </aside>
+
+      <aside id="clinicalResearchPanel" class="support-panel clinical-research-panel" aria-label="การวิเคราะห์บทสนทนาสำหรับเภสัชกร" hidden>
+        <div class="clinical-research-heading support-panel__heading">
+          <div><span class="ai-label">PRIVATE · PHARMACIST REVIEW ONLY</span><h2>วิเคราะห์บทสนทนา</h2></div>
+          <button id="closeClinicalResearchButton" class="icon-button" type="button">ปิด</button>
+        </div>
+        <div class="clinical-research-actions">
+          <button id="refreshClinicalResearchButton" class="secondary-button" type="button" disabled>วิเคราะห์ใหม่</button>
+        </div>
+        <div class="ai-boundary" role="note">ข้อมูลนี้เป็นร่างช่วยทบทวนส่วนตัวสำหรับเภสัชกร ไม่ใช่คำสั่งรักษา และจะไม่ถูกส่งให้ผู้ใช้โดยอัตโนมัติ</div>
+        <div id="clinicalResearchContent" class="clinical-research-content">
+          <p class="empty-state">กด “วิเคราะห์บทสนทนา” เมื่อเภสัชกรต้องการให้ระบบช่วยทบทวนข้อมูล</p>
+        </div>
       </aside>
     </section>
     <div id="statusLive" class="status-live" role="status" aria-live="polite"></div>
