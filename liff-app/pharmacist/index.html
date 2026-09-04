@@ -96,12 +96,12 @@
             <p id="clinicalResearchCapabilityMessage" class="clinical-research-capability">กำลังตรวจสอบสิทธิ์การใช้งาน…</p>
             <div id="clinicalResearchDeidentifiedFields" hidden>
               <label for="clinicalResearchDeidentifiedSummary">บริบทเคสที่ไม่ระบุตัวตน</label>
-              <p id="clinicalResearchDeidentifiedSummaryHelp" class="clinical-research-helper">ใส่เฉพาะข้อมูลทางคลินิกที่จำเป็น โดยตัดชื่อ เบอร์โทร ที่อยู่ วันเกิด รหัสผู้ป่วย รหัสเคส และข้อมูลที่ระบุตัวบุคคลออก</p>
+              <p id="clinicalResearchDeidentifiedSummaryHelp" class="clinical-research-helper">เภสัชกรต้องตัดชื่อ เบอร์โทร ที่อยู่ วันเกิด รหัสผู้ป่วย รหัสเคส และข้อมูลที่ระบุตัวบุคคลออกก่อนกรอก พี่หมอตรวจรูปแบบตัวระบุที่พบบ่อยเป็นการป้องกันเสริม แต่ไม่สามารถรับประกันการทำให้ข้อความอิสระไม่ระบุตัวตนได้ครบทุกกรณี</p>
               <textarea id="clinicalResearchDeidentifiedSummary" maxlength="6000" rows="7" aria-describedby="clinicalResearchDeidentifiedSummaryHelp" placeholder="สรุปเฉพาะบริบททางคลินิกที่ตรวจแล้วว่าไม่ระบุตัวตน"></textarea>
-              <label class="clinical-research-check"><input id="clinicalResearchPrivacyReviewed" type="checkbox"> ฉันตรวจแล้วว่าสรุปนี้ไม่มีข้อมูลที่ระบุตัวบุคคลโดยตรง</label>
+              <label class="clinical-research-check"><input id="clinicalResearchPrivacyReviewed" type="checkbox"> ฉันตัดข้อมูลระบุตัวบุคคลออกและตรวจข้อความนี้แล้ว</label>
             </div>
             <label for="clinicalResearchFocus">ต้องการให้พี่หมอค้นคว้าประเด็นใด?</label>
-            <p id="clinicalResearchFocusHelp" class="clinical-research-helper">ระบุคำถามหรือประเด็นที่ต้องการหลักฐานเพิ่มเติม เช่น ข้อควรพิจารณาเมื่อใช้ amlodipine ร่วมกับ simvastatin</p>
+            <p id="clinicalResearchFocusHelp" class="clinical-research-helper">ระบุเฉพาะคำถามทางคลินิกโดยไม่ใส่ชื่อ เบอร์ รหัสเคส หรือข้อมูลระบุตัวบุคคล เช่น ข้อควรพิจารณาเมื่อใช้ amlodipine ร่วมกับ simvastatin</p>
             <textarea id="clinicalResearchFocus" maxlength="2000" rows="4" aria-describedby="clinicalResearchFocusHelp" placeholder="ระบุประเด็นที่ต้องการค้นหลักฐานเพิ่มเติม"></textarea>
             <label id="clinicalResearchAcknowledgmentLabel" class="clinical-research-check" hidden><input id="clinicalResearchAcknowledgment" type="checkbox"> ฉันเข้าใจว่าผลลัพธ์ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา และจะตรวจข้อมูล แหล่งอ้างอิง และร่างคำตอบก่อนใช้</label>
             <button id="runClinicalResearchButton" class="primary-button" type="button" disabled>ค้นหลักฐานเพิ่มเติม</button>

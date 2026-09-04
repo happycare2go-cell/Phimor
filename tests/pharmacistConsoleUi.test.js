@@ -314,6 +314,15 @@ test('controlled-live capability uses production wording and requires no manual 
 test('deidentified capability explicitly excludes automatic conversation and Care Profile context',()=>{
   const message=consoleUI.clinicalResearchCapabilityMessage({status:'available',mode:'deidentified_pilot'});
   assert.match(message,/ไม่อ่านบทสนทนา/);assert.match(message,/ไม่ดึง Care Profile อัตโนมัติ/);
+  assert.match(message,/เภสัชกรต้องตัดข้อมูลระบุตัวบุคคล/);
+  assert.match(message,/ไม่รับประกัน/);
+});
+
+test('deidentified form states pharmacist responsibility and common-pattern validation limits',()=>{
+  assert.match(html,/เภสัชกรต้องตัดชื่อ/);
+  assert.match(html,/ตรวจรูปแบบตัวระบุที่พบบ่อย/);
+  assert.match(html,/ไม่สามารถรับประกัน/);
+  assert.match(html,/ระบุเฉพาะคำถามทางคลินิกโดยไม่ใส่ชื่อ/);
 });
 
 test('clinical research panel renders truncation, stale state, citations and private draft safely',()=>{

@@ -34,15 +34,19 @@ test('privacy gate drops unsafe topic rather than sending it to web research', (
   assert.doesNotMatch(JSON.stringify(result.acceptedTopics), /CP-PRIVATE|ผู้ป่วย/);
 });
 
-test('research focus is trimmed, bounded, and rejects direct identifiers in deidentified mode',()=>{
+test('research focus is trimmed, bounded, and rejects common direct identifiers in every mode',()=>{
   assert.deepStrictEqual(validateResearchFocus('  หลักฐานการใช้ amlodipine ร่วมกับ simvastatin  ',{enforcePrivacy:true}),{
     ok:true,researchFocus:'หลักฐานการใช้ amlodipine ร่วมกับ simvastatin',
   });
   assert.equal(validateResearchFocus('',{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_REQUIRED');
   assert.equal(validateResearchFocus('สั้น',{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_INVALID');
   assert.equal(validateResearchFocus('x'.repeat(MAX_RESEARCH_FOCUS_CHARS+1),{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_INVALID');
-  for(const value of ['ตรวจสอบเคส CASE-PRIVATE','ข้อมูลของ patient@example.com','ข้อมูลของ 081-234-5678']){
-    assert.equal(validateResearchFocus(value,{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED');
+  for(const value of [
+    'ตรวจสอบเคส CASE-PRIVATE','ข้อมูลของ patient@example.com','ข้อมูลของ 081-234-5678',
+    'ชื่อผู้ป่วย: สมชาย ใจดี ใช้ amlodipine','เลขบัตรประชาชน 1234567890123',
+    'ที่อยู่: 12 ถนนตัวอย่าง','DOB: 2000-01-01',
+  ]){
+    assert.equal(validateResearchFocus(value).errorCode,'CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED');
   }
 });
 

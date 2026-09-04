@@ -80,7 +80,7 @@ function validateDeidentifiedPilotSummary(value) {
   return Object.freeze({ ok:true, summary });
 }
 
-function validateResearchFocus(value, { enforcePrivacy = false } = {}) {
+function validateResearchFocus(value, { enforcePrivacy = true } = {}) {
   if (typeof value !== 'string' || !value.trim()) {
     return Object.freeze({ ok:false, errorCode:'CLINICAL_RESEARCH_FOCUS_REQUIRED' });
   }

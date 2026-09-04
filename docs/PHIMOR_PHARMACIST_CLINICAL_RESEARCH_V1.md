@@ -18,7 +18,7 @@ minutes and is configurable within safe bounds through
 ## Operating modes
 
 - `disabled`: no research provider request; safe unavailable state.
-- `deidentified_pilot`: the assigned pharmacist supplies and reviews a de-identified summary. The research path performs only pharmacist/case authorization and does not automatically load Care Profile or clinical-domain context into the provider request.
+- `deidentified_pilot`: the assigned pharmacist is responsible for removing identifiers before supplying and reviewing a de-identified summary. PHIMOR rejects common detectable identifier patterns as an additional safeguard; it does not guarantee comprehensive de-identification of arbitrary free text. The research path performs only pharmacist/case authorization and does not automatically load Care Profile or clinical-domain context into the provider request.
 - `controlled_live`: uses the existing bounded, authorized Care Profile and consultation context. It requires explicit pharmacist action, acknowledgment, and a matching dedicated controlled-live allowlist entry, but no manual de-identified summary. An empty allowlist denies all.
 
 Both non-disabled modes require explicit pharmacist acknowledgment on each
@@ -44,7 +44,7 @@ The response records the analyzed message sequence, analyzed/total message count
 ## Planner → de-identified research → synthesis
 
 1. **Private planner.** The planner receives the authorized clinical context and returns at most four research topics under a strict local schema.
-2. **Privacy gate.** Every proposed question/search term is normalized and checked for LINE-style IDs, internal case/profile/resident/center identifiers, email, phone numbers, patient/relative names, and copied free-form conversation text. A rejected topic is not searched.
+2. **Privacy gate.** The pharmacist's research focus is rejected when common explicit identifier patterns are detected in either operating mode. Every proposed question/search term is then normalized and checked for LINE-style IDs, internal case/profile/resident/center identifiers, email, phone numbers, known patient/relative terms, and copied free-form conversation text. A rejected topic is not searched. This layered pattern check does not claim to identify every natural-language Thai name.
 3. **External evidence research.** Only the accepted, generic drug/class/condition/interaction/guideline topic plan is sent to web search. The full clinical context, conversation, patient facts, and identifiers are never included in this request. Search is bounded to at most four calls, country `TH`, and the configured domain allowlist.
 4. **Private synthesis.** The final synthesis receives the authorized clinical context plus only validated findings and accepted sources. It produces structured analysis and a pharmacist-review draft; it does not send or persist that content as a clinical record.
 

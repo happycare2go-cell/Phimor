@@ -213,6 +213,10 @@ test('research focus is required, bounded, and privacy-checked before context or
   await assert.rejects(controlled({
     caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',safetyAcknowledged:true,researchFocus:'x'.repeat(2001),
   }),(error)=>error.code==='CLINICAL_RESEARCH_FOCUS_INVALID');
+  await assert.rejects(controlled({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',safetyAcknowledged:true,
+    researchFocus:'ชื่อผู้ป่วย: สมชาย ใจดี ต้องการตรวจสอบ amlodipine',
+  }),(error)=>error.code==='CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED');
   const deidentified=createPharmacistClinicalResearchService({
     flags:{consultation:{clinicalResearch:true}},
     pilotConfig:{emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']},
@@ -226,6 +230,19 @@ test('research focus is required, bounded, and privacy-checked before context or
     researchFocus:'ตรวจสอบยาสำหรับ CASE-PRIVATE',
   }),(error)=>error.code==='CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED');
   assert.equal(contextCalls,0);assert.equal(providerCalls,0);assert.equal(accessCalls,0);
+});
+
+test('raw research focus and private context never enter the web-search request',async()=>{
+  const calls=[];
+  const focus='ประเมินหลักฐานเรื่องความเสี่ยงเลือดออกของ apixaban ร่วมกับ NSAIDs';
+  const result=await service({provider:provider({inspect:(options)=>calls.push(options)})})({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',researchFocus:focus,
+  });
+  assert.equal(result.status,'available');
+  const webCall=calls.find((item)=>item.task==='pharmacist_clinical_web_evidence');
+  const webRequest=JSON.stringify({context:webCall.context,input:webCall.input});
+  assert.equal(webRequest.includes(focus),false);
+  assert.doesNotMatch(webRequest,/CASE-PRIVATE|CP-PRIVATE|U-PRIVATE|ฉันใช้ Drug A และ Drug B/);
 });
 
 test('controlled live requires rollout membership, loads authorized context, and does not require a manual summary', async () => {

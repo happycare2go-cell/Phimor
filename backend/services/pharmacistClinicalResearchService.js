@@ -120,9 +120,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     }
     const access = clinicalResearchAccess(pilotConfig, pharmacistLineUserId);
     if (!access.allowed) throw new ConsultationDomainError('CLINICAL_RESEARCH_NOT_ALLOWED', 403);
-    const focusValidation = validateResearchFocus(researchFocus, {
-      enforcePrivacy:pilotConfig.mode === CLINICAL_RESEARCH_MODES.DEIDENTIFIED_PILOT,
-    });
+    const focusValidation = validateResearchFocus(researchFocus, { enforcePrivacy:true });
     if (!focusValidation.ok) throw new ConsultationDomainError(focusValidation.errorCode, 400);
     const safeResearchFocus = focusValidation.researchFocus;
     if (safetyAcknowledged !== true) throw new ConsultationDomainError('CLINICAL_RESEARCH_ACK_REQUIRED', 400);
