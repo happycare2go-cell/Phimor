@@ -25,10 +25,18 @@ function createPlusPaymentEntitlementService({
     }
     const paidAt = new Date(event.paidAt);
     if (Number.isNaN(paidAt.getTime())) throw new PlusPaymentError('INVALID_PAYMENT_TIME');
+    const candidate = await repository.findOrder(event.orderId);
+    if (!candidate) throw new PlusPaymentError('PLUS_ORDER_NOT_FOUND', 404);
+    if (typeof candidate.subject_line_user_id !== 'string' || !candidate.subject_line_user_id) {
+      throw new PlusPaymentError('PLUS_ORDER_SUBJECT_INVALID', 409);
+    }
 
-    return transaction(`plus-payment:${event.orderId}`, async () => {
+    return transaction(`plus-entitlement:${candidate.subject_line_user_id}`, async () => {
       let order = await repository.findOrderForUpdate(event.orderId);
       if (!order) throw new PlusPaymentError('PLUS_ORDER_NOT_FOUND', 404);
+      if (order.subject_line_user_id !== candidate.subject_line_user_id) {
+        throw new PlusPaymentError('PLUS_ORDER_SUBJECT_MISMATCH', 409);
+      }
       assertFixedPlusPurchase({ planId: order.plan_id, amountMinor: order.amount_minor, currency: order.currency });
       if (order.provider && order.provider !== event.provider) throw new PlusPaymentError('PAYMENT_PROVIDER_MISMATCH', 409);
       if (order.provider_checkout_id && order.provider_checkout_id !== event.providerCheckoutId) {

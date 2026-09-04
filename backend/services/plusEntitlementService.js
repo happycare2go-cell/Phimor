@@ -1,6 +1,7 @@
 const { databaseQuery } = require('../db');
 const { loadFeatureFlags } = require('../config/featureFlags');
 const { authorizeCareProfileAccess } = require('./careProfileAuthorizationService');
+const { logOperationalError } = require('../utils/safeOperationalError');
 
 const PLUS_FEATURES = Object.freeze([
   'care_profile_summary', 'medication_summary', 'appointment_summary', 'doctor_visit_preparation',
@@ -55,7 +56,10 @@ function evaluateRecord(record, { at, internalOnly }) {
   return { allowed: true, reasonCode: null };
 }
 
-async function getPlusEntitlement({ lineUserId, at = new Date(), flags = loadFeatureFlags(), queryFn = databaseQuery } = {}) {
+async function getPlusEntitlement({
+  lineUserId, at = new Date(), flags = loadFeatureFlags(), queryFn = databaseQuery,
+  operationalLogger = console.error,
+} = {}) {
   if (!lineUserId || typeof lineUserId !== 'string') return basicResult('UNAUTHENTICATED');
   if (!flags.plus.enabled) return basicResult('PLUS_DISABLED');
   const instant = at instanceof Date ? at : new Date(at);
@@ -70,6 +74,10 @@ async function getPlusEntitlement({ lineUserId, at = new Date(), flags = loadFea
       [lineUserId]
     );
   } catch (_) {
+    logOperationalError(operationalLogger, {
+      event:'plus_entitlement_lookup_failed', errorCode:'PLUS_ENTITLEMENT_LOOKUP_FAILED',
+      routeCategory:'plus_entitlement',
+    });
     return basicResult('ENTITLEMENT_UNAVAILABLE');
   }
   const records = Array.isArray(result?.rows) ? result.rows : [];
@@ -90,7 +98,10 @@ async function getPlusEntitlement({ lineUserId, at = new Date(), flags = loadFea
   return basicResult(firstDenied?.reasonCode || 'ENTITLEMENT_INACTIVE');
 }
 
-async function requirePlusFeature({ lineUserId, feature, capability = null, at, flags = loadFeatureFlags(), queryFn = databaseQuery } = {}) {
+async function requirePlusFeature({
+  lineUserId, feature, capability = null, at, flags = loadFeatureFlags(), queryFn = databaseQuery,
+  operationalLogger = console.error,
+} = {}) {
   const definition = capability ? PLUS_CAPABILITY_REGISTRY[capability] : null;
   if (capability && (!definition || definition.status !== 'LIVE')) {
     throw new PlusEntitlementError('PLUS_CAPABILITY_NOT_AVAILABLE');
@@ -99,7 +110,7 @@ async function requirePlusFeature({ lineUserId, feature, capability = null, at, 
   if (!PLUS_FEATURES.includes(feature)) throw new PlusEntitlementError('PLUS_FEATURE_NOT_SUPPORTED');
   const featureFlag = FEATURE_FLAG_KEYS[feature];
   if (featureFlag && !flags.plus[featureFlag]) throw new PlusEntitlementError('PLUS_FEATURE_DISABLED');
-  const entitlement = await getPlusEntitlement({ lineUserId, at, flags, queryFn });
+  const entitlement = await getPlusEntitlement({ lineUserId, at, flags, queryFn, operationalLogger });
   if (!entitlement.allowed) throw new PlusEntitlementError(entitlement.reasonCode);
   if (!entitlement.features.includes('*') && !entitlement.features.includes(feature)) {
     throw new PlusEntitlementError('PLUS_FEATURE_NOT_INCLUDED');
@@ -111,6 +122,7 @@ async function canUseCapability({
   lineUserId, careProfileId = null, capability, at,
   flags = loadFeatureFlags(), queryFn = databaseQuery,
   authorize = authorizeCareProfileAccess,
+  operationalLogger = console.error,
 } = {}) {
   const definition = PLUS_CAPABILITY_REGISTRY[capability];
   if (!definition || definition.status !== 'LIVE') {
@@ -125,7 +137,7 @@ async function canUseCapability({
   }
   try {
     const entitlement = await requirePlusFeature({
-      lineUserId, capability, at, flags, queryFn,
+      lineUserId, capability, at, flags, queryFn, operationalLogger,
     });
     return Object.freeze({ allowed: true, capability, entitlement });
   } catch (error) {

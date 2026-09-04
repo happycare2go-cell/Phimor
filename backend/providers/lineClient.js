@@ -145,27 +145,59 @@ async function getGroupMemberProfile(groupId, userId) {
   }
 }
 
-async function listGroupMemberUserIds(groupId) {
-  if (process.env.NODE_ENV === 'test') return { available: false, userIds: [] };
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-  if (!token) return { available: false, userIds: [] };
-  const userIds = [];
-  let start = null;
-  try {
-    do {
-      const suffix = start ? `?start=${encodeURIComponent(start)}` : '';
-      const response = await fetch(`https://api.line.me/v2/bot/group/${encodeURIComponent(groupId)}/members/ids${suffix}`, {
-        headers: { Authorization: `Bearer ${token}` },
+function lineGroupMemberFetchTimeout(value) {
+  const parsed=Number.parseInt(String(value ?? ''),10);
+  return Number.isFinite(parsed) ? Math.max(250,Math.min(parsed,15000)) : 5000;
+}
+
+function createGroupMemberUserIdLister({
+  fetchImpl=global.fetch, env=process.env, setTimer=setTimeout, clearTimer=clearTimeout,
+  operationalLogger=console.error,
+}={}) {
+  return async function listGroupMembers(groupId) {
+    const token=env.LINE_CHANNEL_ACCESS_TOKEN;
+    if (!token || typeof fetchImpl!=='function') return { available:false,userIds:[] };
+    const userIds=[];
+    let start=null;
+    let pages=0;
+    const controller=new AbortController();
+    const timeoutMs=lineGroupMemberFetchTimeout(env.LINE_GROUP_MEMBER_FETCH_TIMEOUT_MS);
+    const timer=setTimer(()=>controller.abort(),timeoutMs);
+    try {
+      do {
+        pages+=1;
+        if (pages>100) {
+          return { available:false,userIds:[],errorCode:'LINE_GROUP_MEMBER_PAGE_LIMIT' };
+        }
+        const suffix=start?`?start=${encodeURIComponent(start)}`:'';
+        const response=await fetchImpl(`https://api.line.me/v2/bot/group/${encodeURIComponent(groupId)}/members/ids${suffix}`,{
+          headers:{Authorization:`Bearer ${token}`}, signal:controller.signal,
+        });
+        if (!response.ok) {
+          return {available:false,userIds:[],status:providerStatus({status:response.status}),errorCode:'LINE_GROUP_MEMBER_HTTP_ERROR'};
+        }
+        const page=await response.json();
+        userIds.push(...(Array.isArray(page?.memberIds)?page.memberIds:[]));
+        start=typeof page?.next==='string'&&page.next?page.next:null;
+      } while(start);
+      return {available:true,userIds:[...new Set(userIds)]};
+    } catch(error) {
+      const errorCode=controller.signal.aborted||error?.name==='AbortError'
+        ?'LINE_GROUP_MEMBER_TIMEOUT':'LINE_GROUP_MEMBER_UNAVAILABLE';
+      logOperationalError(operationalLogger,{
+        event:'line_group_member_list_failed',errorCode,routeCategory:'line_provider',
       });
-      if (!response.ok) return { available: false, userIds: [], status: response.status };
-      const page = await response.json();
-      userIds.push(...(page.memberIds || []));
-      start = page.next || null;
-    } while (start);
-    return { available: true, userIds: [...new Set(userIds)] };
-  } catch (err) {
-    return { available: false, userIds: [], error: err.message };
-  }
+      return {available:false,userIds:[],errorCode};
+    } finally {
+      clearTimer(timer);
+    }
+  };
+}
+
+const listGroupMembersWithTimeout=createGroupMemberUserIdLister();
+async function listGroupMemberUserIds(groupId) {
+  if (process.env.NODE_ENV==='test') return {available:false,userIds:[]};
+  return listGroupMembersWithTimeout(groupId);
 }
 
 function clearSentLog() { sentLog.splice(0, sentLog.length); }
@@ -184,4 +216,5 @@ module.exports = {
   clearSentLog, getSentLog,
   createRichMenu, uploadRichMenuImage, setDefaultRichMenu, linkRichMenuToUser, unlinkRichMenuFromUser,
   createPushMessage, createVerifiedProfileLookup, LineProfileVerificationError,
+  lineGroupMemberFetchTimeout, createGroupMemberUserIdLister,
 };

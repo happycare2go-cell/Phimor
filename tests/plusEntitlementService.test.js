@@ -131,10 +131,16 @@ test('query is parameterized by authenticated LINE user', async () => {
 });
 
 test('entitlement database failure denies safely without exposing database error', async () => {
+  const log=[];
   await assert.rejects(requirePlusFeature({
     lineUserId: 'U-1', feature: 'care_profile_summary', at: NOW, flags: flags(),
     queryFn: async () => { throw new Error('secret database connection details'); },
+    operationalLogger:(...items)=>log.push(items.join(' ')),
   }), (error) => error.code === 'ENTITLEMENT_UNAVAILABLE' && !error.message.includes('database'));
+  assert.equal(log.length,1);
+  assert.match(log[0],/plus_entitlement_lookup_failed/);
+  assert.match(log[0],/PLUS_ENTITLEMENT_LOOKUP_FAILED/);
+  assert.doesNotMatch(log[0],/U-1|secret database|connection details|subject_id|care.profile/i);
 });
 
 test('central capability registry exposes only implemented Plus intelligence', async () => {

@@ -60,6 +60,7 @@ function entitlementRepository({ currentExpiresAt = null, alreadyGranted = false
   let entitlement = alreadyGranted ? { entitlement_id: 'PLUSENT-1', starts_at: '2026-08-28T00:00:00Z', expires_at: '2026-09-27T00:00:00Z' } : null;
   return {
     get order() { return order; }, get entitlement() { return entitlement; },
+    async findOrder() { return order; },
     async findOrderForUpdate() { return order; },
     async markPaid(id, paidAt) { order = { ...order, status: 'paid', paid_at: paidAt, fulfillment_status: 'pending' }; return order; },
     async findLatestEntitlementForUpdate() { return currentExpiresAt ? { expires_at: currentExpiresAt } : null; },
@@ -79,6 +80,54 @@ test('early renewal starts at current expiry and adds exactly 30 days', async ()
   assert.equal(result.entitlement.expires_at, '2026-10-20T00:00:00.000Z');
 });
 
+function keyedTransaction() {
+  const tails=new Map();
+  return async (key,fn)=>{
+    const previous=tails.get(key)||Promise.resolve();
+    let release;
+    const current=new Promise((resolve)=>{release=resolve;});
+    tails.set(key,current);
+    await previous;
+    try{return await fn();}finally{release();if(tails.get(key)===current)tails.delete(key);}
+  };
+}
+
+test('late payment for an expired order and a newer paid order stack entitlement time for one subject',async()=>{
+  const paidAt='2026-09-10T00:00:00.000Z';
+  const orders=new Map([
+    ['PLUSORD-OLD',{order_id:'PLUSORD-OLD',subject_line_user_id:'U-1',plan_id:'plus_30d_v1',amount_minor:5900,currency:'THB',provider:'omise',provider_checkout_id:'checkout-old',status:'expired',fulfillment_status:'pending'}],
+    ['PLUSORD-NEW',{order_id:'PLUSORD-NEW',subject_line_user_id:'U-1',plan_id:'plus_30d_v1',amount_minor:5900,currency:'THB',provider:'omise',provider_checkout_id:'checkout-new',status:'payment_pending',fulfillment_status:'pending'}],
+  ]);
+  const entitlements=[];
+  const repository={
+    async findOrder(id){return orders.get(id);},async findOrderForUpdate(id){return orders.get(id);},
+    async markPaid(id,value){const row={...orders.get(id),status:'paid',paid_at:value};orders.set(id,row);return row;},
+    async findLatestEntitlementForUpdate(){
+      const snapshot=[...entitlements];
+      await new Promise((resolve)=>setImmediate(resolve));
+      return snapshot.sort((a,b)=>new Date(b.expires_at)-new Date(a.expires_at))[0]||null;
+    },
+    async createPaymentEntitlement(record){
+      const row={...record};entitlements.push(row);return {entitlement:row,created:true};
+    },
+    async markFulfilled(id,entitlement){const row={...orders.get(id),fulfillment_status:'granted',entitlement_id:entitlement.entitlement_id,entitlement_start_at:entitlement.starts_at,entitlement_end_at:entitlement.expires_at};orders.set(id,row);return row;},
+    async findEntitlementBySourceOrder(id){return entitlements.find((item)=>item.source_order_id===id)||null;},
+  };
+  const service=createPlusPaymentEntitlementService({
+    repository,transaction:keyedTransaction(),entitlementId:(id)=>`ENT-${id}`,
+  });
+  const event=(id,checkout)=>({...paidEvent(paidAt),orderId:id,providerCheckoutId:checkout});
+  await Promise.all([
+    service.grantVerifiedPayment(event('PLUSORD-OLD','checkout-old')),
+    service.grantVerifiedPayment(event('PLUSORD-NEW','checkout-new')),
+  ]);
+  const periods=entitlements.map((item)=>[item.starts_at,item.expires_at]).sort();
+  assert.deepEqual(periods,[
+    ['2026-09-10T00:00:00.000Z','2026-10-10T00:00:00.000Z'],
+    ['2026-10-10T00:00:00.000Z','2026-11-09T00:00:00.000Z'],
+  ]);
+});
+
 test('expired renewal starts at verified payment time and adds exactly 30 days', async () => {
   const repository = entitlementRepository({ currentExpiresAt: '2026-09-01T00:00:00Z' });
   const service = createPlusPaymentEntitlementService({ repository, transaction: (key, fn) => fn(), entitlementId: () => 'PLUSENT-NEW' });
@@ -93,6 +142,26 @@ test('verified payment replay cannot extend entitlement twice', async () => {
   const result = await service.grantVerifiedPayment(paidEvent('2026-08-28T00:00:00Z'));
   assert.equal(result.duplicate, true);
   assert.equal(result.entitlement.expires_at, '2026-09-27T00:00:00Z');
+});
+
+test('concurrent provider events for the same Plus order grant exactly one entitlement',async()=>{
+  const repository=entitlementRepository();
+  let creates=0;
+  const create=repository.createPaymentEntitlement.bind(repository);
+  repository.createPaymentEntitlement=async(record)=>{creates+=1;return create(record);};
+  const lockKeys=[];
+  const transaction=keyedTransaction();
+  const service=createPlusPaymentEntitlementService({
+    repository,transaction:(key,fn)=>{lockKeys.push(key);return transaction(key,fn);},
+    entitlementId:()=>`PLUSENT-${creates+1}`,
+  });
+  const [first,second]=await Promise.all([
+    service.grantVerifiedPayment(paidEvent('2026-08-28T00:00:00Z')),
+    service.grantVerifiedPayment(paidEvent('2026-08-28T00:00:00Z')),
+  ]);
+  assert.equal(creates,1);
+  assert.equal([first,second].filter((item)=>item.duplicate).length,1);
+  assert.deepEqual(lockKeys,['plus-entitlement:U-1','plus-entitlement:U-1']);
 });
 
 test('redirect/unverified event cannot grant Plus', async () => {
