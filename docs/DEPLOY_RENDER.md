@@ -41,6 +41,12 @@ explicit non-secret values. In particular:
 - `LIFF_ID_SYSTEM_ADMIN` for the full production operations surface; and
 - `LIFF_ID_PHARMACIST` when `CONSULTATION_ENABLED=true`.
 
+Paid Plus must additionally have an owner-approved reversal policy and
+`PLUS_PAYMENT_REVERSAL_MODE=manual_review` before
+`PLUS_PAYMENT_ENABLED=true`. The readiness gate rejects missing or unknown
+reversal modes only while payment is enabled; it does not activate payment or
+perform an entitlement adjustment.
+
 No secret value belongs in Git, LIFF/browser code, screenshots, normal LINE
 chat, or application logs.
 

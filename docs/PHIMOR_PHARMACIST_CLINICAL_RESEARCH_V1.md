@@ -41,6 +41,13 @@ It builds one bounded snapshot containing:
 
 The response records the analyzed message sequence, analyzed/total message counts, context timestamp, and truncation state. The console marks an analysis stale when newer messages exist and offers explicit re-analysis. A case switch clears the private panel and ignores stale in-flight results.
 
+`recordedFacts` is a structured AI output category whose statements must match
+the authorized context and permitted source category. Context-aware validation
+rejects inconsistent medication facts before UI projection, including after a
+provider adapter returns. This grounding control does not turn generated prose
+into an authoritative database record or prove every clinical interpretation;
+the pharmacist must still compare the result with the cited PHIMOR source.
+
 ## Planner → de-identified research → synthesis
 
 1. **Private planner.** The planner receives the authorized clinical context and returns at most four research topics under a strict local schema.

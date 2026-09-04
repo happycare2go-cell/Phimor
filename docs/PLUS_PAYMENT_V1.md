@@ -46,6 +46,15 @@ Omise is reused through the existing provider adapter. `metadata[purpose]` separ
 
 Reconciliation runs through the shared scheduler coordinator behind the job-scoped PostgreSQL advisory lock `phimor:scheduler:plus-payment-reconciliation:v1`. It is skipped before reconciliation work while paid Plus is disabled and is bounded to 12 attempts per order. Provider webhook and reconciliation races converge on the order lock and unique entitlement `source_order_id`, so the same payment cannot extend entitlement twice. An order that exhausts the bound remains visible to support with its last safe error code; the scheduler does not retry it indefinitely. When paid Plus is enabled, `/ready` also verifies that the migration 0015 Plus payment tables are present; disabled Plus does not make those tables a runtime requirement.
 
+Current production payment ingestion handles charge success, failure, pending,
+and unknown status only. It does not yet map Omise refund, partial-refund,
+void/reversal, or dispute events into the Plus workflow. The provider-neutral
+manual-review foundation can preserve a normalized, independently verified
+reversal-like event additively and idempotently, but it is not connected to the
+Omise webhook adapter and never changes entitlement automatically. PAY-REV-01
+therefore remains a real-money go-live blocker pending provider mapping and
+owner-approved refund/dispute policy.
+
 ## Entitlement dates
 
 - Expired/free: `start = verified_paid_at`, `end = start + 30 days`.
@@ -66,6 +75,7 @@ Required for paid Plus:
 PLUS_ENABLED=true
 PLUS_INTERNAL_ENTITLEMENT_ONLY=false
 PLUS_PAYMENT_ENABLED=true
+PLUS_PAYMENT_REVERSAL_MODE=manual_review
 PLUS_AI_EXPLANATION_ENABLED=true
 CONSULTATION_PAYMENT_PROVIDER=omise
 OMISE_PUBLIC_KEY=<secret/manual>
@@ -73,7 +83,7 @@ OMISE_SECRET_KEY=<secret/manual>
 OMISE_WEBHOOK_SECRET=<secret/manual>
 ```
 
-The shared Omise values are server-side only. Never expose them to LIFF or commit them. Other Plus feature flags remain independently authoritative.
+The shared Omise values are server-side only. Never expose them to LIFF or commit them. Other Plus feature flags remain independently authoritative. When payment is disabled, a missing reversal mode does not affect readiness. When payment is enabled, a missing or unsupported reversal mode makes the configuration unsafe. `manual_review` is the only implemented mode; it records an operational policy choice and does not imply automatic refunds or entitlement adjustment.
 
 ## Production release order
 
@@ -88,8 +98,9 @@ Do not enable Plus payment before schema and backend are compatible.
 7. Deploy the compatible backend commit.
 8. Verify `/health`, `/ready`, scheduler heartbeat, Omise webhook route, and reconciliation logs without payment bodies.
 9. Deploy LIFF and verify Free/active/expired screens with test identities.
-10. Enable Plus AI flags and `PLUS_PAYMENT_ENABLED=true` for the controlled cohort only after test-mode checkout/webhook/reconciliation succeeds.
-11. Run one controlled 59 THB-equivalent provider test flow, duplicate webhook test, missed-webhook reconciliation, early renewal, and cross-user denial.
-12. Confirm no automatic renewal mandate/charge exists before broader release.
+10. Complete the owner decision table and manual SOP in the payment-reversal documents; confirm actual Omise event mapping for the enabled production method.
+11. Configure `PLUS_PAYMENT_REVERSAL_MODE=manual_review`, then enable Plus AI flags and `PLUS_PAYMENT_ENABLED=true` for the controlled cohort only after test-mode checkout/webhook/reconciliation and reversal handling succeed.
+12. Run one controlled 59 THB-equivalent provider test flow, duplicate webhook test, missed-webhook reconciliation, early renewal, reversal tests, and cross-user denial.
+13. Confirm no automatic renewal mandate/charge exists before broader release.
 
 Migration execution, provider calls, environment mutation, and production deployment are operational actions and are not performed by this implementation task.
