@@ -76,6 +76,32 @@ test('Plus reconciliation repository enforces the documented bounded attempt hor
   assert.match(calls[1].sql, /reconciliation_attempts < \$3/); assert.equal(calls[1].params[2], 12);
 });
 
+test('Plus repository records a manual-review reason additively and finds the immutable success event', async () => {
+  const calls = [];
+  const row = {
+    payment_transaction_id:'REV-1', order_id:'ORDER-1', provider:'omise',
+    provider_event_id:'EVENT-REV-1', event_type:'payment_refund_reported',
+  };
+  const repository = createPlusPaymentRepository({ queryFn:async (sql, params) => {
+    calls.push({ sql, params });
+    if (/INSERT INTO plus_payment_transactions/.test(sql)) return { rows:[row] };
+    if (/event_type = 'payment_succeeded'/.test(sql)) {
+      return { rows:[{ payment_transaction_id:'SUCCESS-1', event_type:'payment_succeeded' }] };
+    }
+    return { rows:[] };
+  } });
+  await repository.ingestPaymentTransaction({
+    ...row, provider_payment_id:'CHARGE-1', provider_checkout_id:'CHARGE-1',
+    amount_minor:1000, currency:'THB', payload_hash:null, provider_paid_at:null,
+    failure_code:'MANUAL_REVIEW_REQUIRED',
+  });
+  const success = await repository.findSuccessfulPaymentTransaction('ORDER-1');
+  assert.match(calls[0].sql, /received_at, failure_code, attempts/);
+  assert.equal(calls[0].params[11], 'MANUAL_REVIEW_REQUIRED');
+  assert.match(calls[1].sql, /processing_status = 'processed'/);
+  assert.equal(success.payment_transaction_id, 'SUCCESS-1');
+});
+
 test('System Admin Plus support projection masks actor and excludes provider identifiers', async () => {
   const support = createPlusPaymentSupportService({ repository: { async findSupportRecord() { return {
     order_id: 'PLUSORD-1', subject_line_user_id: 'U1234567890SECRET', plan_id: 'plus_30d_v1',

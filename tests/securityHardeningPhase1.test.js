@@ -107,6 +107,32 @@ test('readiness security configuration remains neutral in safe production and no
   assert.deepEqual(result.configurationIssues, []);
 });
 
+test('Plus payment readiness requires an explicit implemented reversal mode only when payment is enabled', async () => {
+  const base = { NODE_ENV:'production', PDF_DOWNLOAD_SECRET:'configured' };
+  assert.deepEqual(unsafeRuntimeConfiguration({ ...base, PLUS_PAYMENT_ENABLED:'false' }), []);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, PLUS_PAYMENT_ENABLED:'true',
+  }), ['PLUS_PAYMENT_REVERSAL_MODE_MISSING']);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, PLUS_PAYMENT_ENABLED:'true', PLUS_PAYMENT_REVERSAL_MODE:'automated',
+  }), ['PLUS_PAYMENT_REVERSAL_MODE_INVALID']);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, PLUS_PAYMENT_ENABLED:'true', PLUS_PAYMENT_REVERSAL_MODE:'manual_review',
+  }), []);
+  const service = createReadinessService({
+    pingDatabase:async () => true,
+    notificationHealth:async () => ({ pending:0 }),
+    rateLimitHealth:async () => ({ available:true, shared:true }),
+    plusPaymentHealth:async () => ({ available:true, configured:true }),
+    configurationIssues:() => unsafeRuntimeConfiguration({
+      ...base, PLUS_PAYMENT_ENABLED:'true',
+    }),
+  });
+  const result = await service.check();
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.configurationIssues, ['PLUS_PAYMENT_REVERSAL_MODE_MISSING']);
+});
+
 test('production readiness reports safe OpenAI configuration issue codes without exposing secrets', () => {
   const base = { NODE_ENV:'production', PDF_DOWNLOAD_SECRET:'configured' };
   assert.deepEqual(unsafeRuntimeConfiguration({ ...base, AI_PROVIDER:'openai' }), ['OPENAI_API_KEY_MISSING']);

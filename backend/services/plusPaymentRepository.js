@@ -180,13 +180,13 @@ function createPlusPaymentRepository({ queryFn = databaseQuery } = {}) {
           payment_transaction_id, order_id, provider, provider_event_id,
           provider_payment_id, provider_checkout_id, event_type, processing_status,
           amount_minor, currency, signature_verified, payload_hash, provider_paid_at,
-          received_at, attempts
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'verified',$8,$9,TRUE,$10,$11,CURRENT_TIMESTAMP,1)
+          received_at, failure_code, attempts
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'verified',$8,$9,TRUE,$10,$11,CURRENT_TIMESTAMP,$12,1)
         ON CONFLICT (provider, provider_event_id) DO NOTHING RETURNING *`,
         [record.payment_transaction_id, record.order_id, record.provider,
           record.provider_event_id, record.provider_payment_id, record.provider_checkout_id,
           record.event_type, record.amount_minor, record.currency, record.payload_hash,
-          record.provider_paid_at]
+          record.provider_paid_at, record.failure_code || null]
       );
       if (inserted.rows[0]) return { transaction: inserted.rows[0], duplicate: false };
       const existing = await queryFn(
@@ -199,6 +199,16 @@ function createPlusPaymentRepository({ queryFn = databaseQuery } = {}) {
     async findLatestPaymentTransaction(orderId) {
       const result = await queryFn(
         `SELECT * FROM plus_payment_transactions WHERE order_id = $1
+         ORDER BY received_at DESC, payment_transaction_id DESC LIMIT 1`,
+        [orderId]
+      );
+      return result.rows[0] || null;
+    },
+
+    async findSuccessfulPaymentTransaction(orderId) {
+      const result = await queryFn(
+        `SELECT * FROM plus_payment_transactions WHERE order_id = $1
+           AND event_type = 'payment_succeeded' AND processing_status = 'processed'
          ORDER BY received_at DESC, payment_transaction_id DESC LIMIT 1`,
         [orderId]
       );
