@@ -9,6 +9,7 @@ const {
 } = require('../providers/pharmacistAssistant');
 const { buildConsultationContext } = require('./consultationContextBuilder');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
+const { minimizeAIClinicalContext } = require('./aiClinicalContextPrivacy');
 const { PHARMACIST_ASSISTANT_RESPONSE_SCHEMA } = require('../providers/aiResponseSchemas');
 
 const SAFE_PROVIDER_ERRORS=new Set([
@@ -41,7 +42,7 @@ function createPharmacistAssistantService(overrides={}) {
     const interactionId=`AI-${randomUUID()}`;
     const requestedAt=new Date().toISOString();
     const context=await contextBuilder({caseId,pharmacistLineUserId});
-    const serialized=JSON.stringify(context);
+    const serialized=JSON.stringify(minimizeAIClinicalContext(context));
     const audit=async(metadata)=>{
       try {
         return await auditRecorder({

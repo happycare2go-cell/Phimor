@@ -303,6 +303,12 @@ test('clinical research is explicit, duplicate protected and uses its dedicated 
   assert.equal(harness.state().clinicalResearch.analysis.caseSummary,CLINICAL_RESEARCH_RESULT.analysis.caseSummary);
 });
 
+test('controlled-live capability uses production wording and requires no manual deidentified summary',()=>{
+  const message=consoleUI.clinicalResearchCapabilityMessage({status:'available',mode:'controlled_live'});
+  assert.match(message,/ระบบ AI ช่วยสรุปและค้นคว้า|เภสัชกรต้องตรวจสอบ/);
+  assert.doesNotMatch(message,/pilot|ทดลอง|ไม่ระบุตัวตน/i);
+});
+
 test('clinical research panel renders truncation, stale state, citations and private draft safely',()=>{
   const doc=fakeDocument();const container=new FakeElement();let refreshes=0,copies=0;
   consoleUI.renderClinicalResearch(doc,container,CLINICAL_RESEARCH_RESULT,{

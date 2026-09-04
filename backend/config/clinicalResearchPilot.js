@@ -32,7 +32,10 @@ function clinicalResearchAccess(config, lineUserId) {
       requiresDeidentifiedInput:false, requiresAcknowledgment:false,
     });
   }
-  const allowed = typeof lineUserId === 'string' && config.pilotUsers.includes(lineUserId.trim());
+  const identity = typeof lineUserId === 'string' ? lineUserId.trim() : '';
+  const allowed = config.mode === CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE
+    ? Boolean(identity)
+    : Boolean(identity) && config.pilotUsers.includes(identity);
   if (!allowed) {
     return Object.freeze({
       status:'not_allowed', mode:config.mode, allowed:false,

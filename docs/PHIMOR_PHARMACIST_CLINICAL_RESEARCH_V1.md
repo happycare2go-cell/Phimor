@@ -4,19 +4,32 @@
 
 Clinical Research is a private, on-demand support tool for the pharmacist assigned to an authorized consultation case. It does not diagnose, prescribe, change medication, write clinical records, or send a message to the user. The pharmacist must independently review the analysis and may explicitly copy an editable draft into the composer; sending remains a separate human action.
 
-The feature is off by default through `PHARMACIST_AI_RESEARCH_ENABLED=false` and `PHARMACIST_AI_RESEARCH_MODE=disabled`. The emergency flag always wins. Non-disabled modes also require the authenticated pharmacist identity to appear in the server-only `PHARMACIST_AI_RESEARCH_PILOT_USERS` allowlist; an empty list denies everyone. Consultation and pharmacist authorization remain backend-authoritative. The endpoint is rate-limited per case and pharmacist; the default is three requests per ten minutes and is configurable within safe bounds through `CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES`.
+The emergency flag remains fail-closed: `PHARMACIST_AI_RESEARCH_ENABLED=false`
+disables the feature without affecting ordinary consultation. In
+`controlled_live`, access comes from the existing authenticated active
+pharmacist and assigned-consultation authorization; the pilot allowlist is not
+consulted. In `deidentified_pilot`, the server-only
+`PHARMACIST_AI_RESEARCH_PILOT_USERS` allowlist remains mandatory. The endpoint
+is rate-limited per case and pharmacist; the default is three requests per ten
+minutes and is configurable within safe bounds through
+`CLINICAL_RESEARCH_REQUESTS_PER_10_MINUTES`.
 
 ## Operating modes
 
 - `disabled`: no research provider request; safe unavailable state.
 - `deidentified_pilot`: the assigned pharmacist supplies and reviews a de-identified summary. The research path performs only pharmacist/case authorization and does not automatically load Care Profile or clinical-domain context into the provider request.
-- `controlled_live`: uses the existing bounded, authorized Care Profile and consultation context. This mode is prepared but remains subject to the separate real-PHI governance approval.
+- `controlled_live`: uses the existing bounded, authorized Care Profile and consultation context. It requires explicit pharmacist action and acknowledgment, but no manual de-identified summary or pilot allowlist.
 
-Both pilot modes require explicit pharmacist acknowledgment on each request. The LIFF does not persist the summary or acknowledgment in browser storage.
+Both non-disabled modes require explicit pharmacist acknowledgment on each
+request. The LIFF does not persist a pilot summary or acknowledgment in browser
+storage.
 
 ## Authorized context
 
-The context builder runs only after the existing assigned-pharmacist and consultation-state checks. It builds one bounded snapshot containing:
+The context builder runs only after the existing active-pharmacist,
+assigned-consultation, and consultation-state checks. Direct identifiers,
+contact fields, and technical routing IDs are removed before provider calls.
+It builds one bounded snapshot containing:
 
 - up to 200 consultation messages and 60,000 conversation characters;
 - current, authorized Care Profile facts;
@@ -67,22 +80,29 @@ The copy action only populates the existing composer. It does not call the messa
 
 ## Privacy, audit, and cost metadata
 
-All OpenAI requests set `store:false`; production use still requires the separate ZDR/DPA and retention governance gate described in the provider document. No live PHI commissioning is part of this release.
+All OpenAI requests set `store:false`. The accepted current production posture
+is OpenAI `STANDARD_RETENTION`, Data Sharing off, and ZDR not enabled or
+verified. `store:false` is not ZDR. Follow-up DPA, data-residency, and legal
+governance work remains separately recorded and must not be represented as
+completed by this technical commissioning.
 
 One Clinical Research interaction may contain planner, web, and synthesis calls. PHIMOR aggregates provider-reported input, output, total, and reasoning tokens across all calls. It also records actual web-search calls and the final accepted unique source count. Missing provider counts remain `NULL`; authoritative zeros remain `0`.
 
 The metadata-only audit records the interaction/case/provider/model/purpose/prompt/context/research-plan versions, result and safe error status, timestamps, character counts, usage counts, source count, and whether research actually ran. It does not store prompts, transcripts, patient facts, clinical output, draft text, search terms, page text, or source excerpts. If required audit persistence fails, the clinical analysis is not shown.
 
-## Activation checklist
+## Production operating checklist
 
-- complete PHIMOR privacy/security/legal review and OpenAI DPA/ZDR decision;
 - configure `OPENAI_API_KEY` server-side without exposing it to LIFF;
 - keep ordinary AI on `AI_PROVIDER=gemini` and select Clinical Research independently with `AI_PROVIDER_CLINICAL_RESEARCH=openai`;
 - verify approved model access in a non-PHI commissioning test;
 - review/lock `OPENAI_CLINICAL_ALLOWED_DOMAINS`;
 - confirm migration `0018` is reviewed, preflighted, applied, and recorded through the normal migration process;
 - deploy Backend and Pharmacist LIFF from the same reviewed commit;
-- keep `PHARMACIST_AI_RESEARCH_ENABLED=false` until authorization, audit, rate-limit, error, stale-result, and no-auto-send smoke checks pass;
-- enable only through a separately approved production change.
+- set `PHARMACIST_AI_RESEARCH_MODE=controlled_live` and enable only after the
+  reviewed same-SHA Backend/LIFF release is healthy;
+- preserve `PHARMACIST_AI_RESEARCH_ENABLED=false` as the immediate kill switch;
+- periodically review the accepted Standard Retention posture, Data Sharing
+  setting, DPA, cross-border, notice, and incident-response records.
 
-No production migration, provider activation, credential change, live OpenAI call, or real-patient test is authorized by this implementation work.
+Production verification must never log case content, bypass case authorization,
+or auto-send an AI draft.

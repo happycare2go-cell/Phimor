@@ -75,9 +75,9 @@ services:
       - key: AI_TIMEOUT_CLINICAL_RESEARCH_MS
         value: "90000"
       - key: PHARMACIST_AI_RESEARCH_ENABLED
-        value: "false"
+        value: "true"
       - key: PHARMACIST_AI_RESEARCH_MODE
-        value: "disabled"
+        value: "controlled_live"
       - key: PDF_DOWNLOAD_SECRET
         sync: false
       # Plus payment V1 is manual renewal only. Keep disabled until migration

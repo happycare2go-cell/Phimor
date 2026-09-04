@@ -300,6 +300,30 @@ test('pharmacist clinical research route exposes safe capability, accepts pilot 
   assert.equal(calls.some((item)=>item.message),false);
 });
 
+test('controlled-live research capability ignores pilot list but remains pharmacist-authenticated',async()=>{
+  await withApi({pharmacist:{
+    readService:reads(),
+    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+  }},async(api)=>{
+    const capability=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-NOT-IN-PILOT-LIST');
+    assert.equal(capability.status,200);
+    assert.deepEqual(await capability.json(),{
+      featureName:'พี่หมอ Clinical Research',
+      description:'ผู้ช่วยค้นคว้าข้อมูลประกอบการดูแลสำหรับเภสัชกร',
+      status:'available',mode:'controlled_live',allowed:true,
+      requiresDeidentifiedInput:false,requiresAcknowledgment:true,
+    });
+  });
+  const denied=Object.assign(new Error('not a pharmacist'),{code:'PHARMACIST_INACTIVE'});
+  await withApi({pharmacist:{
+    readService:reads(),requirePharmacist:pharmacistMiddleware(denied),
+    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+  }},async(api)=>{
+    const response=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-NON-PHARMACIST');
+    assert.equal(response.status,403);
+  });
+});
+
 test('current checkout discovery is scoped to authenticated Family actor and selected Care Profile', async () => {
   let seen;
   await withApi({family:{

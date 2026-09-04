@@ -210,11 +210,17 @@ test('assistant draft rejects invented medication quantities, direct medication 
   },context),{code:'AI_INVALID_RESPONSE'});
 });
 
-test('assistant passes only minimized structured context and returns refresh timestamps',async()=>{
+test('assistant passes only minimized structured context without routing identifiers and returns refresh timestamps',async()=>{
   let call; let audit;
   const service=createPharmacistAssistantService({
     config:{ai:{provider:'gemini',pharmacistProvider:'openai',explanationModel:'wrong-model',pharmacistModel:'pharmacist-model',timeoutMs:1000,pharmacistTimeoutMs:45000,maxRetries:0}},
-    contextBuilder:async()=>({schemaVersion:'consultation-context-v2',contextTimestamp:NOW,case:{caseId:'CASE-1'},recordedFacts:[],currentMedications:[{name:'Drug A',indication:'ข้อมูลที่บันทึก',useCondition:'after_meal',dayPeriods:['morning','evening'],notes:'หมายเหตุ'}]}),
+    contextBuilder:async()=>({
+      schemaVersion:'consultation-context-v2',contextTimestamp:NOW,
+      case:{caseId:'CASE-1',state:'active'},careProfileId:'CP-PRIVATE',residentId:'RES-PRIVATE',
+      patientName:'ชื่อผู้ป่วย ทดสอบ',phone:'081-234-5678',email:'private@example.com',address:'กรุงเทพ',
+      source:{category:'consultation_message',referenceId:'M-PRIVATE'},
+      recordedFacts:[],currentMedications:[{name:'Drug A',indication:'ข้อมูลที่บันทึก',useCondition:'after_meal',dayPeriods:['morning','evening'],notes:'หมายเหตุ'}],
+    }),
     provider:{async generateStructured(input){call=input;return validAssistant();}},
     recordAudit:async(input)=>{audit=input;return {recorded:true};},
   });
@@ -223,6 +229,8 @@ test('assistant passes only minimized structured context and returns refresh tim
   assert.equal(result.contextVersion,'consultation-context-v2');
   assert.equal(audit.contextVersion,'consultation-context-v2');
   assert.equal(call.task,'pharmacist_assistance'); assert.equal(call.context.includes('U-PHARM'),false);
+  assert.doesNotMatch(call.context,/CASE-1|CP-PRIVATE|RES-PRIVATE|ชื่อผู้ป่วย|081-234-5678|private@example\.com|กรุงเทพ|M-PRIVATE/);
+  assert.match(call.context,/"state":"active"/);
   assert.match(call.context,/"indication":"ข้อมูลที่บันทึก"/);
   assert.match(call.context,/"dayPeriods":\["morning","evening"\]/);
   assert.equal(call.timeoutMs,45000);

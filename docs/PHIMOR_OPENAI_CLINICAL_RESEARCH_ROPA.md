@@ -1,6 +1,6 @@
 # PHIMOR Pharmacist Clinical Research Assistant processing record
 
-Status: **TEMPLATE — PENDING HUMAN/LEGAL REVIEW**
+Status: **PRODUCTION PROCESSING RECORD — LEGAL/ORGANIZATIONAL FIELDS REMAIN SUBJECT TO ACCOUNTABLE REVIEW**
 
 Prepared: 2026-09-03
 
@@ -20,7 +20,7 @@ decisions unresolved. It is not legal advice.
 | Data subjects | Patients/care recipients and, where present in necessary consultation context, their authorized representatives; exact scope `PENDING HUMAN/LEGAL REVIEW` |
 | Personal-data categories | Minimized consultation and care-context information; operational access/audit references |
 | Sensitive-data categories | Health information, medication/allergy/condition information, and relevant confirmed measurements/results |
-| Source of data | Authorized PHIMOR consultation and Care Profile domains; Stage 1 uses manually prepared de-identified pilot material only |
+| Source of data | Authorized PHIMOR consultation and Care Profile domains in `controlled_live`; manually prepared de-identified material only in `deidentified_pilot` |
 | Processing operations | Access control, bounded context assembly, private planning, privacy validation, bounded external web research, private synthesis, human review, metadata-only audit |
 | Recipients/processors | OpenAI and applicable subprocessors `PENDING HUMAN/LEGAL REVIEW`; no automatic recipient/patient message |
 | Cross-border transfer assessment | `PENDING HUMAN/LEGAL REVIEW` |
@@ -33,8 +33,9 @@ decisions unresolved. It is not legal advice.
 | Data-subject rights procedure | Follow the bounded procedure below and the existing PHIMOR controlled DSR workflow |
 | Incident procedure | Feature kill switch and bounded response procedure below |
 | Security measures | Assigned-pharmacist authorization, feature flag, server-only credentials, `store:false`, strict schemas, privacy validator, bounded/allowlisted web search, metadata-only audit, rate limits, human review, no auto-send |
-| Responsible approver | `PENDING HUMAN/LEGAL REVIEW` |
-| Approval date | `PENDING HUMAN/LEGAL REVIEW` |
+| Production product decision | `CONTROLLED_LIVE COMMISSIONED — STANDARD_RETENTION ACCEPTED` |
+| Responsible approver | Managed in PHIMOR's accountable organizational record; no identity invented in Git |
+| Approval date | `2026-09-04` product commissioning decision |
 | Review/expiry date | `PENDING HUMAN/LEGAL REVIEW` |
 
 ## Data-subject rights procedure
@@ -95,9 +96,11 @@ sharing, PHI in a provider response/log, or API-credential compromise.
 - `PENDING`: controller and responsible-owner approval
 - `PENDING`: internal approval/execution evidence for available DPA/processor terms
 - `RECORDED`: data sharing is off; manual operator confirmation dated 2026-09-03 (sensitive evidence outside Git)
-- `RECORDED`: conservative `STANDARD_RETENTION`; MAM/ZDR evidence remains pending if sought
+- `RECORDED`: `STANDARD_RETENTION` accepted for the current production phase;
+  ZDR is not enabled or verified
 - `PENDING`: cross-border transfer assessment
 - `PENDING`: privacy notice version/publication evidence
 - `PENDING`: lawful-basis/sensitive-data assessment
 - `PENDING`: security and incident-response approval
-- `PENDING`: Stage-1/Stage-2 pilot decision record
+- `RECORDED`: `controlled_live` product commissioning decision; pilot allowlist
+  remains only for `deidentified_pilot` compatibility

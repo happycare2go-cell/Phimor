@@ -1184,7 +1184,7 @@ async function roleBasedShellJourney(browser) {
     if(url.pathname==='/api/admin/platform/integration-identity-alerts')return{items:[]};
     if(url.pathname==='/api/admin/data-requests')return{requests:[]};
     if(url.pathname==='/api/admin/operations/reliability')return{notifications:{pending:0,dead:0},integration:{states:{}},scheduler:{jobs:{}}};
-    if(url.pathname==='/api/admin/operations/clinical-research')return{featureName:'พี่หมอ Clinical Research',mode:'deidentified_pilot',modeLabel:'ทดลองแบบไม่ระบุตัวตน',windowDays:7,metrics:{requests:3,successful:2,failed:1,webSearches:4,approximateTokens:900},emergencyGuidance:'ปิด Clinical Research ผ่านการตั้งค่าฝั่งเซิร์ฟเวอร์'};
+    if(url.pathname==='/api/admin/operations/clinical-research')return{featureName:'พี่หมอ Clinical Research',mode:'controlled_live',modeLabel:'ใช้งานจริงแบบควบคุม',windowDays:7,metrics:{requests:3,successful:2,failed:1,webSearches:4,approximateTokens:900},emergencyGuidance:'ปิด Clinical Research ผ่านการตั้งค่าฝั่งเซิร์ฟเวอร์'};
     return{status:404,body:{message:`unmocked ${url.pathname}`}};
   });
   await admin.setContent(localHtml('system-admin'),{waitUntil:'domcontentloaded'});
@@ -1196,7 +1196,7 @@ async function roleBasedShellJourney(browser) {
   }
   await admin.locator('[data-shell-destination="review"]').first().click();
   await admin.getByRole('button',{name:'ดูสถานะระบบ'}).click();
-  await admin.waitForFunction(()=>document.querySelector('#reliabilityResult').textContent.includes('ทดลองแบบไม่ระบุตัวตน'));
+  await admin.waitForFunction(()=>document.querySelector('#reliabilityResult').textContent.includes('ใช้งานจริงแบบควบคุม'));
   const researchOperations=await admin.locator('#reliabilityResult').textContent();
   assert.match(researchOperations,/พี่หมอ Clinical Research.*คำขอ 3.*สำเร็จ 2.*ไม่สำเร็จ 1.*ค้นเว็บ 4.*โทเคนประมาณ 900/s);
   assert.doesNotMatch(researchOperations,/prompt|patient|OPENAI_API_KEY|PHARMACIST_AI_RESEARCH_PILOT_USERS/i);
@@ -1214,7 +1214,7 @@ async function pharmacistConsoleJourney(browser) {
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
     if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
     if(url.pathname==='/api/pharmacist/consultations/active')return {items:[{caseId:'CASE-1',state:'active',waitingOn:'pharmacist',remainingSeconds:3600,effectiveClosed:false}]};
-    if(url.pathname==='/api/pharmacist/consultations/clinical-research/capability')return {status:'available',mode:'deidentified_pilot',allowed:true,requiresDeidentifiedInput:true,requiresAcknowledgment:true};
+    if(url.pathname==='/api/pharmacist/consultations/clinical-research/capability')return {status:'available',mode:'controlled_live',allowed:true,requiresDeidentifiedInput:false,requiresAcknowledgment:true};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages'&&request.method()==='POST'){messagePostCalls+=1;return {message:{sequence:1,body:'unexpected'}};}
@@ -1225,7 +1225,8 @@ async function pharmacistConsoleJourney(browser) {
     }
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/clinical-research'&&request.method()==='POST'){
       clinicalResearchCalls+=1;
-      return {status:'available',mode:'deidentified_pilot',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:1,totalMessageCount:1,conversationTruncated:false,analysis:{
+      assert.deepEqual(request.postDataJSON(),{refresh:true,safetyAcknowledged:true});
+      return {status:'available',mode:'controlled_live',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:1,totalMessageCount:1,conversationTruncated:false,analysis:{
         caseSummary:'ทบทวนข้อมูลยาปัจจุบันและคำถามเรื่องเวลาใช้ยา',recordedFacts:[],relevantMedicationContext:[],medicationChanges:[],missingInformation:['เวลาที่ใช้ยาจริงล่าสุด'],questionsToAsk:['ใช้ยาครั้งล่าสุดเมื่อใด'],keyClinicalIssues:[{text:'ควรยืนยันวิธีใช้จากฉลากหรือใบสั่งยา',evidenceRefs:['SRC-1']}],safetyConsiderations:[],interactionReview:[],guidelineReview:[{topic:'ความปลอดภัยด้านยา',finding:'ควรตรวจสอบกับข้อมูลยาที่ได้รับการยืนยัน',evidenceRefs:['SRC-1'],limitation:'ข้อมูลยังไม่ครบ'}],pharmacistRecommendations:[],escalationConsiderations:[],research:{performed:true,sources:[{referenceId:'SRC-1',title:'Medication safety overview',url:'https://www.who.int/initiatives/medication-without-harm',domain:'who.int'}],limitations:['ข้อมูลจากการสนทนาอาจไม่ครบ']},draftResponseForPharmacistReview:'ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม เพื่อให้เภสัชกรตรวจสอบข้อมูลได้ครบถ้วนค่ะ',disclaimer:'เภสัชกรเป็นผู้ตัดสินใจและต้องตรวจสอบก่อนส่ง',
       },usage:{inputTokens:60,outputTokens:25,totalTokens:85}};
     }
@@ -1264,8 +1265,10 @@ async function pharmacistConsoleJourney(browser) {
   assert.match(await page.locator('#messageComposer').inputValue(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม/);
   assert.equal(messagePostCalls,0);
   await page.getByRole('button',{name:/พี่หมอ Clinical Research/}).click();
-  await page.locator('#clinicalResearchDeidentifiedSummary').fill('ผู้ใหญ่ใช้ยาลดน้ำตาลและต้องการให้เภสัชกรตรวจสอบข้อมูลเวลาใช้ยาจากแหล่งอ้างอิง');
-  await page.locator('#clinicalResearchPrivacyReviewed').check();
+  assert.equal(await page.locator('#clinicalResearchDeidentifiedFields').isHidden(),true);
+  const capabilityCopy=await page.locator('#clinicalResearchCapabilityMessage').textContent();
+  assert.match(capabilityCopy,/ระบบ AI ช่วยสรุปและค้นคว้า|เภสัชกรต้องตรวจสอบ/);
+  assert.doesNotMatch(capabilityCopy,/pilot|ทดลอง|ไม่ระบุตัวตน/i);
   await page.locator('#clinicalResearchAcknowledgment').check();
   const [researchResponse]=await Promise.all([
     page.waitForResponse((response)=>response.url().includes('/api/pharmacist/consultations/CASE-Q/clinical-research')),

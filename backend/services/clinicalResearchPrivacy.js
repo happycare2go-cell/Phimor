@@ -1,8 +1,12 @@
 const SAFE_IDENTIFIER_PATTERNS = Object.freeze([
   /\b[UCR][0-9a-f]{16,}\b/i,
   /\b(?:CP|CAREPROFILE|RES|RESIDENT|CASE|CONSULTATION|CENTER|CTR)[-_][A-Za-z0-9_-]{2,}\b/i,
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
   /(?:\+?66|0)[\s-]?[1-9](?:[\s-]?\d){7,8}\b/,
+  /(?:ชื่อผู้ป่วย|ชื่อผู้รับบริการ|ชื่อญาติ|ชื่อผู้ติดต่อ|patient\s*name|relative\s*name|full\s*name)\s*[:=]?/i,
+  /(?:ที่อยู่|address)\s*[:=]?/i,
+  /(?:วันเดือนปีเกิด|วันเกิด|เกิดวันที่|date\s*of\s*birth|\bdob\b)\s*[:=]?/i,
 ]);
 
 const DEIDENTIFIED_SUMMARY_PATTERNS = Object.freeze([
@@ -31,7 +35,8 @@ function privacyViolation(value, { blockedTerms = [], conversationTexts = [] } =
   })) return 'PRIVATE_TERM_IN_RESEARCH_QUERY';
   if (conversationTexts.some((text) => {
     const source = normalized(text);
-    return source.length >= 20 && query.includes(source);
+    return (source.length >= 20 && query.includes(source))
+      || (query.length >= 20 && source.includes(query));
   })) return 'COPIED_CONVERSATION_IN_RESEARCH_QUERY';
   return null;
 }

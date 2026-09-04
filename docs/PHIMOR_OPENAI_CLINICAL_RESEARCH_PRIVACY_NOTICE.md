@@ -1,6 +1,6 @@
 # PHIMOR Clinical Research privacy notice addendum
 
-Status: **PROPOSED — PENDING HUMAN/LEGAL REVIEW AND PUBLICATION**
+Status: **PRODUCTION DISCLOSURE DRAFT — PUBLICATION/LEGAL STATUS MUST BE RECORDED OUTSIDE THIS REPOSITORY**
 
 Prepared: 2026-09-03
 
@@ -15,11 +15,11 @@ and provides consent and data-rights controls. It does not clearly explain:
 - disclosure to a processor or possible processing outside Thailand;
 - AI-specific minimization, retention, security, or rights handling.
 
-It is therefore insufficient for commissioning Clinical Research with real
-health information. The following is the minimum proposed addition. It must be
-reviewed by PHIMOR's accountable privacy/legal owner, incorporated into the
-authoritative notice, assigned a new notice/consent version where required,
-and published before Stage 2.
+The following is the minimum proposed addition for the accountable
+privacy/legal owner to reconcile with the authoritative notice. This
+repository does not prove publication, lawful basis, or legal sufficiency and
+must not be cited as doing so. The recorded technical posture is Standard
+Retention, Data Sharing off, `store:false`, and no enabled/verified ZDR.
 
 ## Proposed user-facing wording
 

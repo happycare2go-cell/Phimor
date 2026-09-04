@@ -16,6 +16,7 @@ const { buildConsultationResearchContext } = require('./consultationResearchCont
 const { sanitizeResearchPlan, validateDeidentifiedPilotSummary } = require('./clinicalResearchPrivacy');
 const { buildEvidenceBundle, createUsageAccumulator } = require('./clinicalEvidenceService');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
+const { minimizeAIClinicalContext } = require('./aiClinicalContextPrivacy');
 const { ConsultationDomainError } = require('../domain/consultation');
 const { classifyConsultationSafety } = require('./consultationSafetyService');
 const { requireConsultationResearchAccess } = require('./consultationResearchAccessService');
@@ -133,7 +134,10 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     const interactionId = `AI-${randomUUID()}`;
     const requestedAt = new Date(now).toISOString();
     const usage = createUsageAccumulator();
-    const serializedContext = JSON.stringify(prepared.context);
+    const providerClinicalContext = minimizeAIClinicalContext(prepared.context, {
+      blockedTerms:prepared.privacy?.blockedTerms,
+    });
+    const serializedContext = JSON.stringify(providerClinicalContext);
     let plan;
     let evidence = Object.freeze({ findings:Object.freeze([]), sources:Object.freeze([]), limitations:Object.freeze([]) });
     let inputCharacterCount = serializedContext.length;
@@ -188,7 +192,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         }
       }
       const synthesisContext = JSON.stringify({
-        privateClinicalContext:prepared.context,
+        privateClinicalContext:providerClinicalContext,
         researchPlan:{
           clinicalQuestions:plan.clinicalQuestions,
           missingInformation:plan.missingInformation,

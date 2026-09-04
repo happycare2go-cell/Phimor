@@ -123,7 +123,7 @@ function provider({ planValue = plan(), evidenceValue = evidence(), synthesisVal
 function service(overrides = {}) {
   const generate = createPharmacistClinicalResearchService({
     flags:{ consultation:{ clinicalResearch:true } },
-    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:['U-PHARM'] },
+    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:[] },
     config:{ ai:{
       provider:'openai', clinicalResearchModel:'gpt-test', clinicalResearchReasoningEffort:'high',
       clinicalAllowedDomains:['fda.gov', 'who.int'], timeoutMs:1000, clinicalResearchTimeoutMs:90000,
@@ -173,7 +173,7 @@ test('clinical research requires explicit pharmacist acknowledgment before provi
   let providerCalls = 0;
   const generate = createPharmacistClinicalResearchService({
     flags:{ consultation:{ clinicalResearch:true } },
-    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:['U-PHARM'] },
+    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:[] },
     config:{ ai:{ provider:'openai', clinicalResearchModel:'gpt-test' } },
     contextBuilder:async () => context(),
     provider:{ interpretDocument:async () => { providerCalls += 1; return {}; } },
@@ -184,6 +184,58 @@ test('clinical research requires explicit pharmacist acknowledgment before provi
     (error) => error.code === 'CLINICAL_RESEARCH_ACK_REQUIRED',
   );
   assert.equal(providerCalls, 0);
+});
+
+test('controlled live ignores pilot membership, loads authorized context, and does not require a manual summary', async () => {
+  let contextCalls=0;
+  const result=await service({
+    pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:['U-SOMEONE-ELSE']},
+    contextBuilder:async(input)=>{contextCalls+=1;assert.equal(input.pharmacistLineUserId,'U-ACTIVE');return context();},
+  })({caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE'});
+  assert.equal(result.status,'available');
+  assert.equal(result.mode,'controlled_live');
+  assert.equal(contextCalls,1);
+});
+
+test('controlled live preserves pharmacist and consultation access denial before provider execution', async () => {
+  for (const code of ['PHARMACIST_INACTIVE','CONSULTATION_ACCESS_DENIED']) {
+    let providerCalls=0;
+    const generate=createPharmacistClinicalResearchService({
+      flags:{consultation:{clinicalResearch:true}},
+      pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+      config:{ai:{provider:'openai',clinicalResearchModel:'gpt-test'}},
+      contextBuilder:async()=>{throw Object.assign(new Error('denied'),{code,status:403});},
+      provider:{async generateStructured(){providerCalls+=1;}},
+    });
+    await assert.rejects(generate({
+      caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',safetyAcknowledged:true,
+    }),(error)=>error.code===code);
+    assert.equal(providerCalls,0);
+  }
+});
+
+test('private planner and synthesis receive minimum necessary context without direct identifiers', async () => {
+  const calls=[];
+  const privateContext=context({context:{
+    caseId:'CASE-PRIVATE',careProfileId:'CP-PRIVATE',residentId:'RES-PRIVATE',centerId:'CTR-PRIVATE',
+    patientName:'ผู้ป่วย ทดสอบ',relativeName:'ญาติ ทดสอบ',phone:'081-234-5678',
+    email:'private@example.com',address:'กรุงเทพ',
+    conversation:{
+      initialQuestion:'ชื่อผู้ป่วย: ผู้ป่วย ทดสอบ, ใช้ Drug A และ Drug B',messages:[],
+      conversationTruncated:false,analyzedMessageCount:1,totalMessageCount:1,analyzedThroughSequence:0,
+    },
+  },privacy:{
+    blockedTerms:['ผู้ป่วย ทดสอบ','ญาติ ทดสอบ','CP-PRIVATE','CASE-PRIVATE','RES-PRIVATE','CTR-PRIVATE'],
+    conversationTexts:['ชื่อผู้ป่วย: ผู้ป่วย ทดสอบ, ใช้ Drug A และ Drug B'],
+  }});
+  const result=await service({
+    contextBuilder:async()=>privateContext,
+    provider:provider({inspect:(options)=>calls.push(options)}),
+  })({caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE'});
+  assert.equal(result.status,'available');
+  const serialized=JSON.stringify(calls.map((item)=>({task:item.task,context:item.context,input:item.input})));
+  assert.doesNotMatch(serialized,/CASE-PRIVATE|CP-PRIVATE|RES-PRIVATE|CTR-PRIVATE|ผู้ป่วย ทดสอบ|ญาติ ทดสอบ|081-234-5678|private@example\.com|กรุงเทพ/);
+  assert.match(serialized,/Drug A|Drug B/);
 });
 
 test('planner may skip web research while token usage and zero search/source counts remain authoritative', async () => {

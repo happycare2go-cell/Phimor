@@ -4,7 +4,12 @@
 
 OpenAI is an optional implementation of the existing PHIMOR AI provider contract. Existing Gemini behavior remains available. Global routing is explicit through `AI_PROVIDER`; the Pharmacist Assistant and Clinical Research can select independent server-side providers through `AI_PROVIDER_PHARMACIST` and `AI_PROVIDER_CLINICAL_RESEARCH`. There is no automatic failure fallback, because silently moving clinical content between providers would weaken cost, privacy, and incident boundaries.
 
-This release does not activate OpenAI in production. Before activation, PHIMOR must complete its privacy, security, DPA, data-residency, retention, and Zero Data Retention (ZDR) governance review. Every Responses API request sets `store:false`, but that request setting is not a claim that the account has ZDR or that all provider-side processing/retention is eliminated.
+PHIMOR's production routing keeps ordinary AI on Gemini and routes only the
+Pharmacist Assistant and Clinical Research to OpenAI. The current production
+decision accepts OpenAI Standard Retention, keeps Data Sharing off, and keeps
+`store:false` on every Responses API request. Zero Data Retention (ZDR) is not
+enabled or verified; `store:false` must never be described as ZDR. This record
+is an operational posture, not a legal-compliance certification.
 
 ## Architecture
 
@@ -83,11 +88,12 @@ The provider exposes nullable, nonnegative `inputTokens`, `outputTokens`, `total
 ## Known limitations
 
 - Automated tests use mocked provider responses; they do not prove production credentials, account policy, latency, or model availability.
-- `store:false` is necessary but not sufficient for PHIMOR's ZDR/DPA approval.
+- `store:false` is required but does not provide or prove ZDR.
 - OpenAI states that API data is not used to train models by default, but abuse-monitoring and application-state retention controls remain separate. PHIMOR must verify the applicable contract and project controls rather than infer them from `store:false`.
 - OpenAI's current data-controls documentation states that live Web Search with external internet access is not eligible for HIPAA processing under a BAA; its offline/cache-only mode has separate, narrow eligibility conditions. PHIMOR's current Clinical Research design uses live search, so no PHI web-search commissioning is allowed unless PHIMOR governance determines the applicable legal and contractual path.
 - Web evidence is not a substitute for a licensed drug-interaction database or a pharmacist's review.
-- Model identifiers and account access must be verified during a separately approved, non-PHI commissioning step before any production enablement.
+- Model identifiers and account access must be verified with synthetic data
+  before production use and rechecked after material provider/config changes.
 
 Operator-only, non-PHI capability verification is available through
 `npm run preflight:openai-v1`. It accepts no CLI text, uses only hard-coded

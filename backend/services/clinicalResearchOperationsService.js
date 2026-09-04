@@ -6,7 +6,7 @@ const {
 const MODE_LABELS = Object.freeze({
   [CLINICAL_RESEARCH_MODES.DISABLED]:'ปิด',
   [CLINICAL_RESEARCH_MODES.DEIDENTIFIED_PILOT]:'ทดลองแบบไม่ระบุตัวตน',
-  [CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE]:'Controlled Pilot',
+  [CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE]:'ใช้งานจริงแบบควบคุม',
 });
 
 function safeAggregate(row = {}) {

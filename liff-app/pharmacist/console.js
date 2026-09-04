@@ -76,7 +76,7 @@
     if(capability.status==='disabled')return 'ฟีเจอร์นี้ยังปิดอยู่ ระบบจะไม่ส่งคำขอค้นคว้าภายนอก';
     if(capability.status==='not_allowed')return 'ยังไม่เปิดให้บัญชีนี้ใช้งาน';
     if(capability.mode==='deidentified_pilot')return 'โหมดทดลองแบบไม่ระบุตัวตน: ใส่สรุปที่ผ่านการตรวจโดยมนุษย์ ระบบจะไม่ดึง Care Profile อัตโนมัติ';
-    if(capability.mode==='controlled_live')return 'Controlled Pilot: ระบบใช้บริบทที่ได้รับอนุญาตของเคสเมื่อเภสัชกรสั่งค้นคว้าเท่านั้น';
+    if(capability.mode==='controlled_live')return 'ระบบ AI ช่วยสรุปและค้นคว้าข้อมูลประกอบการพิจารณา เภสัชกรต้องตรวจสอบข้อมูลและแหล่งอ้างอิงก่อนนำไปใช้';
     return 'กำลังตรวจสอบสิทธิ์การใช้งาน…';
   }
   function researchLimitationLabel(value){return ({
