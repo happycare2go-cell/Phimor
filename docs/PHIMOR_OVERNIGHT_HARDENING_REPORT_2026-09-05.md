@@ -92,4 +92,3 @@ No `npm audit fix`, force update, package edit, or lockfile edit was performed.
 - No migration, dependency, lockfile, model-routing, provider-fallback, infrastructure, or production-setting change.
 
 The final canonical suite and scans are run once more from the clean committed `HEAD` before handoff; the exact final SHA and status are included in that handoff.
-
