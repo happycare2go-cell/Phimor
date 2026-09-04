@@ -8,10 +8,12 @@ const CLINICAL_RESEARCH_MODES = Object.freeze({
 
 const VALID_MODES = new Set(Object.values(CLINICAL_RESEARCH_MODES));
 
-function parsePilotUsers(value) {
+function parseIdentityAllowlist(value) {
   if (typeof value !== 'string' || !value.trim()) return Object.freeze([]);
   return Object.freeze([...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))].slice(0, 200));
 }
+
+const parsePilotUsers = parseIdentityAllowlist;
 
 function loadClinicalResearchPilotConfig(env = process.env) {
   const emergencyEnabled = parseBoolean(env.PHARMACIST_AI_RESEARCH_ENABLED, false) === true;
@@ -22,6 +24,7 @@ function loadClinicalResearchPilotConfig(env = process.env) {
     emergencyEnabled,
     mode,
     pilotUsers:parsePilotUsers(env.PHARMACIST_AI_RESEARCH_PILOT_USERS),
+    controlledLiveUsers:parseIdentityAllowlist(env.PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS),
   });
 }
 
@@ -34,7 +37,8 @@ function clinicalResearchAccess(config, lineUserId) {
   }
   const identity = typeof lineUserId === 'string' ? lineUserId.trim() : '';
   const allowed = config.mode === CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE
-    ? Boolean(identity)
+    ? Boolean(identity) && Array.isArray(config.controlledLiveUsers)
+      && config.controlledLiveUsers.includes(identity)
     : Boolean(identity) && config.pilotUsers.includes(identity);
   if (!allowed) {
     return Object.freeze({
@@ -59,6 +63,6 @@ function publicClinicalResearchCapability(config, lineUserId) {
 }
 
 module.exports = {
-  CLINICAL_RESEARCH_MODES, parsePilotUsers, loadClinicalResearchPilotConfig,
+  CLINICAL_RESEARCH_MODES, parseIdentityAllowlist, parsePilotUsers, loadClinicalResearchPilotConfig,
   clinicalResearchAccess, publicClinicalResearchCapability,
 };

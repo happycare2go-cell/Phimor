@@ -1,6 +1,7 @@
 # PHIMOR OpenAI Clinical Research commissioning record
 
 Commissioning decision date: 2026-09-04
+Accountable approver: PHIMOR System Owner
 
 This record documents the approved current product and technical posture. It
 does not claim legal compliance, Zero Data Retention, Thailand-only residency,
@@ -16,7 +17,11 @@ stored in this repository.
 | Clinical Research | `AI_PROVIDER_CLINICAL_RESEARCH=openai`, `gpt-5.6-sol` |
 | Clinical Research feature | `PHARMACIST_AI_RESEARCH_ENABLED=true` |
 | Clinical Research mode | `PHARMACIST_AI_RESEARCH_MODE=deidentified_pilot` |
-| Pilot allowlist | Required for `deidentified_pilot` |
+| Pilot allowlist | Required for current `deidentified_pilot` |
+| Controlled-live allowlist | Server-only `PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS`; required and deny-all when empty |
+| Controlled-live governance | Approved by PHIMOR System Owner on 2026-09-04; activation still requires the reviewed release, healthy readiness, and exactly one verified pharmacist in the server-only allowlist |
+| Family privacy notice | Version `2569-09-1`, approved 2026-09-04 |
+| Existing applicable consent | Version `2569-08-1`; preserved and not replaced merely by the notice update |
 | OpenAI retention posture | `STANDARD_RETENTION` accepted for the current production phase |
 | Zero Data Retention | **Not enabled or verified** |
 | Data Sharing | **Off**, based on the recorded operator confirmation dated 2026-09-03 |
@@ -42,11 +47,30 @@ Clinical Research remains an explicit pharmacist action:
 5. The result is a pharmacist-review draft. Copying it fills the composer only;
    sending is a separate human action.
 
-The active `deidentified_pilot` mode requires the allowlist and manually
-reviewed de-identified context. The supported `controlled_live` mode remains
-inactive and would ignore the pilot allowlist if separately approved. Setting
-`PHARMACIST_AI_RESEARCH_ENABLED=false` disables Clinical Research immediately
-without disabling ordinary consultation or the Pharmacist Assistant.
+The current `deidentified_pilot` state requires the pilot allowlist and
+manually reviewed de-identified context. The next approved-candidate state is
+`controlled_live`, which remains inactive and requires its own server-only
+allowlist in addition to existing pharmacist and assigned-case authorization.
+An empty controlled-live allowlist denies all and produces a safe readiness
+issue without projecting identities. Setting `PHARMACIST_AI_RESEARCH_ENABLED=false`
+disables Clinical Research immediately without disabling ordinary consultation
+or the Pharmacist Assistant.
+
+The system-owner decisions for the privacy notice, bounded
+cross-border/processor posture, lawful-basis and sensitive-health-data record,
+and accountable approval were recorded on 2026-09-04. The production mode must
+nevertheless remain `deidentified_pilot` until the reviewed code is deployed,
+Backend and LIFF run the same SHA, readiness is healthy, Privacy Notice
+`2569-09-1` is available, and exactly one verified pharmacist is present in the
+server-only controlled-live allowlist. See
+`PHIMOR_OPENAI_CONTROLLED_LIVE_APPROVAL.md`.
+
+Privacy Notice versioning is separate from consent versioning. Publication of
+Notice `2569-09-1` is a transparent, non-blocking update and does not by itself
+invalidate Consent `2569-08-1`, force blanket re-consent, or overwrite consent
+and withdrawal history. A materially different purpose or lawful-basis change
+requires a separate review rather than an automatic vendor-driven consent
+reset.
 
 ## Data minimization and web-search boundary
 
@@ -78,12 +102,15 @@ PHIMOR identifiers. A rejected privacy topic produces no web-search call.
 
 ## Standard Retention governance record
 
-PHIMOR accepts OpenAI Standard Retention for this production phase. ZDR is not
+PHIMOR System Owner accepts OpenAI Standard Retention for this bounded
+production phase as recorded on 2026-09-04. ZDR is not
 required for this decision and must not be implied. Data Sharing remains off
 and `store:false` remains mandatory. DPA, cross-border, data-residency, privacy
 notice publication, lawful-basis, sensitive-data, data-subject-rights, and
 retention-schedule evidence remain accountable organizational records. Their
 status must not be invented or represented as legally complete by this file.
+This approval is the accountable system-owner decision for PHIMOR; it is not a
+representation of independent legal-counsel certification.
 
 Any material change to Data Sharing, provider, model routing, retention
 posture, web-search boundary, or access model requires renewed review.

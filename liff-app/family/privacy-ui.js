@@ -106,6 +106,8 @@
         ? 'คุณใช้ฟังก์ชันที่อาศัยความยินยอมตามฉบับปัจจุบันได้'
         : 'ข้อมูลเดิมไม่ได้ถูกลบอัตโนมัติ และคุณยังส่งคำขอเกี่ยวกับข้อมูลส่วนบุคคลได้');
       consentBox.append(heading, detail);
+      if (state.consent?.version) consentBox.append(element('p', 'privacy-state__meta', `ฉบับความยินยอม ${state.consent.version}`));
+      if (state.consent?.privacyNoticeVersion) consentBox.append(element('p', 'privacy-state__meta', `ฉบับประกาศความเป็นส่วนตัว ${state.consent.privacyNoticeVersion}`));
       if (state.consent?.updatedAt) consentBox.append(element('p', 'privacy-state__meta', `อัปเดต ${formatDate(state.consent.updatedAt)}`));
       if (active) consentBox.append(button('ถอนความยินยอม', 'privacy-button privacy-button--danger', async () => {
         const approved = await confirmAction('ถอนความยินยอม', 'การถอนความยินยอมอาจทำให้บางฟังก์ชันที่ต้องใช้ข้อมูลส่วนบุคคลไม่สามารถใช้งานได้ ข้อมูลบางส่วนอาจยังถูกเก็บไว้ตามวัตถุประสงค์ที่จำเป็นหรือข้อกำหนดที่เกี่ยวข้อง');

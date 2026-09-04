@@ -1,106 +1,97 @@
 # PHIMOR Pharmacist Clinical Research Assistant processing record
 
-Status: **PRODUCTION PROCESSING RECORD — LEGAL/ORGANIZATIONAL FIELDS REMAIN SUBJECT TO ACCOUNTABLE REVIEW**
+Status: **PRODUCTION PROCESSING RECORD — SYSTEM-OWNER APPROVED FOR CONTROLLED ROLLOUT**
 
-Prepared: 2026-09-03
+Prepared: 2026-09-04
 
-This is a bounded Record of Processing Activities/processing-register
-template. It records verified technical facts and leaves legal or contractual
-decisions unresolved. It is not legal advice.
+This bounded processing record distinguishes verified product/technical facts
+from legal or organizational conclusions that still require accountable
+approval. It is not legal advice and does not claim legal completeness.
 
 ## Processing record
 
 | Field | Current record |
 | --- | --- |
 | Processing activity | PHIMOR Pharmacist Clinical Research Assistant |
-| Controller entity | `PENDING HUMAN/LEGAL REVIEW` |
-| Controller/privacy contact | `PENDING HUMAN/LEGAL REVIEW` |
-| Processor/service provider | OpenAI; exact contracting entity and processor role `PENDING HUMAN/LEGAL REVIEW` |
-| Purpose | Assist an authorized pharmacist by organizing bounded clinical context, researching authoritative references, and preparing decision-support material for human review. Not diagnosis, prescribing, treatment decision, or automated communication. |
-| Data subjects | Patients/care recipients and, where present in necessary consultation context, their authorized representatives; exact scope `PENDING HUMAN/LEGAL REVIEW` |
-| Personal-data categories | Minimized consultation and care-context information; operational access/audit references |
-| Sensitive-data categories | Health information, medication/allergy/condition information, and relevant confirmed measurements/results |
-| Source of data | Manually prepared de-identified material in the active `deidentified_pilot`; authorized PHIMOR consultation and Care Profile domains are supported only by inactive future `controlled_live` |
-| Processing operations | Access control, bounded context assembly, private planning, privacy validation, bounded external web research, private synthesis, human review, metadata-only audit |
-| Recipients/processors | OpenAI and applicable subprocessors `PENDING HUMAN/LEGAL REVIEW`; no automatic recipient/patient message |
-| Cross-border transfer assessment | `PENDING HUMAN/LEGAL REVIEW` |
-| OpenAI data sharing | `NO — confirmed manually by PHIMOR operator in OpenAI Platform on 2026-09-03`; account-sensitive evidence retained outside Git |
-| OpenAI retention posture | `STANDARD_RETENTION — conservative posture; no approved MAM/ZDR evidence` |
-| DPA status | `DOCUMENT_AVAILABLE_PENDING_INTERNAL_APPROVAL` |
-| PHIMOR retention schedule | `PENDING HUMAN/LEGAL REVIEW`; do not invent a period |
-| Lawful basis | `PENDING HUMAN/LEGAL REVIEW` |
-| Sensitive-data condition | `PENDING HUMAN/LEGAL REVIEW` |
-| Data-subject rights procedure | Follow the bounded procedure below and the existing PHIMOR controlled DSR workflow |
-| Incident procedure | Feature kill switch and bounded response procedure below |
-| Security measures | Assigned-pharmacist authorization, feature flag, server-only credentials, `store:false`, strict schemas, privacy validator, bounded/allowlisted web search, metadata-only audit, rate limits, human review, no auto-send |
-| Production product decision | `DEIDENTIFIED_PILOT ACTIVE — STANDARD_RETENTION ACCEPTED` |
-| Responsible approver | Managed in PHIMOR's accountable organizational record; no identity invented in Git |
-| Approval date | `2026-09-04` product commissioning decision |
-| Review/expiry date | `PENDING HUMAN/LEGAL REVIEW` |
+| Controller/service operator | บริษัท แฮปปี้ แคร์ทูโก จำกัด |
+| Controller/privacy contact | `happycare2go@gmail.com` / LINE OA พี่หมอ |
+| Processor/service provider | OpenAI under the applicable OpenAI business/API terms and DPA; no bespoke or separately negotiated agreement is claimed |
+| OpenAI DPA record | The generally available DPA effective 2026-01-01 states that OpenAI may process Customer Data on the Customer's behalf and acts as Data Processor; <https://openai.com/policies/data-processing-addendum/> |
+| Purpose | Bounded clinical decision support and authoritative evidence research for an authorized pharmacist; not diagnosis, prescribing, treatment order, medication change, or automated communication |
+| Data subjects | Patients/care recipients and, where necessary in authorized context, their representatives; exact deployed scope remains subject to accountable review |
+| Personal-data categories | Minimized authorized consultation and care-context information; operational access/audit references are not sent merely because they exist |
+| Sensitive-data categories | Health information, medication/allergy/condition information, and relevant confirmed measurements/results; PHIMOR treats health data as sensitive data |
+| Source of data | Manually reviewed de-identified input in current `deidentified_pilot`; bounded authorized consultation/Care Profile context is available only in inactive future `controlled_live` |
+| Processing operations | Access control, bounded context assembly, private planning, privacy validation, generic-topic web research, evidence validation, private synthesis, human review, metadata-only audit |
+| Recipients/processors | OpenAI and applicable subprocessors under applicable terms; no automatic patient/recipient message |
+| Cross-border posture | External AI processing may occur outside Thailand and may use subprocessors/infrastructure in multiple jurisdictions; PHIMOR does not claim Thailand-only residency or make an unapproved adequacy determination |
+| Cross-border organizational approval | `ACCEPTED` by PHIMOR System Owner on 2026-09-04 for the bounded posture recorded here; not independent legal-counsel certification |
+| OpenAI Data Sharing | `OFF — recorded operator confirmation dated 2026-09-03`; account-sensitive evidence remains outside Git |
+| OpenAI application-state control | Every Responses API request uses `store:false`; this is not ZDR |
+| OpenAI retention posture | `STANDARD_RETENTION`; ZDR is not enabled or verified |
+| PHIMOR retention principle | Retain personal/health data only as long as necessary for service purpose, applicable requirements and the establishment, exercise or defense of legal claims; then delete or anonymize under the approved process; no unapproved fixed period |
+| Current Family product control | Privacy Notice `2569-09-1`; existing applicable consent version `2569-08-1`, withdrawal available, and historical consent records preserved |
+| Lawful-basis record | Each processing activity requires an authorized purpose and applicable basis/control. Versioned consent remains where applicable. AI used within an authorized care/pharmacist workflow is a bounded processing method, not automatically a new purpose; materially different marketing, unrelated research or model-training use requires separate review |
+| Sensitive-health-data condition | Health data is treated as sensitive. The applicable legal condition for each deployed scope remains an accountable decision and is not invented by this record |
+| Data-subject rights procedure | Existing authenticated PHIMOR workflow supports access/export, correction, restriction and deletion requests, subject to applicable requirements and preservation obligations |
+| Human review | Mandatory; no automatic diagnosis, order, treatment change, or send |
+| Security measures | Assigned-pharmacist/case authorization, feature flag, server-only credentials, `store:false`, dedicated controlled-live rollout allowlist, strict schemas, privacy validator, bounded/allowlisted web research, metadata-only audit and rate limits |
+| Production product decision | `DEIDENTIFIED_PILOT ACTIVE`; `CONTROLLED_LIVE NOT YET ENABLED` |
+| Responsible approver | `PHIMOR System Owner`; no personal identity inferred |
+| Approval date/evidence | `2026-09-04`; repository approval record plus deployment/readiness evidence required before activation |
+| Review/expiry date | Review on material purpose, provider, retention, Data Sharing, authorization or web-search-boundary change |
 
 ## Data-subject rights procedure
 
-PHIMOR remains the authoritative holder of PHIMOR patient and clinical
-records. `ai_interaction_audit` is metadata-only and is not a copy of the model
-prompt, research query, provider output, or clinical record.
+PHIMOR remains the authoritative holder of PHIMOR patient and clinical records.
+`ai_interaction_audit` is metadata-only and is not a copy of prompts, research
+queries, provider output, drafts, transcripts, or clinical records.
 
 1. Receive the request through the approved authenticated/private channel and
    verify the data subject or authorized representative.
-2. Clarify whether the request concerns information about AI processing,
-   access, correction, deletion/restriction, objection, or withdrawal.
-3. Locate relevant PHIMOR records and metadata audit entries using restricted
-   internal references. Do not copy PHI into the tracking ticket.
-4. Explain, subject to the approved notice and law, whether Clinical Research
-   processing occurred, its purpose, categories, recipient/processor, and the
-   human-review/no-auto-send boundary. Do not reveal another person's data,
-   provider secrets, or security-sensitive internals.
-5. Apply access/correction/restriction/deletion/objection/withdrawal decisions
-   only through the existing approved domain procedures and after the
-   accountable privacy/legal decision. Do not rewrite clinical provenance or
-   delete incident/audit evidence ad hoc.
-6. Assess external-provider implications against the confirmed contract and
-   retention controls. Do not promise provider deletion, access, or retention
-   behavior that has not been contractually and technically verified.
-7. Record the decision, approved action, executor, completion evidence, legal
-   preservation constraints, and response date using minimized metadata.
+2. Clarify whether the request concerns AI-processing information, access,
+   correction, deletion/restriction, objection, or consent withdrawal.
+3. Locate relevant PHIMOR records and metadata-only audit entries using
+   restricted internal references; do not copy PHI into ordinary tickets.
+4. Explain the processing purpose, data categories, recipient/processor and
+   human-review/no-auto-send boundary under the approved notice.
+5. Apply an approved action only through existing controlled domain procedures;
+   do not rewrite clinical provenance or delete required evidence ad hoc.
+6. Assess provider implications against applicable terms and configured
+   retention controls; do not promise unverified provider deletion or ZDR.
+7. Record the decision, executor, approved action, preservation constraints and
+   completion evidence using minimized metadata.
 
-The applicable response period, exemptions, legal holds, external-provider
-request path, and retention outcome remain `PENDING HUMAN/LEGAL REVIEW`.
+Applicable response periods, exemptions, legal holds and external-provider
+request outcomes remain subject to accountable legal/privacy review.
 
-## Incident procedure
+## Incident and kill-switch procedure
 
-Triggers include PHI in a web-search query, wrong-patient context, unauthorized
-pharmacist access, unexpected retention/configuration change, enabled data
-sharing, PHI in a provider response/log, or API-credential compromise.
+Triggers include PHI in a web-search query, wrong-person context, unauthorized
+pharmacist access, unexpected retention/configuration change, enabled Data
+Sharing, content in logs, or credential compromise.
 
-1. Immediately set/confirm `PHARMACIST_AI_RESEARCH_ENABLED=false` using the
-   authorized operational process.
-2. Verify the endpoint returns its safe disabled behavior and makes no provider
-   call, web search, or audit claim that research occurred.
-3. Preserve safe audit and deployment/account-control evidence. Do not delete
-   evidence required for investigation and do not copy prompts/PHI into normal
-   incident tickets.
-4. Revoke/rotate the server credential when compromise is suspected. Never
-   paste the credential into chat, logs, Git, or an incident report.
-5. Determine the affected interaction references, timeframe, actor/access
-   path, external calls, account settings, and potential recipients using the
-   minimum necessary access.
-6. Notify the named privacy, security, clinical, and operational owners.
-7. Perform the required regulator/data-subject notification assessment and
-   document the decision; do not assume notification is or is not required.
-8. Remediate and independently verify controls before any re-enable decision.
-   Re-enabling requires a new written approval.
+1. Set/confirm `PHARMACIST_AI_RESEARCH_ENABLED=false`.
+2. Verify the endpoint makes no provider/web-search call and does not claim a
+   research interaction occurred.
+3. Preserve metadata-only evidence without copying PHI into ordinary tickets.
+4. Rotate the server credential only through the authorized secret process if
+   compromise is suspected.
+5. Assess affected interactions, timeframe and recipients with minimum
+   necessary access.
+6. Complete the accountable incident and notification assessment before any
+   re-enable decision.
 
-## Evidence attachments
+## Evidence status
 
-- `PENDING`: controller and responsible-owner approval
-- `PENDING`: internal approval/execution evidence for available DPA/processor terms
-- `RECORDED`: data sharing is off; manual operator confirmation dated 2026-09-03 (sensitive evidence outside Git)
-- `RECORDED`: `STANDARD_RETENTION` accepted for the current production phase;
-  ZDR is not enabled or verified
-- `PENDING`: cross-border transfer assessment
-- `PENDING`: privacy notice version/publication evidence
-- `PENDING`: lawful-basis/sensitive-data assessment
-- `PENDING`: security and incident-response approval
-- `RECORDED`: `deidentified_pilot` is the active production mode and requires
-  the pilot allowlist; `controlled_live` remains supported but inactive
+- `RECORDED`: controller and privacy contact supplied by the PHIMOR owner
+- `RECORDED`: current OpenAI DPA wording/role, effective 2026-01-01
+- `RECORDED`: Data Sharing off, Standard Retention, `store:false`, no ZDR claim
+- `RECORDED`: `deidentified_pilot` current; `controlled_live` inactive
+- `OWNER APPROVED 2026-09-04`: Privacy Notice `2569-09-1`, bounded OpenAI
+  processor/cross-border posture, controlled-live allowlist and activation after
+  deployment/readiness verification
+- `PRESERVED`: consent version `2569-08-1`; the notice update does not itself
+  invalidate prior valid consent
+- `BOUNDED`: no claim that one lawful basis resolves every workflow and no
+  independent legal-counsel certification

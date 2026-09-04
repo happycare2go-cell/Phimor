@@ -123,6 +123,7 @@ test('production readiness reports safe OpenAI configuration issue codes without
   const researchIssues = unsafeRuntimeConfiguration({
     ...base, AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
     PHARMACIST_AI_RESEARCH_ENABLED:'true', PHARMACIST_AI_RESEARCH_MODE:'controlled_live',
+    PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS:'U-CONTROLLED',
   });
   assert.deepEqual(researchIssues, ['PHARMACIST_AI_RESEARCH_CONFIGURATION_MISSING']);
   assert.doesNotMatch(JSON.stringify(researchIssues), /OPENAI_API_KEY|configured-secret/);
@@ -137,7 +138,12 @@ test('production readiness reports safe OpenAI configuration issue codes without
   assert.deepEqual(unsafeRuntimeConfiguration({
     ...base, AI_PROVIDER:'gemini', GEMINI_API_KEY:'configured-gemini',
     PHARMACIST_AI_RESEARCH_ENABLED:'true', PHARMACIST_AI_RESEARCH_MODE:'controlled_live',
+    PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS:'U-CONTROLLED',
   }), []);
+  assert.deepEqual(unsafeRuntimeConfiguration({
+    ...base, AI_PROVIDER:'gemini', GEMINI_API_KEY:'configured-gemini',
+    PHARMACIST_AI_RESEARCH_ENABLED:'true', PHARMACIST_AI_RESEARCH_MODE:'controlled_live',
+  }), ['CLINICAL_RESEARCH_CONTROLLED_LIVE_ALLOWLIST_EMPTY']);
   assert.deepEqual(unsafeRuntimeConfiguration({
     ...base, AI_PROVIDER:'gemini', AI_PROVIDER_CLINICAL_RESEARCH:'openai',
     PHARMACIST_AI_RESEARCH_ENABLED:'true', PHARMACIST_AI_RESEARCH_MODE:'disabled',

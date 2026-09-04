@@ -14,11 +14,23 @@ const centerHtml = fs.readFileSync(path.resolve(__dirname,'..','liff-app','cente
 
 function deferred(){let resolve;const promise=new Promise((done)=>{resolve=done;});return{promise,resolve};}
 
-test('Family Privacy navigation, consent consequences, confirmation and re-consent are explicit', () => {
+test('Family Privacy navigation, consent consequences, and separate non-blocking notice update are explicit', () => {
   assert.match(familyHtml, /data-family-destination="privacy"/); assert.match(familyHtml, /id="view-privacy"/);
   assert.match(familyHtml, /ถอนความยินยอม/); assert.match(familyHtml, /จัดการความเป็นส่วนตัว/);
   assert.match(familySource, /ข้อมูลเดิมไม่ได้ถูกลบอัตโนมัติ/); assert.match(familySource, /confirmAction\('ถอนความยินยอม'/);
   assert.match(familySource, /ให้ความยินยอมอีกครั้ง/); assert.match(familyHtml, /openPrivacyWithoutConsent/);
+  assert.match(familyHtml,/data-privacy-notice-version="2569-09-1"/);
+  assert.match(familyHtml,/ไม่ใช่การขอความยินยอมใหม่|ไม่บล็อกการใช้งาน/);
+  assert.match(familyHtml,/id="privacyNoticeUpdate"/);
+  assert.match(familyHtml,/อ่านประกาศฉบับล่าสุด/);
+  assert.match(familyHtml,/รับทราบ/);
+  assert.match(familyHtml,/การใช้ AI และผู้ประมวลผลภายนอก|การใช้ AI ภายนอก/);
+  assert.match(familyHtml,/อ่านประกาศความเป็นส่วนตัวฉบับเต็ม/);
+  assert.match(familyHtml,/บริษัท แฮปปี้ แคร์ทูโก จำกัด/);
+  assert.match(familyHtml,/happycare2go@gmail\.com|LINE OA พี่หมอ/);
+  assert.match(familyHtml,/Standard Retention|STANDARD_RETENTION/);
+  assert.match(familySource,/ฉบับความยินยอม/);
+  assert.match(familySource,/ฉบับประกาศความเป็นส่วนตัว/);
 });
 
 test('Family request types and status labels map only implemented backend enums to plain Thai', () => {
@@ -60,4 +72,14 @@ test('System Admin DSR UI is manual-status operations, not automated fulfillment
 test('Privacy UI is mobile accessible with large targets, focus and non-color status text', () => {
   assert.match(familyCss,/min-height:44px/);assert.match(familyCss,/focus-visible/);assert.match(familyCss,/@media\(max-width:390px\)/);assert.match(familyCss,/overflow-wrap:anywhere/);
   assert.match(familyHtml,/maxlength="500"/);assert.match(familyHtml,/aria-live="polite"/);assert.match(familyHtml,/role="status"/);
+  assert.match(familyCss,/consent-notice summary[^}]*min-height:44px/);
+});
+
+test('Family AI notice preserves rights workflow and does not overclaim withdrawal or ZDR',()=>{
+  assert.match(familyHtml,/ขอสำเนา|ขอแก้ไข|ขอจำกัดการใช้|ขอลบข้อมูล/);
+  assert.match(familyHtml,/ถอนความยินยอม/);
+  assert.match(familyHtml,/ไม่ลบข้อมูลทั้งหมดโดยอัตโนมัติ|ไม่ลบข้อมูลเดิมอัตโนมัติ/);
+  assert.match(familyHtml,/store:false/);
+  assert.match(familyHtml,/ไม่ใช่.*Zero Data Retention|ไม่ใช่ ZDR/s);
+  assert.doesNotMatch(familyHtml,/ZDR (?:เปิดใช้|ได้รับการยืนยัน)|ประมวลผลเฉพาะประเทศไทย/);
 });

@@ -47,6 +47,11 @@
   .consent-overlay{position:fixed;inset:0;background:#fff;z-index:200;display:flex;flex-direction:column;padding:24px 20px;overflow-y:auto}
   .consent-overlay h2{color:var(--navy)}
   .consent-overlay p{font-size:13.5px;line-height:1.7;color:#333}
+  .privacy-notice-update{margin:12px 16px 0;padding:14px;border:1px solid #c9d4ec;border-radius:14px;background:#f7f9ff;color:#273352}
+  .privacy-notice-update[hidden]{display:none}.privacy-notice-update__copy{display:grid;gap:5px;line-height:1.55}.privacy-notice-update__copy strong{color:var(--navy)}.privacy-notice-update__copy span{font-size:12.5px}
+  .privacy-notice-update__actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.privacy-notice-update__actions .btn{min-height:44px}
+  .privacy-notice-update__actions .btn:focus-visible{outline:3px solid rgba(222,177,78,.75);outline-offset:2px}
+  @media(max-width:390px){.privacy-notice-update__actions{grid-template-columns:1fr}}
   .toast{position:fixed;bottom:20px;left:16px;right:16px;background:var(--navy);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;text-align:center;opacity:0;transition:.25s;z-index:99;pointer-events:none}
   .toast.show{opacity:1}
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:flex-end}
@@ -73,8 +78,24 @@
   </div>
   <h2>ก่อนเริ่มใช้งานพี่หมอ</h2>
   <p>พี่หมอเก็บข้อมูลสุขภาพของผู้สูงอายุที่คุณดูแล เพื่อใช้แจ้งเตือนนัดหมาย บันทึกรายการยา และช่วยให้ครอบครัวเห็นข้อมูลตรงกัน</p>
+  <p><b>การใช้ AI ภายนอก:</b> พี่หมออาจใช้ผู้ให้บริการ AI ภายนอก รวมถึง OpenAI ในระบบปัจจุบัน เพื่อช่วยจัดระเบียบ อธิบาย และค้นคว้าข้อมูลในขอบเขตที่กำหนด โดยส่งข้อมูลเท่าที่จำเป็น</p>
+  <p><b>ต้องมีคนตรวจสอบ:</b> ผลจาก AI เป็นข้อมูลช่วยพิจารณา บุคลากรที่ได้รับอนุญาตต้องตรวจสอบก่อนใช้ ระบบไม่วินิจฉัย สั่งยา เปลี่ยนการรักษา หรือส่งข้อความโดยอัตโนมัติ การประมวลผลภายนอกอาจเกิดนอกประเทศไทย</p>
   <p><b>เจ้าของข้อมูลและผู้มีสิทธิ์:</b> ผู้สูงอายุหรือผู้รับการดูแลเป็นเจ้าของข้อมูลสุขภาพ ส่วนญาติหรือผู้ดูแลสามารถเข้าถึงและจัดการข้อมูลตามสิทธิ์ที่ได้รับ ศูนย์ดูแลเข้าถึงได้เฉพาะเมื่อมีความสัมพันธ์และสิทธิ์ที่ยังใช้งานอยู่</p>
   <p><b>สิทธิ์เกี่ยวกับข้อมูล:</b> เจ้าของข้อมูล หรือผู้แทนและผู้ดูแลที่มีสิทธิ์ สามารถขอแก้ไข ลบ หรือถอนความยินยอมตามสิทธิ์ที่เกี่ยวข้อง ข้อมูล Care Profile ยังคงเป็นข้อมูลของผู้รับการดูแลแม้เปลี่ยนศูนย์</p>
+  <details class="consent-notice" id="consentPrivacyNotice" data-privacy-notice-version="2569-09-1">
+    <summary>อ่านประกาศความเป็นส่วนตัวฉบับเต็ม</summary>
+    <div class="consent-notice__body">
+      <h3>ประกาศการใช้ข้อมูลและ AI · ฉบับ 2569-09-1</h3>
+      <p><b>ผู้ให้บริการ:</b> บริษัท แฮปปี้ แคร์ทูโก จำกัด เป็นผู้ดำเนินการพี่หมอ (PHIMOR) และประมวลผลข้อมูลสุขภาพซึ่งเป็นข้อมูลละเอียดอ่อน รวมถึงข้อมูลส่วนบุคคลอื่นเท่าที่จำเป็นต่อบริการ</p>
+      <p><b>ขอบเขตบริการ:</b> ข้อมูลอาจครอบคลุม Care Profile สุขภาพ ยา ผลตรวจ นัดหมาย การแบ่งปันภายในครอบครัว และการปรึกษาเภสัชกรตามสิทธิ์และวัตถุประสงค์ที่เกี่ยวข้อง</p>
+      <p><b>ผู้ประมวลผลภายนอก:</b> พี่หมออาจใช้ผู้ให้บริการ AI ภายนอกเพื่อช่วยจัดระเบียบ อธิบาย และค้นคว้าข้อมูล ปัจจุบันระบบใช้ OpenAI สำหรับฟังก์ชันที่กำหนด และอาจเปลี่ยนผู้ให้บริการภายใต้การทบทวนที่เหมาะสม</p>
+      <p><b>Clinical Research:</b> หากเปิดใช้แบบควบคุม บริบททางคลินิกที่ผู้มีสิทธิ์เข้าถึงอาจถูกประมวลผลโดยผู้ให้บริการ AI ส่วนการค้นเว็บใช้เฉพาะแนวคิดการค้นคว้าทั่วไปที่ผ่านการลดข้อมูลระบุตัวบุคคลแล้ว ห้ามใช้ข้อความสนทนาดิบ ชื่อ เบอร์โทร ที่อยู่ รหัสบัญชี LINE รหัส Care Profile หรือรหัสภายในพี่หมอเป็นคำค้นเว็บ</p>
+      <p><b>ขอบเขตการใช้งาน:</b> ผลจาก AI เป็นข้อมูลสนับสนุนการตัดสินใจและต้องผ่านการตรวจสอบโดยเภสัชกรหรือบุคลากรที่รับผิดชอบ ระบบไม่วินิจฉัย สั่งยา ออกคำสั่งรักษา หรือส่งข้อความโดยอัตโนมัติ</p>
+      <p><b>สถานที่และระยะเวลา:</b> การประมวลผลภายนอกอาจเกิดนอกประเทศไทย พี่หมอไม่รับรองว่าจะประมวลผลเฉพาะประเทศใดประเทศหนึ่ง พี่หมอเก็บข้อมูลเท่าที่จำเป็นต่อวัตถุประสงค์บริการ ข้อกำหนดที่ใช้บังคับ และการก่อตั้ง ใช้ หรือปกป้องสิทธิเรียกร้อง เมื่อหมดความจำเป็นจะลบหรือทำให้ไม่ระบุตัวบุคคลตามกระบวนการที่อนุมัติ</p>
+      <p><b>สถานะ OpenAI ปัจจุบัน:</b> Standard Retention, Data Sharing ปิด และทุกคำขอใช้ <code>store:false</code> ซึ่งไม่ใช่และไม่ควรตีความว่าเป็น Zero Data Retention (ZDR)</p>
+      <p><b>สิทธิ์และการติดต่อ:</b> คุณสามารถใช้หน้าจัดการความเป็นส่วนตัวเพื่อขอสำเนา แก้ไข จำกัดการใช้ หรือลบข้อมูล และถอนความยินยอมได้ตามข้อกำหนดและหน้าที่เก็บรักษาที่เกี่ยวข้อง ติดต่อ <a href="mailto:happycare2go@gmail.com">happycare2go@gmail.com</a> หรือ LINE OA พี่หมอ การถอนความยินยอมไม่ลบข้อมูลทั้งหมดโดยอัตโนมัติ</p>
+    </div>
+  </details>
   <div style="margin-top:auto;padding-top:16px">
     <button class="btn btn-primary" onclick="acceptConsent()">ยอมรับและเริ่มใช้งาน</button>
     <div style="height:8px"></div>
@@ -100,6 +121,17 @@
       <button type="button" class="family-header__action" onclick="openFamilyDestination('actions')" aria-label="ดูสิ่งที่ต้องดำเนินการ">รายการ <span id="familyActionCount" hidden>0</span></button>
     </div>
   </div>
+
+  <section class="privacy-notice-update" id="privacyNoticeUpdate" data-privacy-notice-version="2569-09-1" aria-labelledby="privacyNoticeUpdateTitle" hidden>
+    <div class="privacy-notice-update__copy">
+      <strong id="privacyNoticeUpdateTitle">ประกาศความเป็นส่วนตัวฉบับล่าสุด</strong>
+      <span>เราอัปเดตคำอธิบายการใช้ AI และผู้ประมวลผลภายนอก การแจ้งนี้ไม่ใช่การขอความยินยอมใหม่และไม่ปิดกั้นบริการ</span>
+    </div>
+    <div class="privacy-notice-update__actions">
+      <button type="button" class="btn btn-outline" onclick="readLatestPrivacyNotice()">อ่านประกาศฉบับล่าสุด</button>
+      <button type="button" class="btn btn-primary" onclick="acknowledgePrivacyNotice()">รับทราบ</button>
+    </div>
+  </section>
 
   <!-- ═══ F2: หน้าหลัก ═══ -->
   <div class="view active" id="view-home">
@@ -526,6 +558,12 @@
       </div>
       <section class="privacy-intro" aria-labelledby="privacyIntroTitle"><h2 id="privacyIntroTitle">คุณควบคุมคำขอเกี่ยวกับข้อมูลของคุณได้</h2><p>การส่งคำขอเป็นการเริ่มกระบวนการตรวจสอบโดยทีมงาน ไม่ใช่การลบ ส่งออก หรือจำกัดข้อมูลโดยอัตโนมัติ</p></section>
       <div id="privacyLive" class="privacy-live" role="status" aria-live="polite"></div>
+      <section class="card privacy-card privacy-ai-notice" aria-labelledby="privacyAiTitle" data-privacy-notice-version="2569-09-1">
+        <div class="privacy-card__heading"><h2 id="privacyAiTitle">การใช้ AI และผู้ประมวลผลภายนอก</h2><p>ประกาศฉบับ 2569-09-1 · บริษัท แฮปปี้ แคร์ทูโก จำกัด</p></div>
+        <p>พี่หมออาจใช้ผู้ให้บริการ AI ภายนอก รวมถึง OpenAI ในระบบปัจจุบัน เพื่อช่วยจัดระเบียบ อธิบาย และค้นคว้าข้อมูลภายใต้สิทธิ์ที่กำหนด ผลลัพธ์ต้องมีคนตรวจสอบและไม่มีการส่งข้อความอัตโนมัติ</p>
+        <details class="privacy-notice-details" id="privacyMasterNotice"><summary>อ่านประกาศฉบับล่าสุด</summary><div><p>พี่หมอใช้ข้อมูล Care Profile สุขภาพ ยา ผลตรวจ นัดหมาย การแบ่งปันภายในครอบครัว และการปรึกษาเภสัชกรเท่าที่จำเป็นต่อวัตถุประสงค์บริการและสิทธิ์ที่ได้รับ</p><p>การประมวลผลอาจเกิดนอกประเทศไทย หากมีการค้นเว็บ ระบบต้องส่งเฉพาะแนวคิดทั่วไปที่ผ่านการลดข้อมูลระบุตัวบุคคล ไม่ส่งข้อความสนทนาดิบ ชื่อ ข้อมูลติดต่อ รหัสบัญชี LINE รหัส Care Profile หรือรหัสภายในเป็นคำค้น</p><p>ผลจาก AI ต้องมีเภสัชกรหรือบุคลากรที่รับผิดชอบตรวจสอบ ไม่วินิจฉัย สั่งยา ออกคำสั่งรักษา หรือส่งข้อความอัตโนมัติ</p><p>สถานะ OpenAI ปัจจุบันคือ Standard Retention, Data Sharing ปิด และ <code>store:false</code>; ข้อนี้ไม่ใช่ ZDR ข้อมูลจะถูกเก็บเท่าที่จำเป็นและลบหรือทำให้ไม่ระบุตัวตามกระบวนการที่อนุมัติเมื่อหมดความจำเป็น</p><p>คุณสามารถขอสำเนา แก้ไข จำกัดการใช้ หรือลบข้อมูล และถอนความยินยอมได้ตามข้อกำหนดและหน้าที่เก็บรักษาที่เกี่ยวข้อง</p></div></details>
+        <p class="privacy-contact"><b>ติดต่อเรื่องความเป็นส่วนตัว:</b> <a href="mailto:happycare2go@gmail.com">happycare2go@gmail.com</a> หรือ LINE OA พี่หมอ</p>
+      </section>
       <section class="card privacy-card" aria-labelledby="privacyConsentTitle"><div class="privacy-card__heading"><h2 id="privacyConsentTitle">ความยินยอม</h2><p>ตรวจสอบสถานะหรือถอนความยินยอมโดยไม่ลบข้อมูลเดิมอัตโนมัติ</p></div><div id="privacyConsentState" class="privacy-state"></div></section>
       <section class="card privacy-card" aria-labelledby="privacyRequestTitle"><div class="privacy-card__heading"><h2 id="privacyRequestTitle">ส่งคำขอเกี่ยวกับข้อมูลส่วนบุคคล</h2><p>กรอกรายละเอียดเท่าที่จำเป็น และหลีกเลี่ยงการใส่ข้อมูลสุขภาพที่ไม่เกี่ยวข้อง</p></div><form id="privacyRequestForm" class="privacy-form"><label for="privacyRequestType">ประเภทคำขอ</label><select id="privacyRequestType"><option value="export">ขอสำเนาข้อมูล</option><option value="correct">ขอแก้ไขข้อมูล</option><option value="restrict">ขอจำกัดการใช้ข้อมูล</option><option value="delete">ขอลบข้อมูล</option></select><p id="privacyRequestHelp" class="privacy-help"></p><label for="privacyRequestNote">รายละเอียดเพิ่มเติม (ไม่บังคับ)</label><textarea id="privacyRequestNote" maxlength="500" autocomplete="off" placeholder="ระบุเฉพาะข้อมูลที่ทีมงานต้องใช้ตรวจสอบคำขอนี้"></textarea><button id="privacyRequestSubmit" type="submit" class="privacy-button">ตรวจสอบและส่งคำขอ</button></form></section>
       <section class="card privacy-card" aria-labelledby="privacyHistoryTitle"><div class="privacy-card__heading"><h2 id="privacyHistoryTitle">สถานะคำขอของฉัน</h2><p>แสดงเฉพาะคำขอที่ผูกกับบัญชี LINE ที่กำลังใช้งาน</p></div><div id="privacyRequestList" class="privacy-request-list"></div></section>
@@ -953,6 +991,25 @@ async function openFamilyDestination(destination){
   }
 }
 document.querySelectorAll('[data-family-destination]').forEach(button=>button.addEventListener('click',()=>openFamilyDestination(button.dataset.familyDestination)));
+
+function showPrivacyNoticeUpdate(version){
+  const banner=document.getElementById('privacyNoticeUpdate');
+  if(!banner)return;
+  banner.hidden=version!==banner.dataset.privacyNoticeVersion;
+}
+function acknowledgePrivacyNotice(){
+  const banner=document.getElementById('privacyNoticeUpdate');
+  if(banner)banner.hidden=true;
+  toast('ซ่อนการแจ้งเตือนในครั้งนี้แล้ว การรับทราบนี้ไม่ใช่การให้ความยินยอมใหม่');
+}
+async function readLatestPrivacyNotice(){
+  const banner=document.getElementById('privacyNoticeUpdate');
+  if(banner)banner.hidden=true;
+  activateView('privacy');
+  await ensurePrivacyUI()?.controller.open();
+  const notice=document.getElementById('privacyMasterNotice');
+  if(notice){notice.open=true;requestAnimationFrame(()=>notice.scrollIntoView({behavior:'smooth',block:'start'}));}
+}
 
 // ── F1: PDPA ──
 async function acceptConsent() {
@@ -1539,12 +1596,14 @@ async function main() {
   LINE_ID_TOKEN = liff.getIDToken();
 
   const consentCheck = await fetch(BACKEND_URL + '/api/consent/check', { headers: { 'Authorization': `Bearer ${LINE_ID_TOKEN}`, 'X-Line-User-Id': LINE_USER_ID } }).catch(()=>null);
-  const hasConsent = consentCheck && consentCheck.ok && (await consentCheck.json()).hasConsent;
+  const consentState = consentCheck && consentCheck.ok ? await consentCheck.json() : null;
+  const hasConsent = consentState?.hasConsent === true;
 
   if (!hasConsent) {
     document.getElementById('consentOverlay').style.display = 'flex'; // ★ F1 บังคับผ่านก่อนเข้าหน้าหลัก
   } else {
     document.getElementById('app').style.display = 'block';
+    showPrivacyNoticeUpdate(consentState?.privacyNoticeVersion);
     ensureHomeUI();
     await loadDashboard();
     await ensurePlusUI();

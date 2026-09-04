@@ -153,6 +153,7 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.match(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*sync:\s*false/);
   assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_ENABLED\s*\n\s*value:\s*["']true["']/);
   assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_MODE\s*\n\s*value:\s*["']deidentified_pilot["']/);
+  assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS\s*\n\s*sync:\s*false/);
   assert.match(productionBlueprint, /key:\s*PDF_DOWNLOAD_SECRET\s*\n\s*sync:\s*false/);
   assert.doesNotMatch(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*value:/);
   for (const [key,value] of [
@@ -162,6 +163,11 @@ test('production blueprint generates runtime config without enabling Plus', () =
     ['AI_TIMEOUT_CLINICAL_RESEARCH_MS','90000'],['PHARMACIST_AI_RESEARCH_ENABLED','true'],
     ['PHARMACIST_AI_RESEARCH_MODE','deidentified_pilot'],
   ]) assert.match(productionEnvironmentExample,new RegExp(`^${key}=${value}$`,'m'));
+  assert.match(productionEnvironmentExample,/^PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS=$/m);
+  assert.doesNotMatch(JSON.stringify(buildPublicLiffConfig({
+    PUBLIC_BACKEND_URL:'https://example.test',
+    PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS:'U-PRIVATE-CONTROLLED',
+  })),/PRIVATE|CONTROLLED_LIVE_USERS/);
 });
 
 test('Center LIFF obtains backend and LIFF ID from the authoritative runtime projection', () => {

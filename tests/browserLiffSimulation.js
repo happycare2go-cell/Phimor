@@ -103,8 +103,8 @@ async function familyConsentJourney(browser) {
   let consent = false;
   await mockBackend(page, async (url) => {
     if (url.pathname === '/config/liff') return { publicBackendUrl: SIMULATED_BACKEND_URL, familyLiffId: 'SIM_FAMILY' };
-    if (url.pathname === '/api/consent/check') return { hasConsent: consent };
-    if (url.pathname === '/api/consent') { consent = true; return { consent_id: 'C1', accepted: true }; }
+    if (url.pathname === '/api/consent/check') return { hasConsent:consent,status:consent?'active':'not_given',version:'2569-08-1',privacyNoticeVersion:'2569-09-1' };
+    if (url.pathname === '/api/consent') { consent = true; return { hasConsent:true,status:'active',version:'2569-08-1',privacyNoticeVersion:'2569-09-1' }; }
     if (url.pathname === '/api/init-dashboard') return { profiles: [] };
     if (url.pathname === '/api/access-requests') return { requests: [] };
     if (url.pathname === '/api/transport/family/pending') return { pending: [] };
@@ -112,9 +112,27 @@ async function familyConsentJourney(browser) {
   });
   await page.setContent(localHtml('family'), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#consentOverlay')).display !== 'none');
+  assert.match(await page.locator('#consentOverlay').innerText(),/การใช้ AI ภายนอก|ผู้ให้บริการ AI ภายนอก/);
+  await page.getByText('อ่านประกาศความเป็นส่วนตัวฉบับเต็ม').click();
+  assert.match(await page.locator('#consentPrivacyNotice').innerText(),/2569-09-1|happycare2go@gmail\.com|Standard Retention/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.setViewportSize({width:1280,height:800});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.setViewportSize({width:390,height:844});
   await page.getByRole('button', { name: 'ยอมรับและเริ่มใช้งาน' }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#app')).display === 'block');
   assert.equal(await page.locator('#lineDisplayName').textContent(), 'ผู้ใช้จำลอง');
+  assert.strictEqual(await page.locator('#consentOverlay').isHidden(), true);
+  await page.evaluate(() => showPrivacyNoticeUpdate('2569-09-1'));
+  assert.strictEqual(await page.locator('#privacyNoticeUpdate').isVisible(), true);
+  assert.match(await page.locator('#privacyNoticeUpdate').innerText(),/ไม่ใช่การขอความยินยอมใหม่|ไม่บล็อกการใช้งาน/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),true);
+  await page.getByRole('button', { name: 'อ่านประกาศฉบับล่าสุด' }).click();
+  await page.waitForFunction(() => document.querySelector('#privacyMasterNotice')?.open === true);
+  assert.strictEqual(await page.locator('#view-privacy').isVisible(), true);
+  await page.evaluate(() => { showPrivacyNoticeUpdate('2569-09-1'); activateView('home'); });
+  await page.getByRole('button', { name: 'รับทราบ' }).click();
+  assert.strictEqual(await page.locator('#privacyNoticeUpdate').isHidden(), true);
   await page.locator('[data-family-destination="health"]').first().click();
   assert.strictEqual(await page.locator('#healthNoProfileState').isVisible(), true);
   assert.strictEqual(await page.locator('#healthProfileContent').isHidden(), true);

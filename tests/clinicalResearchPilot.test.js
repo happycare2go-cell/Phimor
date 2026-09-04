@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 
 const {
-  CLINICAL_RESEARCH_MODES, parsePilotUsers, loadClinicalResearchPilotConfig,
+  CLINICAL_RESEARCH_MODES, parseIdentityAllowlist, parsePilotUsers, loadClinicalResearchPilotConfig,
   clinicalResearchAccess, publicClinicalResearchCapability,
 }=require('../backend/config/clinicalResearchPilot');
 const {
@@ -32,8 +32,9 @@ test('research mode defaults and malformed values fail closed behind the emergen
   }).mode,CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE);
 });
 
-test('pilot allowlist is bounded, exact and never projected to the browser',()=>{
+test('research allowlists are bounded, exact and never projected to the browser',()=>{
   assert.deepEqual(parsePilotUsers('U-ONE, U-TWO,U-ONE'),['U-ONE','U-TWO']);
+  assert.equal(parseIdentityAllowlist(Array.from({length:205},(_,index)=>`U-${index}`).join(',')).length,200);
   const config=loadClinicalResearchPilotConfig({
     PHARMACIST_AI_RESEARCH_ENABLED:'true',PHARMACIST_AI_RESEARCH_MODE:'deidentified_pilot',
     PHARMACIST_AI_RESEARCH_PILOT_USERS:'U-ONE,U-TWO',
@@ -43,29 +44,46 @@ test('pilot allowlist is bounded, exact and never projected to the browser',()=>
   const publicValue=publicClinicalResearchCapability(config,'U-ONE');
   assert.equal(publicValue.mode,'deidentified_pilot');
   assert.equal(publicValue.requiresDeidentifiedInput,true);
-  assert.doesNotMatch(JSON.stringify(publicValue),/U-ONE|U-TWO|pilotUsers|provider/i);
+  assert.doesNotMatch(JSON.stringify(publicValue),/U-ONE|U-TWO|pilotUsers|controlledLiveUsers|provider/i);
   const empty=loadClinicalResearchPilotConfig({
     PHARMACIST_AI_RESEARCH_ENABLED:'true',PHARMACIST_AI_RESEARCH_MODE:'controlled_live',
   });
-  assert.equal(clinicalResearchAccess(empty,'U-ONE').allowed,true);
+  assert.equal(clinicalResearchAccess(empty,'U-ONE').allowed,false);
   assert.equal(clinicalResearchAccess(empty,'').allowed,false);
 });
 
-test('controlled live ignores the pilot allowlist while deidentified pilot still requires it',()=>{
+test('controlled live requires its dedicated allowlist while deidentified pilot still requires the pilot list',()=>{
   const controlled=loadClinicalResearchPilotConfig({
     PHARMACIST_AI_RESEARCH_ENABLED:'true',PHARMACIST_AI_RESEARCH_MODE:'controlled_live',
     PHARMACIST_AI_RESEARCH_PILOT_USERS:'U-PILOT-ONLY',
+    PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS:' U-ACTIVE-PHARMACIST,U-ACTIVE-PHARMACIST ',
   });
   const access=clinicalResearchAccess(controlled,'U-ACTIVE-PHARMACIST');
   assert.equal(access.status,'available');
   assert.equal(access.allowed,true);
   assert.equal(access.requiresDeidentifiedInput,false);
+  assert.equal(clinicalResearchAccess(controlled,'U-PILOT-ONLY').allowed,false);
   const deidentified=loadClinicalResearchPilotConfig({
     PHARMACIST_AI_RESEARCH_ENABLED:'true',PHARMACIST_AI_RESEARCH_MODE:'deidentified_pilot',
     PHARMACIST_AI_RESEARCH_PILOT_USERS:'U-PILOT-ONLY',
   });
   assert.equal(clinicalResearchAccess(deidentified,'U-ACTIVE-PHARMACIST').allowed,false);
   assert.equal(clinicalResearchAccess(deidentified,'U-PILOT-ONLY').allowed,true);
+});
+
+test('controlled-live allowlist loading and access emit no identity-bearing logs',()=>{
+  const originalLog=console.log;const originalError=console.error;const calls=[];
+  console.log=(...args)=>calls.push(args);console.error=(...args)=>calls.push(args);
+  try {
+    const config=loadClinicalResearchPilotConfig({
+      PHARMACIST_AI_RESEARCH_ENABLED:'true',PHARMACIST_AI_RESEARCH_MODE:'controlled_live',
+      PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS:'U-PRIVATE-ONE',
+    });
+    assert.equal(clinicalResearchAccess(config,'U-PRIVATE-ONE').allowed,true);
+    assert.equal(clinicalResearchAccess(config,'U-PRIVATE-TWO').allowed,false);
+    assert.doesNotMatch(JSON.stringify(publicClinicalResearchCapability(config,'U-PRIVATE-ONE')),/PRIVATE|controlledLiveUsers/i);
+  } finally { console.log=originalLog;console.error=originalError; }
+  assert.deepEqual(calls,[]);
 });
 
 test('deidentified summary accepts clinical concepts but rejects direct identifiers',()=>{
@@ -145,12 +163,17 @@ test('System Admin UI renders only safe Clinical Research aggregate controls',()
   assert.doesNotMatch(html,/PHARMACIST_AI_RESEARCH_PILOT_USERS|OPENAI_API_KEY/);
 });
 
-test('production governance records Standard Retention without claiming ZDR',()=>{
-  const docs=['PHIMOR_OPENAI_AI_PROVIDER_V1.md','PHIMOR_PHARMACIST_CLINICAL_RESEARCH_V1.md','PHIMOR_OPENAI_CLINICAL_RESEARCH_COMMISSIONING.md','PHIMOR_OPENAI_CLINICAL_RESEARCH_ROPA.md']
+test('production governance records controller, processor posture and Standard Retention without claiming ZDR',()=>{
+  const docs=['PHIMOR_OPENAI_AI_PROVIDER_V1.md','PHIMOR_PHARMACIST_CLINICAL_RESEARCH_V1.md','PHIMOR_OPENAI_CLINICAL_RESEARCH_COMMISSIONING.md','PHIMOR_OPENAI_CLINICAL_RESEARCH_ROPA.md','PHIMOR_OPENAI_CLINICAL_RESEARCH_PRIVACY_NOTICE.md','PHIMOR_OPENAI_CONTROLLED_LIVE_APPROVAL.md']
     .map((file)=>fs.readFileSync(path.join(__dirname,'..','docs',file),'utf8')).join('\n');
   assert.match(docs,/STANDARD_RETENTION|Standard Retention/);
   assert.match(docs,/Data Sharing (?:remains )?(?:off|OFF)|Data Sharing \| \*\*Off\*\*/i);
   assert.match(docs,/store:false/);
+  assert.match(docs,/บริษัท แฮปปี้ แคร์ทูโก จำกัด/);
+  assert.match(docs,/happycare2go@gmail\.com/);
+  assert.match(docs,/Data Processor/);
+  assert.match(docs,/SYSTEM-OWNER APPROVED|approved by PHIMOR System Owner/i);
+  assert.match(docs,/PENDING RELEASE|activation still requires/i);
   assert.match(docs,/ZDR (?:is )?not enabled or verified|not enabled or verified.*ZDR/i);
   assert.doesNotMatch(docs,/ZDR\s*(?:=|:)\s*(?:enabled|verified)|Zero Data Retention\s*(?:is|:)\s*(?:enabled|verified)/i);
 });

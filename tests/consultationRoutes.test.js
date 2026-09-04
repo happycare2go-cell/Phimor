@@ -306,12 +306,12 @@ test('pharmacist clinical research route exposes safe capability, accepts pilot 
   assert.equal(calls.some((item)=>item.message),false);
 });
 
-test('controlled-live research capability ignores pilot list but remains pharmacist-authenticated',async()=>{
+test('controlled-live research capability requires its dedicated allowlist and remains pharmacist-authenticated',async()=>{
   await withApi({pharmacist:{
     readService:reads(),
-    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[],controlledLiveUsers:['U-CONTROLLED']},
   }},async(api)=>{
-    const capability=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-NOT-IN-PILOT-LIST');
+    const capability=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-CONTROLLED');
     assert.equal(capability.status,200);
     assert.deepEqual(await capability.json(),{
       featureName:'พี่หมอ Clinical Research',
@@ -319,11 +319,13 @@ test('controlled-live research capability ignores pilot list but remains pharmac
       status:'available',mode:'controlled_live',allowed:true,
       requiresDeidentifiedInput:false,requiresAcknowledgment:true,
     });
+    const denied=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-NOT-ALLOWLISTED');
+    assert.equal(denied.status,200);assert.equal((await denied.json()).status,'not_allowed');
   });
   const denied=Object.assign(new Error('not a pharmacist'),{code:'PHARMACIST_INACTIVE'});
   await withApi({pharmacist:{
     readService:reads(),requirePharmacist:pharmacistMiddleware(denied),
-    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+    clinicalResearchPilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[],controlledLiveUsers:['U-NON-PHARMACIST']},
   }},async(api)=>{
     const response=await api('/api/pharmacist/consultations/clinical-research/capability',{},'U-NON-PHARMACIST');
     assert.equal(response.status,403);

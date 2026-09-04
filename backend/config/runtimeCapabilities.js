@@ -73,6 +73,10 @@ function unsafeRuntimeConfiguration(env = process.env) {
     const providerReady = researchProvider === 'openai' ? hasValue(env.OPENAI_API_KEY)
       : researchProvider === 'gemini' ? hasValue(env.GEMINI_API_KEY) : false;
     if (!providerReady) issues.push('PHARMACIST_AI_RESEARCH_CONFIGURATION_MISSING');
+    if (researchPilot.mode === CLINICAL_RESEARCH_MODES.CONTROLLED_LIVE
+      && researchPilot.controlledLiveUsers.length === 0) {
+      issues.push('CLINICAL_RESEARCH_CONTROLLED_LIVE_ALLOWLIST_EMPTY');
+    }
   }
   return issues;
 }

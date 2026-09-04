@@ -45,6 +45,21 @@ test('POST /api/consent แล้ว GET /api/consent/check ต้องเป�
   const res = await api('/api/consent/check');
   const body = await res.json();
   assert.strictEqual(body.hasConsent, true);
+  assert.strictEqual(body.version, '2569-08-1');
+  assert.strictEqual(body.privacyNoticeVersion, '2569-09-1');
+});
+
+test('ประกาศฉบับ 2569-09-1 ไม่บังคับ consent ใหม่และไม่เขียนทับประวัติฉบับ 2569-08-1',async()=>{
+  await db.Consents.insert({consent_id:'CNS-OLD',line_user_id:'U_FAMILY',accepted:true,version:'2569-08-1',at:'2026-08-20T00:00:00.000Z'});
+  const before=await api('/api/consent/check');
+  assert.deepEqual(await before.json(),{
+    hasConsent:true,status:'active',version:'2569-08-1',privacyNoticeVersion:'2569-09-1',
+    updatedAt:'2026-08-20T00:00:00.000Z',
+  });
+  const allowed=await api('/api/care-profile/independent',{method:'POST',body:JSON.stringify({patientName:'ทดสอบ'})});
+  assert.strictEqual(allowed.status,201);
+  const rows=await db.Consents.findAll();assert.strictEqual(rows.length,1);
+  assert.ok(rows.some((row)=>row.consent_id==='CNS-OLD'&&row.version==='2569-08-1'));
 });
 
 test('POST /api/export/pdf ผ่าน HTTP จริง ต้องคืนไฟล์ PDF พร้อม Header ที่ถูกต้อง', async () => {

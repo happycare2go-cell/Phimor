@@ -5,7 +5,8 @@ const { CareProfiles, Residents, Invites, Appointments, GroupBindings, Consents,
 const pdfService = require('./pdfService');
 const { GROUP_BINDING_TRANSACTION_KEY, bindFamilyDestinationInCurrentTransaction } = require('./groupBindingRepository');
 
-const CONSENT_VERSION = '2569-08-1'; // ข้อ H6: ต้องบันทึกเวอร์ชันเอกสารที่ยอมรับ
+const CONSENT_VERSION = '2569-08-1'; // ข้อ H6: ต้องบันทึกเวอร์ชันวัตถุประสงค์ความยินยอมที่ยอมรับ
+const PRIVACY_NOTICE_VERSION = '2569-09-1';
 
 function isPast(value) {
   const parsed = new Date(value || 0).getTime();
@@ -30,6 +31,7 @@ async function getConsentState(lineUserId) {
     hasConsent:latest?.accepted === true,
     status:latest ? (latest.accepted === true ? 'active' : 'withdrawn') : 'not_given',
     version:CONSENT_VERSION,
+    privacyNoticeVersion:PRIVACY_NOTICE_VERSION,
     updatedAt:latest?.at || null,
   };
 }
@@ -536,7 +538,7 @@ const AI_RESTRICTED_MESSAGE =
 module.exports = {
   recordConsent, getConsentState, hasValidConsent, acceptInvite, declineInvite, createIndependentProfile, bindFamilyGroup, bindFamilyGroupInCurrentTransaction,
   addAppointmentByFamily, addMedicationByFamily, getUpcomingAppointments, getFullHistory,
-  exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION,
+  exportHistoryToPdf, canUseAiFeatures, AI_RESTRICTED_MESSAGE, CONSENT_VERSION, PRIVACY_NOTICE_VERSION,
   recordMedicationSnapshot, getMedicationHistory, createCaregiverInvite, getCaregiverInvite, acceptCaregiverInvite, canAccessProfile, hasPermission,
   listCaregivers, caregiverByMemberId, revokeCaregiver, updateCaregiverPermissions, leaveCareProfile, updateFamilyAppointment, cancelFamilyAppointment,
 };

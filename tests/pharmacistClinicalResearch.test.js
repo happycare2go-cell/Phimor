@@ -123,7 +123,7 @@ function provider({ planValue = plan(), evidenceValue = evidence(), synthesisVal
 function service(overrides = {}) {
   const generate = createPharmacistClinicalResearchService({
     flags:{ consultation:{ clinicalResearch:true } },
-    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:[] },
+    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:[], controlledLiveUsers:['U-PHARM','U-ACTIVE'] },
     config:{ ai:{
       provider:'openai', clinicalResearchModel:'gpt-test', clinicalResearchReasoningEffort:'high',
       clinicalAllowedDomains:['fda.gov', 'who.int'], timeoutMs:1000, clinicalResearchTimeoutMs:90000,
@@ -182,7 +182,7 @@ test('clinical research requires explicit pharmacist acknowledgment before provi
   let providerCalls = 0;
   const generate = createPharmacistClinicalResearchService({
     flags:{ consultation:{ clinicalResearch:true } },
-    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:[] },
+    pilotConfig:{ emergencyEnabled:true, mode:'controlled_live', pilotUsers:[], controlledLiveUsers:['U-PHARM'] },
     config:{ ai:{ provider:'openai', clinicalResearchModel:'gpt-test' } },
     contextBuilder:async () => context(),
     provider:{ interpretDocument:async () => { providerCalls += 1; return {}; } },
@@ -202,7 +202,7 @@ test('research focus is required, bounded, and privacy-checked before context or
   let contextCalls=0,providerCalls=0,accessCalls=0;
   const controlled=createPharmacistClinicalResearchService({
     flags:{consultation:{clinicalResearch:true}},
-    pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+    pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[],controlledLiveUsers:['U-ACTIVE']},
     config:{ai:{provider:'openai',clinicalResearchModel:'gpt-test'}},
     contextBuilder:async()=>{contextCalls+=1;return context();},
     provider:{async generateStructured(){providerCalls+=1;}},
@@ -228,10 +228,10 @@ test('research focus is required, bounded, and privacy-checked before context or
   assert.equal(contextCalls,0);assert.equal(providerCalls,0);assert.equal(accessCalls,0);
 });
 
-test('controlled live ignores pilot membership, loads authorized context, and does not require a manual summary', async () => {
+test('controlled live requires rollout membership, loads authorized context, and does not require a manual summary', async () => {
   let contextCalls=0;
   const result=await service({
-    pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:['U-SOMEONE-ELSE']},
+    pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:['U-SOMEONE-ELSE'],controlledLiveUsers:['U-ACTIVE']},
     contextBuilder:async(input)=>{contextCalls+=1;assert.equal(input.pharmacistLineUserId,'U-ACTIVE');return context();},
   })({caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE'});
   assert.equal(result.status,'available');
@@ -244,7 +244,7 @@ test('controlled live preserves pharmacist and consultation access denial before
     let providerCalls=0;
     const generate=createPharmacistClinicalResearchService({
       flags:{consultation:{clinicalResearch:true}},
-      pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+      pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[],controlledLiveUsers:['U-ACTIVE']},
       config:{ai:{provider:'openai',clinicalResearchModel:'gpt-test'}},
       contextBuilder:async()=>{throw Object.assign(new Error('denied'),{code,status:403});},
       provider:{async generateStructured(){providerCalls+=1;}},

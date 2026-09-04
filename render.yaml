@@ -78,6 +78,9 @@ services:
         value: "true"
       - key: PHARMACIST_AI_RESEARCH_MODE
         value: "deidentified_pilot"
+      # Server-only controlled-live rollout gate. Configure only after owner approval.
+      - key: PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS
+        sync: false
       - key: PDF_DOWNLOAD_SECRET
         sync: false
       # Plus payment V1 is manual renewal only. Keep disabled until migration

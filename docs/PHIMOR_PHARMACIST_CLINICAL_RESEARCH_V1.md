@@ -6,9 +6,10 @@ Clinical Research is a private, on-demand support tool for the pharmacist assign
 
 The emergency flag remains fail-closed: `PHARMACIST_AI_RESEARCH_ENABLED=false`
 disables the feature without affecting ordinary consultation. In
-`controlled_live`, access comes from the existing authenticated active
-pharmacist and assigned-consultation authorization; the pilot allowlist is not
-consulted. In `deidentified_pilot`, the server-only
+`controlled_live`, access additionally requires the dedicated server-only
+`PHARMACIST_AI_RESEARCH_CONTROLLED_LIVE_USERS` allowlist, then continues through
+the existing authenticated active-pharmacist and assigned-consultation
+authorization. In `deidentified_pilot`, the server-only
 `PHARMACIST_AI_RESEARCH_PILOT_USERS` allowlist remains mandatory. The endpoint
 is rate-limited per case and pharmacist; the default is three requests per ten
 minutes and is configurable within safe bounds through
@@ -18,7 +19,7 @@ minutes and is configurable within safe bounds through
 
 - `disabled`: no research provider request; safe unavailable state.
 - `deidentified_pilot`: the assigned pharmacist supplies and reviews a de-identified summary. The research path performs only pharmacist/case authorization and does not automatically load Care Profile or clinical-domain context into the provider request.
-- `controlled_live`: uses the existing bounded, authorized Care Profile and consultation context. It requires explicit pharmacist action and acknowledgment, but no manual de-identified summary or pilot allowlist.
+- `controlled_live`: uses the existing bounded, authorized Care Profile and consultation context. It requires explicit pharmacist action, acknowledgment, and a matching dedicated controlled-live allowlist entry, but no manual de-identified summary. An empty allowlist denies all.
 
 Both non-disabled modes require explicit pharmacist acknowledgment on each
 request. The LIFF does not persist a pilot summary or acknowledgment in browser
@@ -89,6 +90,13 @@ verified. `store:false` is not ZDR. Follow-up DPA, data-residency, and legal
 governance work remains separately recorded and must not be represented as
 completed by this technical commissioning.
 
+PHIMOR Privacy Notice `2569-09-1` documents the bounded AI and external
+processor use. It is versioned separately from applicable Family Consent
+`2569-08-1`: publishing the notice does not itself invalidate the existing
+consent, block the Family LIFF, overwrite consent/withdrawal history, or create
+a blanket requirement to consent again. Materially different purposes require
+their own review and control.
+
 One Clinical Research interaction may contain planner, web, and synthesis calls. PHIMOR aggregates provider-reported input, output, total, and reasoning tokens across all calls. It also records actual web-search calls and the final accepted unique source count. Missing provider counts remain `NULL`; authoritative zeros remain `0`.
 
 The metadata-only audit records the interaction/case/provider/model/purpose/prompt/context/research-plan versions, result and safe error status, timestamps, character counts, usage counts, source count, and whether research actually ran. It does not store prompts, transcripts, patient facts, clinical output, draft text, search terms, page text, or source excerpts. If required audit persistence fails, the clinical analysis is not shown.
@@ -101,8 +109,11 @@ The metadata-only audit records the interaction/case/provider/model/purpose/prom
 - review/lock `OPENAI_CLINICAL_ALLOWED_DOMAINS`;
 - confirm migration `0018` is reviewed, preflighted, applied, and recorded through the normal migration process;
 - deploy Backend and Pharmacist LIFF from the same reviewed commit;
-- set `PHARMACIST_AI_RESEARCH_MODE=deidentified_pilot`, verify the pharmacist
-  allowlist, and enable only after the reviewed same-SHA Backend/LIFF release is healthy;
+- keep `PHARMACIST_AI_RESEARCH_MODE=deidentified_pilot` before release; after
+  the 2026-09-04 PHIMOR System Owner approval, change to `controlled_live` only
+  after the reviewed same-SHA Backend/LIFF release is healthy, Privacy Notice
+  `2569-09-1` is available, and the dedicated server-only allowlist contains
+  exactly one verified pharmacist;
 - preserve `PHARMACIST_AI_RESEARCH_ENABLED=false` as the immediate kill switch;
 - periodically review the accepted Standard Retention posture, Data Sharing
   setting, DPA, cross-border, notice, and incident-response records.

@@ -16,10 +16,26 @@ test('latest consent event is authoritative and withdrawal does not destroy Care
   await familyService.recordConsent('U-A', false);
   assert.deepEqual(await familyService.getConsentState('U-A'), {
     hasConsent:false, status:'withdrawn', version:familyService.CONSENT_VERSION,
+    privacyNoticeVersion:familyService.PRIVACY_NOTICE_VERSION,
     updatedAt:(await db.Consents.findAll())[0].at,
   });
   assert.ok(await db.CareProfiles.findOne((row) => row.care_profile_id === 'CP-1'));
   assert.equal((await familyService.getConsentState('U-B')).status, 'not_given');
+});
+
+test('privacy notice 2569-09-1 preserves applicable consent 2569-08-1 without rewriting history',async()=>{
+  await db.Consents.insert({
+    consent_id:'CNS-OLD',line_user_id:'U-A',accepted:true,version:'2569-08-1',at:'2026-08-20T00:00:00.000Z',
+  });
+  assert.equal(familyService.CONSENT_VERSION,'2569-08-1');
+  assert.equal(familyService.PRIVACY_NOTICE_VERSION,'2569-09-1');
+  assert.deepEqual(await familyService.getConsentState('U-A'),{
+    hasConsent:true,status:'active',version:'2569-08-1',privacyNoticeVersion:'2569-09-1',
+    updatedAt:'2026-08-20T00:00:00.000Z',
+  });
+  const rows=await db.Consents.findAll();
+  assert.equal(rows.length,1);
+  assert.ok(rows.some((row)=>row.version==='2569-08-1'&&row.accepted===true));
 });
 
 test('concurrent duplicate DSR submission returns one active request without blocking a later terminal request', async () => {
