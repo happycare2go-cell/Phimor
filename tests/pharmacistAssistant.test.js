@@ -381,6 +381,37 @@ test('invalid provider structure maps to AI_INVALID_RESPONSE and audit stores me
   assert.equal(JSON.stringify(audit).includes('secretClinicalContext'),false);
 });
 
+test('service revalidates medication grounding after a provider returns structurally valid output',async()=>{
+  let schemaWasSupplied=false;
+  const service=createPharmacistAssistantService({
+    config:{ai:{provider:'gemini',explanationModel:'test',timeoutMs:100,maxRetries:0}},
+    contextBuilder:async()=>({
+      schemaVersion:'v1',contextTimestamp:NOW,
+      currentMedications:[{name:'Amlodipine',strength:'5 mg'}],
+    }),
+    provider:{async generateStructured(input){
+      schemaWasSupplied=typeof input.outputSchema==='function';
+      return {
+        ...validAssistant(),
+        relevantMedicationContext:[{
+          text:'Amlodipine 500 mg อยู่ในรายการยาปัจจุบัน',
+          sourceCategory:'medication_snapshot',
+        }],
+        medicationChanges:[],
+      };
+    }},
+    recordAudit:async()=>({recorded:true}),
+    diagnosticLogger:()=>{},
+  });
+  const result=await service({caseId:'CASE-1',pharmacistLineUserId:'U-PHARM'});
+  assert.equal(schemaWasSupplied,true);
+  assert.deepEqual(
+    {status:result.status,errorCode:result.errorCode},
+    {status:'unavailable',errorCode:AI_ERROR_CODES.AI_INVALID_RESPONSE},
+  );
+  assert.equal(Object.hasOwn(result,'assistant'),false);
+});
+
 test('AI audit sanitizer accepts consultation metadata and rejects raw health fields',()=>{
   const {sanitizeAIInteractionMetadata}=require('../backend/services/aiAuditService');
   const record=sanitizeAIInteractionMetadata({consultationCaseId:'CASE-1',requesterType:'pharmacist',rawPrompt:'secret',healthContext:{drug:'x'}});

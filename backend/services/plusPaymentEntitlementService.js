@@ -11,6 +11,17 @@ const PAID_PLUS_FEATURES = Object.freeze([
   'doctor_visit_preparation', 'ai_explanation', 'medication_diff',
 ]);
 
+// This is an intentional package boundary, not a second definition of all
+// supported Plus capabilities. Adding one of these features to a paid package
+// requires a separate product decision.
+const PAID_PLUS_EXCLUDED_FEATURES = Object.freeze([
+  'pharmacist_escalation',
+]);
+
+function plusSubjectEntitlementLockKey(subjectLineUserId) {
+  return `plus-entitlement:${subjectLineUserId}`;
+}
+
 function createPlusPaymentEntitlementService({
   repository = createPlusPaymentRepository(),
   transaction = withTransaction,
@@ -31,7 +42,7 @@ function createPlusPaymentEntitlementService({
       throw new PlusPaymentError('PLUS_ORDER_SUBJECT_INVALID', 409);
     }
 
-    return transaction(`plus-entitlement:${candidate.subject_line_user_id}`, async () => {
+    return transaction(plusSubjectEntitlementLockKey(candidate.subject_line_user_id), async () => {
       let order = await repository.findOrderForUpdate(event.orderId);
       if (!order) throw new PlusPaymentError('PLUS_ORDER_NOT_FOUND', 404);
       if (order.subject_line_user_id !== candidate.subject_line_user_id) {
@@ -70,4 +81,9 @@ function createPlusPaymentEntitlementService({
   return { grantVerifiedPayment };
 }
 
-module.exports = { PAID_PLUS_FEATURES, createPlusPaymentEntitlementService };
+module.exports = {
+  PAID_PLUS_FEATURES,
+  PAID_PLUS_EXCLUDED_FEATURES,
+  plusSubjectEntitlementLockKey,
+  createPlusPaymentEntitlementService,
+};

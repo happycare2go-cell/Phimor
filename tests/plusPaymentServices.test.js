@@ -3,11 +3,30 @@ const assert = require('node:assert/strict');
 process.env.NODE_ENV = 'test';
 
 const { createPlusPaymentOrderService } = require('../backend/services/plusPaymentOrderService');
-const { createPlusPaymentEntitlementService } = require('../backend/services/plusPaymentEntitlementService');
+const {
+  PAID_PLUS_FEATURES, PAID_PLUS_EXCLUDED_FEATURES,
+  plusSubjectEntitlementLockKey, createPlusPaymentEntitlementService,
+} = require('../backend/services/plusPaymentEntitlementService');
+const { PLUS_FEATURES } = require('../backend/services/plusEntitlementService');
 const { createPlusPaymentIngestionService } = require('../backend/services/plusPaymentIngestionService');
 const { PLUS_PRICE_MINOR, PLUS_CURRENCY } = require('../backend/domain/plusPayment');
 
 const FLAGS = { plus: { enabled: true, paymentEnabled: true, internalEntitlementOnly: false } };
+
+test('paid Plus package mapping uses known features and keeps intentional omissions explicit', () => {
+  assert.equal(PAID_PLUS_FEATURES.every((feature) => PLUS_FEATURES.includes(feature)), true);
+  assert.deepEqual(
+    [...new Set([...PAID_PLUS_FEATURES, ...PAID_PLUS_EXCLUDED_FEATURES])].sort(),
+    [...PLUS_FEATURES].sort(),
+  );
+  assert.equal(PAID_PLUS_FEATURES.includes('pharmacist_escalation'), false);
+  assert.deepEqual(PAID_PLUS_EXCLUDED_FEATURES, ['pharmacist_escalation']);
+});
+
+test('Plus entitlement lock derives from the subject that owns paid-time continuity', () => {
+  assert.equal(plusSubjectEntitlementLockKey('U-1'), 'plus-entitlement:U-1');
+  assert.notEqual(plusSubjectEntitlementLockKey('U-1'), plusSubjectEntitlementLockKey('U-2'));
+});
 
 function checkoutRepository() {
   let order = null;
