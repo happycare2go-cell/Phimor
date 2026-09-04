@@ -65,7 +65,10 @@ Antibiotic or infectious-disease guidance is likewise informational. The system 
 
 ## Console behavior
 
-The assigned pharmacist explicitly opens **“พี่หมอ Clinical Research”**, reviews the operating-mode notice, and presses **“เริ่มค้นคว้า”**. The mobile-friendly private panel shows:
+The assigned pharmacist explicitly opens **“พี่หมอ Clinical Research”**,
+enters a separate research focus, reviews the operating-mode notice, and
+presses **“ค้นหลักฐานเพิ่มเติม”**. In `deidentified_pilot`, manually reviewed
+de-identified case context is also required. The mobile-friendly private panel shows:
 
 - context age, truncation, and stale-analysis notices;
 - recorded facts and their PHIMOR source categories;
@@ -93,13 +96,13 @@ The metadata-only audit records the interaction/case/provider/model/purpose/prom
 ## Production operating checklist
 
 - configure `OPENAI_API_KEY` server-side without exposing it to LIFF;
-- keep ordinary AI on `AI_PROVIDER=gemini` and select Clinical Research independently with `AI_PROVIDER_CLINICAL_RESEARCH=openai`;
+- keep OpenAI as the explicit primary provider with purpose-specific model routing; Gemini is a manual rollback only;
 - verify approved model access in a non-PHI commissioning test;
 - review/lock `OPENAI_CLINICAL_ALLOWED_DOMAINS`;
 - confirm migration `0018` is reviewed, preflighted, applied, and recorded through the normal migration process;
 - deploy Backend and Pharmacist LIFF from the same reviewed commit;
-- set `PHARMACIST_AI_RESEARCH_MODE=controlled_live` and enable only after the
-  reviewed same-SHA Backend/LIFF release is healthy;
+- set `PHARMACIST_AI_RESEARCH_MODE=deidentified_pilot`, verify the pharmacist
+  allowlist, and enable only after the reviewed same-SHA Backend/LIFF release is healthy;
 - preserve `PHARMACIST_AI_RESEARCH_ENABLED=false` as the immediate kill switch;
 - periodically review the accepted Standard Retention posture, Data Sharing
   setting, DPA, cross-border, notice, and incident-response records.

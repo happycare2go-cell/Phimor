@@ -52,10 +52,10 @@ services:
         sync: false   # รหัสลับชั่วคราวสำหรับส่งในกลุ่ม Care2Go เพื่อผูกกลุ่มปฏิบัติการ
       - key: GEMINI_API_KEY
         sync: false
-      # Document/Lab/Plus AI remains on Gemini. Pharmacist Assistant and
-      # Clinical Research select independent server-side OpenAI routes.
+      # OpenAI is the primary provider with purpose-specific model routing.
+      # Gemini remains available only through an explicit manual rollback.
       - key: AI_PROVIDER
-        value: "gemini"
+        value: "openai"
       - key: AI_PROVIDER_PHARMACIST
         value: "openai"
       - key: AI_PROVIDER_CLINICAL_RESEARCH
@@ -77,7 +77,7 @@ services:
       - key: PHARMACIST_AI_RESEARCH_ENABLED
         value: "true"
       - key: PHARMACIST_AI_RESEARCH_MODE
-        value: "controlled_live"
+        value: "deidentified_pilot"
       - key: PDF_DOWNLOAD_SECRET
         sync: false
       # Plus payment V1 is manual renewal only. Keep disabled until migration

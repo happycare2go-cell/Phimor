@@ -13,6 +13,7 @@ const CLOSED_CASE={...OPEN_CASE,state:'closed',waitingOn:'none',remainingSeconds
 const QUEUE_ITEM={caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300};
 const CLINICAL_RESEARCH_RESULT={
   status:'available',mode:'controlled_live',generatedAt:'2026-09-03T10:00:00Z',contextTimestamp:'2026-09-03T09:59:00Z',
+  researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
   analyzedThroughSequence:2,analyzedMessageCount:3,totalMessageCount:5,conversationTruncated:true,
   analysis:{
     caseSummary:'ผู้ใช้สอบถามเรื่องการใช้ยาร่วมกัน',
@@ -249,13 +250,14 @@ test('assistant generation exposes an immediate visible loading state and preven
   assert.equal(harness.state().assistant.assistant.caseSummary,'สรุปสำเร็จ');
 });
 
-test('assistant structured sections and source attribution render as text',()=>{
+test('assistant structured sections, source attribution, and research navigation render as explicit actions',()=>{
   const doc=fakeDocument();const container=new FakeElement();
-  let copies=0;
-  consoleUI.renderAssistant(doc,container,{status:'available',contextTimestamp:'2026-08-25T10:00:00Z',assistant:{caseSummary:'summary',recordedFacts:[{text:'recorded',sourceCategory:'care_profile'}],responseGuidance:[{text:'guidance',sourceCategory:'general_ai_knowledge'}],draftResponseForPharmacistReview:'editable draft',disclaimer:'review'}},{onCopyDraft:()=>{copies+=1;}});
-  const serialized=walkText(container).join('|');assert.match(serialized,/summary|recorded|Care Profile|guidance|General AI guidance|ร่างคำตอบสำหรับเภสัชกรตรวจสอบ|ร่างสำหรับเภสัชกรตรวจสอบ|editable draft|review/);
+  let copies=0,opens=0;
+  consoleUI.renderAssistant(doc,container,{status:'available',contextTimestamp:'2026-08-25T10:00:00Z',assistant:{caseSummary:'summary',recordedFacts:[{text:'recorded',sourceCategory:'care_profile'}],responseGuidance:[{text:'guidance',sourceCategory:'general_ai_knowledge'}],draftResponseForPharmacistReview:'editable draft',disclaimer:'review'}},{onCopyDraft:()=>{copies+=1;},onOpenResearch:()=>{opens+=1;}});
+  const serialized=walkText(container).join('|');assert.match(serialized,/summary|recorded|Care Profile|guidance|General AI guidance|ร่างคำตอบสำหรับเภสัชกรตรวจสอบ|ร่างสำหรับเภสัชกรตรวจสอบ|editable draft|review|ค้นหลักฐานเพิ่มเติม/);
   const buttons=[];const collect=(node)=>{if(node.tagName==='button')buttons.push(node);node.children.forEach(collect);};collect(container);
   buttons.find((button)=>button.textContent==='คัดลอกร่างไปช่องตอบ').listeners.click();assert.equal(copies,1);
+  buttons.find((button)=>button.textContent==='ค้นหลักฐานเพิ่มเติม').listeners.click();assert.equal(opens,1);
 });
 
 test('copying the ordinary assistant draft fills the composer but never sends',()=>{
@@ -294,12 +296,12 @@ test('clinical research is explicit, duplicate protected and uses its dedicated 
   });
   await harness.session.selectCase('CASE-1');await harness.session.pollOnce();
   assert.equal(harness.calls.some((item)=>item.path.endsWith('/clinical-research')),false);
-  const first=harness.session.generateClinicalResearch({safetyAcknowledged:true});
+  const first=harness.session.generateClinicalResearch({researchFocus:'หลักฐาน Drug A และ Drug B',safetyAcknowledged:true});
   assert.equal(harness.state().clinicalResearch.status,'loading');assert.equal(harness.state().activePanel,'research');
-  assert.deepEqual(await harness.session.generateClinicalResearch({safetyAcknowledged:true}),{ignored:true});
+  assert.deepEqual(await harness.session.generateClinicalResearch({researchFocus:'หลักฐาน Drug A และ Drug B',safetyAcknowledged:true}),{ignored:true});
   release(CLINICAL_RESEARCH_RESULT);await first;
   const call=harness.calls.find((item)=>item.path.endsWith('/clinical-research'));
-  assert.deepEqual(JSON.parse(call.options.body),{refresh:true,safetyAcknowledged:true});
+  assert.deepEqual(JSON.parse(call.options.body),{refresh:true,researchFocus:'หลักฐาน Drug A และ Drug B',safetyAcknowledged:true});
   assert.equal(harness.state().clinicalResearch.analysis.caseSummary,CLINICAL_RESEARCH_RESULT.analysis.caseSummary);
 });
 
@@ -309,6 +311,11 @@ test('controlled-live capability uses production wording and requires no manual 
   assert.doesNotMatch(message,/pilot|ทดลอง|ไม่ระบุตัวตน/i);
 });
 
+test('deidentified capability explicitly excludes automatic conversation and Care Profile context',()=>{
+  const message=consoleUI.clinicalResearchCapabilityMessage({status:'available',mode:'deidentified_pilot'});
+  assert.match(message,/ไม่อ่านบทสนทนา/);assert.match(message,/ไม่ดึง Care Profile อัตโนมัติ/);
+});
+
 test('clinical research panel renders truncation, stale state, citations and private draft safely',()=>{
   const doc=fakeDocument();const container=new FakeElement();let refreshes=0,copies=0;
   consoleUI.renderClinicalResearch(doc,container,CLINICAL_RESEARCH_RESULT,{
@@ -316,10 +323,10 @@ test('clinical research panel renders truncation, stale state, citations and pri
   });
   const visible=walkText(container).join('|');
   assert.match(visible,/มีข้อความใหม่หลังการวิเคราะห์|ไม่ครอบคลุมข้อความทั้งหมด|3 จาก 5/);
-  assert.match(visible,/สรุปประเด็นจากบทสนทนา|ยาปัจจุบันที่เกี่ยวข้อง|ข้อมูลปฏิกิริยาระหว่างยา|ร่างสำหรับเภสัชกรตรวจสอบ/);
+  assert.match(visible,/ประเด็นที่ให้ค้นคว้า|ประเด็นสำคัญที่พบ|ยาปัจจุบันที่เกี่ยวข้อง|ข้อมูลปฏิกิริยาระหว่างยา|ร่างสำหรับเภสัชกรตรวจสอบ/);
   assert.match(visible,/Official <script> source|fda\.gov|ไม่พบวันที่เผยแพร่|เปิดแหล่งอ้างอิง|สนับสนุน/);
   const buttons=[];const collect=(node)=>{if(node.tagName==='button')buttons.push(node);node.children.forEach(collect);};collect(container);
-  buttons.find((button)=>button.textContent==='วิเคราะห์ใหม่').listeners.click();
+  buttons.find((button)=>button.textContent==='ค้นหลักฐานใหม่').listeners.click();
   buttons.find((button)=>button.textContent==='นำร่างไปใส่ช่องตอบ').listeners.click();
   assert.equal(refreshes,1);assert.equal(copies,1);assert.equal(container.children.some((child)=>child.tagName==='script'),false);
 });
@@ -509,9 +516,9 @@ test('dedicated desktop-first console contains three professional workspace colu
   const css=fs.readFileSync(path.join(__dirname,'..','liff-app','pharmacist','console.css'),'utf8');assert.match(css,/grid-template-columns:minmax\(250px,300px\).*minmax\(420px,1fr\).*minmax\(310px,380px\)/);
   assert.match(css,/@media\(max-width:720px\)/);
   assert.match(css,/min-height:44px/);assert.match(css,/safe-area-inset-bottom/);assert.match(css,/case-card--closed/);assert.match(css,/case-header--closed/);
-  for(const id of ['showClinicalResearchButton','clinicalResearchPanel','clinicalResearchContent','refreshClinicalResearchButton','runClinicalResearchButton','clinicalResearchDeidentifiedSummary','clinicalResearchPrivacyReviewed','clinicalResearchAcknowledgment'])assert.match(html,new RegExp(`id="${id}"`));
+  for(const id of ['showClinicalResearchButton','clinicalResearchPanel','clinicalResearchContent','refreshClinicalResearchButton','runClinicalResearchButton','clinicalResearchDeidentifiedSummary','clinicalResearchFocus','clinicalResearchPrivacyReviewed','clinicalResearchAcknowledgment'])assert.match(html,new RegExp(`id="${id}"`));
   assert.match(css,/clinical-research-body\{[^}]*overflow-y:auto/);
-  assert.match(html,/พี่หมอ Clinical Research|ผู้ช่วยค้นคว้าข้อมูลประกอบการดูแลสำหรับเภสัชกร|ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา/);
+  assert.match(html,/ผู้ช่วยเภสัชกร|ฟังก์ชันนี้ไม่ค้นข้อมูลหรือแหล่งอ้างอิงภายนอก|พี่หมอ Clinical Research|ค้นข้อมูลและแหล่งอ้างอิงเพิ่มเติม|ต้องการให้พี่หมอค้นคว้าประเด็นใด|ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา/);
 });
 
 function walkText(element){return [element.textContent,...element.children.flatMap(walkText)].filter(Boolean);}

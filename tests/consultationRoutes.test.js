@@ -280,12 +280,17 @@ test('pharmacist clinical research route exposes safe capability, accepts pilot 
     assert.equal(capabilityBody.mode,'deidentified_pilot');assert.equal(capabilityBody.allowed,true);
     assert.doesNotMatch(JSON.stringify(capabilityBody),/U-PHARM|pilotUsers|provider/i);
     const response=await api('/api/pharmacist/consultations/CASE-1/clinical-research',{
-      method:'POST',body:JSON.stringify({refresh:true,deidentifiedSummary:'ข้อมูลทั่วไปที่ไม่ระบุตัวตนสำหรับเภสัชกรตรวจสอบ',privacyReviewed:true,safetyAcknowledged:true}),
+      method:'POST',body:JSON.stringify({
+        refresh:true,
+        deidentifiedSummary:'ข้อมูลทั่วไปที่ไม่ระบุตัวตนสำหรับเภสัชกรตรวจสอบ',
+        researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ amlodipine ร่วมกับ simvastatin',
+        privacyReviewed:true,safetyAcknowledged:true,
+      }),
     },'U-PHARM');
     assert.equal(response.status,200);
     assert.equal((await response.json()).status,'available');
     for (const injected of [
-      {model:'other'}, {patientContext:{medications:['Drug A']}}, {refresh:false},
+      {model:'other'}, {patientContext:{medications:['Drug A']}}, {refresh:false}, {researchFocus:{}},
     ]) {
       const rejected=await api('/api/pharmacist/consultations/CASE-1/clinical-research',{
         method:'POST',body:JSON.stringify(injected),
@@ -295,6 +300,7 @@ test('pharmacist clinical research route exposes safe capability, accepts pilot 
   });
   assert.deepEqual(calls[0],{rate:{caseId:'CASE-1',pharmacistId:'PH-1'}});
   assert.equal(calls[1].research.pharmacistLineUserId,'U-PHARM');
+  assert.equal(calls[1].research.researchFocus,'ตรวจสอบหลักฐานเกี่ยวกับการใช้ amlodipine ร่วมกับ simvastatin');
   assert.equal(calls[1].research.privacyReviewed,true);
   assert.equal(calls[1].research.safetyAcknowledged,true);
   assert.equal(calls.some((item)=>item.message),false);

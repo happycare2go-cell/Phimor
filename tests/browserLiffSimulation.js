@@ -1214,7 +1214,7 @@ async function pharmacistConsoleJourney(browser) {
     if(url.pathname==='/config/liff')return {publicBackendUrl:SIMULATED_BACKEND_URL,pharmacistLiffId:'SIM_PHARMACIST'};
     if(url.pathname==='/api/pharmacist/consultations/queue')return {items:[{caseId:'CASE-Q',queuedAt:'2026-08-25T00:00:00Z',topicCategory:'medication_advice',triageCategory:'pharmacist_consultation_eligible',waitingSeconds:300}],hasMore:false,nextCursor:null};
     if(url.pathname==='/api/pharmacist/consultations/active')return {items:[{caseId:'CASE-1',state:'active',waitingOn:'pharmacist',remainingSeconds:3600,effectiveClosed:false}]};
-    if(url.pathname==='/api/pharmacist/consultations/clinical-research/capability')return {status:'available',mode:'controlled_live',allowed:true,requiresDeidentifiedInput:false,requiresAcknowledgment:true};
+    if(url.pathname==='/api/pharmacist/consultations/clinical-research/capability')return {status:'available',mode:'deidentified_pilot',allowed:true,requiresDeidentifiedInput:true,requiresAcknowledgment:true};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/accept'&&request.method()==='POST')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q')return {caseId:'CASE-Q',state:'active',waitingOn:'pharmacist',acceptedAt:'2026-08-25T00:00:00Z',expiresAt:'2026-08-26T00:00:00Z',remainingSeconds:3600,effectiveClosed:false};
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/messages'&&request.method()==='POST'){messagePostCalls+=1;return {message:{sequence:1,body:'unexpected'}};}
@@ -1225,8 +1225,14 @@ async function pharmacistConsoleJourney(browser) {
     }
     if(url.pathname==='/api/pharmacist/consultations/CASE-Q/clinical-research'&&request.method()==='POST'){
       clinicalResearchCalls+=1;
-      assert.deepEqual(request.postDataJSON(),{refresh:true,safetyAcknowledged:true});
-      return {status:'available',mode:'controlled_live',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:1,totalMessageCount:1,conversationTruncated:false,analysis:{
+      assert.deepEqual(request.postDataJSON(),{
+        refresh:true,
+        researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับข้อควรพิจารณาเมื่อใช้ amlodipine ร่วมกับ simvastatin',
+        safetyAcknowledged:true,
+        deidentifiedSummary:'ผู้สูงอายุใช้ amlodipine และ simvastatin ต้องการข้อมูลประกอบการทบทวนการใช้ยาร่วมกัน',
+        privacyReviewed:true,
+      });
+      return {status:'available',mode:'deidentified_pilot',researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับข้อควรพิจารณาเมื่อใช้ amlodipine ร่วมกับ simvastatin',generatedAt:'2026-08-25T02:05:00Z',caseRevision:'REV-Q',analyzedThroughSequence:0,analyzedMessageCount:1,totalMessageCount:1,conversationTruncated:false,analysis:{
         caseSummary:'ทบทวนข้อมูลยาปัจจุบันและคำถามเรื่องเวลาใช้ยา',recordedFacts:[],relevantMedicationContext:[],medicationChanges:[],missingInformation:['เวลาที่ใช้ยาจริงล่าสุด'],questionsToAsk:['ใช้ยาครั้งล่าสุดเมื่อใด'],keyClinicalIssues:[{text:'ควรยืนยันวิธีใช้จากฉลากหรือใบสั่งยา',evidenceRefs:['SRC-1']}],safetyConsiderations:[],interactionReview:[],guidelineReview:[{topic:'ความปลอดภัยด้านยา',finding:'ควรตรวจสอบกับข้อมูลยาที่ได้รับการยืนยัน',evidenceRefs:['SRC-1'],limitation:'ข้อมูลยังไม่ครบ'}],pharmacistRecommendations:[],escalationConsiderations:[],research:{performed:true,sources:[{referenceId:'SRC-1',title:'Medication safety overview',url:'https://www.who.int/initiatives/medication-without-harm',domain:'who.int'}],limitations:['ข้อมูลจากการสนทนาอาจไม่ครบ']},draftResponseForPharmacistReview:'ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม เพื่อให้เภสัชกรตรวจสอบข้อมูลได้ครบถ้วนค่ะ',disclaimer:'เภสัชกรเป็นผู้ตัดสินใจและต้องตรวจสอบก่อนส่ง',
       },usage:{inputTokens:60,outputTokens:25,totalTokens:85}};
     }
@@ -1244,7 +1250,7 @@ async function pharmacistConsoleJourney(browser) {
   await page.waitForFunction(()=>document.querySelector('#caseHeader').textContent.includes('ผู้รับการดูแลตัวอย่าง'));
   assert.match(await page.locator('#caseHeader').textContent(),/เหลือเวลา/);
   assert.strictEqual(await page.locator('#messageComposer').isEnabled(),true);
-  assert.match(await page.locator('#assistantPanel .ai-boundary').textContent(),/เภสัชกรเป็นผู้ตัดสินใจ/);
+  assert.match(await page.locator('#assistantPanel .ai-boundary').textContent(),/ไม่ค้นข้อมูลหรือแหล่งอ้างอิงภายนอก.*เภสัชกรต้องตรวจแก้และเป็นผู้ส่งข้อความเอง/);
   await page.getByRole('button',{name:/ข้อมูลเคส/}).click();
   assert.match(await page.locator('#caseContext').textContent(),/Metformin/);
   assert.match(await page.locator('#caseContext').textContent(),/120 mmHg.*75 mmHg/);
@@ -1260,24 +1266,33 @@ async function pharmacistConsoleJourney(browser) {
   assert.match(await page.locator('#assistantContent').textContent(),/สรุปเคสสำหรับเภสัชกร|ข้อมูลที่บันทึกไว้|ยาที่เกี่ยวข้อง|ข้อมูลที่ยังขาด|คำถามที่ควรถามเพิ่ม|ประเด็นความปลอดภัย|ประเด็นพิจารณาส่งต่อ|แนวทางประกอบการตอบ|ร่างสำหรับเภสัชกรตรวจสอบ/);
   const assistantLayout=await page.evaluate(()=>{const panel=document.querySelector('#assistantPanel');const content=document.querySelector('#assistantContent');const copy=content.querySelector('.assistant-copy');const panelRect=panel.getBoundingClientRect();const copyRect=copy.getBoundingClientRect();content.scrollTop=content.scrollHeight;return {panelTop:panelRect.top,panelBottom:panelRect.bottom,viewportHeight:window.innerHeight,overflowY:getComputedStyle(content).overflowY,copyHeight:copyRect.height,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth};});
   assert.ok(assistantLayout.panelTop>=0&&assistantLayout.panelBottom<=assistantLayout.viewportHeight);assert.equal(assistantLayout.overflowY,'auto');assert.ok(assistantLayout.copyHeight>=44);assert.equal(assistantLayout.horizontalOverflow,false);
+  await page.locator('#assistantContent .assistant-research-handoff').click();
+  assert.equal(await page.locator('#clinicalResearchPanel').isVisible(),true);
+  assert.equal(await page.locator('#clinicalResearchFocus').evaluate((element)=>document.activeElement===element),true);
+  assert.equal(clinicalResearchCalls,0);
+  assert.equal(await page.locator('#messageComposer').inputValue(),'');
+  await page.locator('#closeClinicalResearchButton').click();
+  await page.locator('#showAssistantButton').click();
   await page.getByRole('button',{name:'คัดลอกร่างไปช่องตอบ'}).click();
   assert.equal(await page.locator('#assistantPanel').isHidden(),true);
   assert.match(await page.locator('#messageComposer').inputValue(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุดเพิ่มเติม/);
   assert.equal(messagePostCalls,0);
   await page.getByRole('button',{name:/พี่หมอ Clinical Research/}).click();
-  assert.equal(await page.locator('#clinicalResearchDeidentifiedFields').isHidden(),true);
+  assert.equal(await page.locator('#clinicalResearchDeidentifiedFields').isVisible(),true);
   const capabilityCopy=await page.locator('#clinicalResearchCapabilityMessage').textContent();
-  assert.match(capabilityCopy,/ระบบ AI ช่วยสรุปและค้นคว้า|เภสัชกรต้องตรวจสอบ/);
-  assert.doesNotMatch(capabilityCopy,/pilot|ทดลอง|ไม่ระบุตัวตน/i);
+  assert.match(capabilityCopy,/ไม่อ่านบทสนทนา|ไม่ดึง Care Profile อัตโนมัติ/);
+  await page.locator('#clinicalResearchDeidentifiedSummary').fill('ผู้สูงอายุใช้ amlodipine และ simvastatin ต้องการข้อมูลประกอบการทบทวนการใช้ยาร่วมกัน');
+  await page.locator('#clinicalResearchFocus').fill('ตรวจสอบหลักฐานเกี่ยวกับข้อควรพิจารณาเมื่อใช้ amlodipine ร่วมกับ simvastatin');
+  await page.locator('#clinicalResearchPrivacyReviewed').check();
   await page.locator('#clinicalResearchAcknowledgment').check();
   const [researchResponse]=await Promise.all([
     page.waitForResponse((response)=>response.url().includes('/api/pharmacist/consultations/CASE-Q/clinical-research')),
-    page.getByRole('button',{name:'เริ่มค้นคว้า'}).click(),
+    page.locator('#runClinicalResearchButton').click(),
   ]);
   assert.equal((await researchResponse.json()).status,'available');
   await page.waitForFunction(()=>!document.querySelector('#clinicalResearchPanel').hidden&&document.querySelector('#clinicalResearchContent').textContent.includes('ทบทวนข้อมูลยาปัจจุบัน'));
   assert.equal(clinicalResearchCalls,1);
-  assert.match(await page.locator('#clinicalResearchContent').textContent(),/Medication safety overview/);
+  assert.match(await page.locator('#clinicalResearchContent').textContent(),/ประเด็นที่ให้ค้นคว้า|หลักฐานที่เกี่ยวข้อง|แหล่งอ้างอิง|ข้อจำกัดของการค้นครั้งนี้|Medication safety overview/);
   assert.match(await page.locator('#clinicalResearchContent').textContent(),/ขอสอบถามเวลาใช้ยาครั้งล่าสุด/);
   const researchLayout=await page.evaluate(()=>{
     const panel=document.querySelector('#clinicalResearchPanel');const body=document.querySelector('.clinical-research-body');const content=document.querySelector('#clinicalResearchContent');const link=content.querySelector('a');const copy=content.querySelector('.clinical-research-copy');

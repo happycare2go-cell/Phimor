@@ -20,6 +20,8 @@ const DEIDENTIFIED_SUMMARY_PATTERNS = Object.freeze([
 ]);
 
 const MAX_DEIDENTIFIED_SUMMARY_CHARS = 6000;
+const MIN_RESEARCH_FOCUS_CHARS = 5;
+const MAX_RESEARCH_FOCUS_CHARS = 2000;
 
 function normalized(value) {
   return String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -78,7 +80,23 @@ function validateDeidentifiedPilotSummary(value) {
   return Object.freeze({ ok:true, summary });
 }
 
+function validateResearchFocus(value, { enforcePrivacy = false } = {}) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return Object.freeze({ ok:false, errorCode:'CLINICAL_RESEARCH_FOCUS_REQUIRED' });
+  }
+  const researchFocus = value.normalize('NFC').trim();
+  if (researchFocus.length < MIN_RESEARCH_FOCUS_CHARS || researchFocus.length > MAX_RESEARCH_FOCUS_CHARS) {
+    return Object.freeze({ ok:false, errorCode:'CLINICAL_RESEARCH_FOCUS_INVALID' });
+  }
+  if (enforcePrivacy && DEIDENTIFIED_SUMMARY_PATTERNS.some((pattern) => pattern.test(researchFocus))) {
+    return Object.freeze({ ok:false, errorCode:'CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED' });
+  }
+  return Object.freeze({ ok:true, researchFocus });
+}
+
 module.exports = {
   SAFE_IDENTIFIER_PATTERNS, DEIDENTIFIED_SUMMARY_PATTERNS, MAX_DEIDENTIFIED_SUMMARY_CHARS,
+  MIN_RESEARCH_FOCUS_CHARS, MAX_RESEARCH_FOCUS_CHARS,
   normalized, privacyViolation, sanitizeResearchPlan, validateDeidentifiedPilotSummary,
+  validateResearchFocus,
 };

@@ -2,7 +2,7 @@
 
 This runbook prepares one reviewed Backend/System Admin/Pharmacist LIFF release.
 Center Ownership Transfer is operational. Pharmacist Clinical Research is now
-commissioned in `controlled_live` under the separately recorded Standard
+commissioned in `deidentified_pilot` under the separately recorded Standard
 Retention production decision. This historical release runbook is retained for
 traceability; the current operating posture is authoritative in
 `PHIMOR_OPENAI_CLINICAL_RESEARCH_COMMISSIONING.md`.
@@ -12,12 +12,12 @@ traceability; the current operating posture is authoritative in
 | Variable | Initial value/status | Classification |
 | --- | --- | --- |
 | `NODE_ENV` | `production` | Required for deploy |
-| `AI_PROVIDER` | `gemini` | Required for deploy; preserves document/Lab/Plus/explanation AI |
-| `GEMINI_API_KEY` | existing server secret | Required for existing Gemini flows |
+| `AI_PROVIDER` | `openai` | Required for deploy; primary provider for globally routed AI |
+| `GEMINI_API_KEY` | existing server secret | Optional manual rollback credential |
 | `AI_PROVIDER_PHARMACIST` | `openai` | Required for the fast Pharmacist Assistant route |
 | `AI_PROVIDER_CLINICAL_RESEARCH` | `openai` | Required for deploy; independent routing |
 | `PHARMACIST_AI_RESEARCH_ENABLED` | `true` | Current product state; `false` remains the emergency kill switch |
-| `PHARMACIST_AI_RESEARCH_MODE` | `controlled_live` | Uses existing pharmacist and assigned-case authorization |
+| `PHARMACIST_AI_RESEARCH_MODE` | `deidentified_pilot` | Requires allowlisted pharmacist and manually reviewed de-identified input |
 | `AI_MODEL_DOCUMENT` | `gpt-5.6-luna` | Safe server config; used only when OpenAI owns that purpose |
 | `AI_MODEL_EXPLANATION` | `gpt-5.6-terra` | Safe server config; used only when OpenAI owns that purpose |
 | `AI_MODEL_PHARMACIST` | `gpt-5.6-terra` | Safe server config; used only when OpenAI owns that purpose |
@@ -42,24 +42,25 @@ provider makes readiness report a safe configuration issue.
 5. Configure the server-only `OPENAI_API_KEY` without revealing its value.
 6. Confirm the reviewed commissioning decision and retain
    `PHARMACIST_AI_RESEARCH_ENABLED=false` until the same-SHA deploy is healthy.
-7. Keep document/Lab/Plus/explanation AI on `AI_PROVIDER=gemini`; route only
-   the Pharmacist Assistant through `AI_PROVIDER_PHARMACIST=openai`.
+7. Keep OpenAI as the explicit primary provider with purpose-specific model
+   routing; Gemini remains a manual rollback only.
 8. Push the reviewed HEAD.
 9. Deploy Backend and LIFF from the same SHA.
 10. The Render pre-deploy step applies 0018 before the new backend starts.
 11. Verify the deployed SHA.
 12. Verify migration status reports 0018 applied and no checksum mismatch.
 13. Verify `/ready` passes.
-14. Verify normal Family, Center, System Admin, Pharmacist, and existing Gemini
+14. Verify normal Family, Center, System Admin, Pharmacist, and existing AI
     flows without sending live AI research requests.
 15. Verify the Ownership Transfer admin-safe/synthetic flow as authorized.
 16. Run `npm run preflight:openai-v1`; it accepts no input and uses no PHI.
 17. Review API usage and cost from the bounded preflight output.
 18. Confirm Standard Retention is the accepted current posture, Data Sharing
     remains off, `store:false` remains set, and ZDR is not claimed.
-19. Set `PHARMACIST_AI_RESEARCH_MODE=controlled_live` and enable the feature.
+19. Set `PHARMACIST_AI_RESEARCH_MODE=deidentified_pilot`, verify the pharmacist
+    allowlist, and enable the feature.
 20. Verify one authorized pharmacist case with human review and no auto-send.
-21. Any broader `AI_PROVIDER=openai` cutover remains a separate future decision.
+21. Any rollback to Gemini remains an explicit, separately reviewed operator decision.
 
 ## Stop conditions
 

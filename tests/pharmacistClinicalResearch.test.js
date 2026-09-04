@@ -133,7 +133,11 @@ function service(overrides = {}) {
     recordAudit:async () => ({ recorded:true }),
     ...overrides,
   });
-  return (input) => generate({ safetyAcknowledged:true, ...input });
+  return (input) => generate({
+    safetyAcknowledged:true,
+    researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
+    ...input,
+  });
 }
 
 test('clinical research runs planner, deidentified web evidence, synthesis and aggregates every call', async () => {
@@ -154,10 +158,15 @@ test('clinical research runs planner, deidentified web evidence, synthesis and a
   assert.deepStrictEqual(calls.map((item)=>item.timeoutMs),[90000,90000,90000]);
   assert.equal(calls[0].webSearch, undefined);
   assert.equal(calls[2].webSearch, undefined);
+  const expectedFocus='ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B';
+  assert.equal(JSON.parse(calls[0].context).pharmacistResearchFocus,expectedFocus);
+  assert.equal(JSON.parse(calls[2].context).pharmacistResearchFocus,expectedFocus);
+  assert.equal(result.researchFocus,expectedFocus);
   assert.deepStrictEqual(calls[1].webSearch, {
     allowedDomains:['fda.gov', 'who.int'], maxCalls:4, country:'TH', required:true,
   });
   const webBody = JSON.stringify({ context:calls[1].context, input:calls[1].input });
+  assert.equal(webBody.includes(expectedFocus),false);
   assert.doesNotMatch(webBody, /ผู้ป่วย ทดสอบ|CP-PRIVATE|CASE-PRIVATE|U-PRIVATE|ฉันใช้ Drug A และ Drug B/);
   assert.deepStrictEqual({
     inputTokens:audit.inputTokens, outputTokens:audit.outputTokens,
@@ -180,10 +189,43 @@ test('clinical research requires explicit pharmacist acknowledgment before provi
     recordAudit:async () => ({ recorded:true }),
   });
   await assert.rejects(
-    generate({ caseId:'CASE-PRIVATE', pharmacistLineUserId:'U-PHARM' }),
+    generate({
+      caseId:'CASE-PRIVATE', pharmacistLineUserId:'U-PHARM',
+      researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
+    }),
     (error) => error.code === 'CLINICAL_RESEARCH_ACK_REQUIRED',
   );
   assert.equal(providerCalls, 0);
+});
+
+test('research focus is required, bounded, and privacy-checked before context or provider execution',async()=>{
+  let contextCalls=0,providerCalls=0,accessCalls=0;
+  const controlled=createPharmacistClinicalResearchService({
+    flags:{consultation:{clinicalResearch:true}},
+    pilotConfig:{emergencyEnabled:true,mode:'controlled_live',pilotUsers:[]},
+    config:{ai:{provider:'openai',clinicalResearchModel:'gpt-test'}},
+    contextBuilder:async()=>{contextCalls+=1;return context();},
+    provider:{async generateStructured(){providerCalls+=1;}},
+  });
+  await assert.rejects(controlled({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',safetyAcknowledged:true,
+  }),(error)=>error.code==='CLINICAL_RESEARCH_FOCUS_REQUIRED');
+  await assert.rejects(controlled({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',safetyAcknowledged:true,researchFocus:'x'.repeat(2001),
+  }),(error)=>error.code==='CLINICAL_RESEARCH_FOCUS_INVALID');
+  const deidentified=createPharmacistClinicalResearchService({
+    flags:{consultation:{clinicalResearch:true}},
+    pilotConfig:{emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']},
+    config:{ai:{provider:'openai',clinicalResearchModel:'gpt-test'}},
+    accessChecker:async()=>{accessCalls+=1;},contextBuilder:async()=>{contextCalls+=1;},
+    provider:{async generateStructured(){providerCalls+=1;}},
+  });
+  await assert.rejects(deidentified({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
+    privacyReviewed:true,deidentifiedSummary:'ข้อมูลทางคลินิกทั่วไปที่ไม่ระบุตัวตนสำหรับทดสอบ',
+    researchFocus:'ตรวจสอบยาสำหรับ CASE-PRIVATE',
+  }),(error)=>error.code==='CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED');
+  assert.equal(contextCalls,0);assert.equal(providerCalls,0);assert.equal(accessCalls,0);
 });
 
 test('controlled live ignores pilot membership, loads authorized context, and does not require a manual summary', async () => {
@@ -209,6 +251,7 @@ test('controlled live preserves pharmacist and consultation access denial before
     });
     await assert.rejects(generate({
       caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-ACTIVE',safetyAcknowledged:true,
+      researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
     }),(error)=>error.code===code);
     assert.equal(providerCalls,0);
   }
@@ -298,7 +341,7 @@ test('disabled flag fails before context/provider and dedicated audit failure re
   });
   assert.deepStrictEqual(auditFailure, {
     status:'unavailable', errorCode:'AI_AUDIT_WRITE_FAILED',
-    message:'ระบบวิเคราะห์บทสนทนายังไม่พร้อม กรุณาดำเนินการสนทนาด้วยตนเอง',
+    message:'พี่หมอ Clinical Research ยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง',
   });
 });
 
@@ -310,7 +353,10 @@ test('deidentified pilot uses only reviewed summary context and never auto-loads
     contextBuilder:async()=>{contextCalls+=1;throw new Error('must not load private context');},
     accessChecker:async()=>{accessCalls+=1;return {pharmacistId:'PH-1',state:'active',databaseNow:'2026-09-03T00:00:00Z'};},
     recordAudit:async(value)=>{audit=value;return {recorded:true};},
-  })({caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',deidentifiedSummary,privacyReviewed:true});
+  })({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',deidentifiedSummary,privacyReviewed:true,
+    researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
+  });
   assert.equal(result.status,'available');
   assert.equal(result.mode,'deidentified_pilot');
   assert.equal(contextCalls,0);assert.equal(accessCalls,1);
@@ -330,10 +376,22 @@ test('pilot allowlist and privacy gate fail before provider or automatic context
   await assert.rejects(make({emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:[]})({
     caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
     privacyReviewed:true,deidentifiedSummary:'ข้อมูลทั่วไปที่ไม่มีตัวระบุบุคคลโดยตรงสำหรับทดสอบระบบ',
+    researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
   }),(error)=>error.code==='CLINICAL_RESEARCH_NOT_ALLOWED');
+  const allowedPilot=make({emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']});
+  await assert.rejects(allowedPilot({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
+    privacyReviewed:true,researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
+  }),(error)=>error.code==='DEIDENTIFIED_SUMMARY_REQUIRED');
+  await assert.rejects(allowedPilot({
+    caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
+    deidentifiedSummary:'ข้อมูลทั่วไปที่ไม่มีตัวระบุบุคคลโดยตรงสำหรับทดสอบระบบ',
+    researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
+  }),(error)=>error.code==='DEIDENTIFIED_REVIEW_REQUIRED');
   await assert.rejects(make({emergencyEnabled:true,mode:'deidentified_pilot',pilotUsers:['U-PHARM']})({
     caseId:'CASE-PRIVATE',pharmacistLineUserId:'U-PHARM',safetyAcknowledged:true,
     privacyReviewed:true,deidentifiedSummary:'ชื่อผู้ป่วย: สมชาย ใจดี ใช้ยาตามข้อมูลที่บันทึก',
+    researchFocus:'ตรวจสอบหลักฐานเกี่ยวกับการใช้ Drug A ร่วมกับ Drug B',
   }),(error)=>error.code==='DEIDENTIFIED_SUMMARY_PRIVACY_REJECTED');
   assert.equal(providerCalls,0);assert.equal(contextCalls,0);assert.equal(accessCalls,0);
 });

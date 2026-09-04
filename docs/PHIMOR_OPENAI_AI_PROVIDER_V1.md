@@ -4,8 +4,9 @@
 
 OpenAI is an optional implementation of the existing PHIMOR AI provider contract. Existing Gemini behavior remains available. Global routing is explicit through `AI_PROVIDER`; the Pharmacist Assistant and Clinical Research can select independent server-side providers through `AI_PROVIDER_PHARMACIST` and `AI_PROVIDER_CLINICAL_RESEARCH`. There is no automatic failure fallback, because silently moving clinical content between providers would weaken cost, privacy, and incident boundaries.
 
-PHIMOR's production routing keeps ordinary AI on Gemini and routes only the
-Pharmacist Assistant and Clinical Research to OpenAI. The current production
+PHIMOR's production routing uses OpenAI as the primary provider with
+purpose-specific model routing. Gemini remains available only as an explicitly
+selected manual rollback provider; there is no automatic fallback. The current production
 decision accepts OpenAI Standard Retention, keeps Data Sharing off, and keeps
 `store:false` on every Responses API request. Zero Data Retention (ZDR) is not
 enabled or verified; `store:false` must never be described as ZDR. This record
@@ -44,12 +45,13 @@ Required to select OpenAI for all globally routed AI flows:
 - `AI_PROVIDER=openai`
 - `OPENAI_API_KEY` as a server-side secret
 
-The production routing target keeps `AI_PROVIDER=gemini` for document, Lab,
-Plus, and explanation flows; sets `AI_PROVIDER_PHARMACIST=openai` for the fast
-Pharmacist Assistant; and sets `AI_PROVIDER_CLINICAL_RESEARCH=openai` for the
-deeper research workflow. When either purpose-specific override is absent, it
-falls back to `AI_PROVIDER`. Provider failure never causes cross-provider
-fallback.
+The production routing target sets `AI_PROVIDER=openai`,
+`AI_PROVIDER_PHARMACIST=openai`, and
+`AI_PROVIDER_CLINICAL_RESEARCH=openai`. Purpose-specific model variables keep
+document, explanation, Pharmacist Assistant, and Clinical Research routing
+explicit. When a purpose-specific provider override is absent, it uses
+`AI_PROVIDER`. Provider failure never causes cross-provider fallback. Gemini
+remains available only through an explicit operator-selected rollback.
 
 Optional controls:
 
@@ -70,8 +72,8 @@ Readiness reports safe issue codes when an active globally routed flow or the
 Pharmacist Assistant selects OpenAI without a key. Disabled Clinical Research
 does not by itself require an OpenAI key; if enabled, readiness requires the
 credential for its configured provider. Readiness never projects a key or its
-value. Gemini configuration and behavior are unchanged for purposes still
-routed by `AI_PROVIDER=gemini`.
+value. Selecting Gemini as a rollback provider remains a manual configuration
+decision and never occurs automatically after an OpenAI failure.
 
 ## Structured output and compatibility
 

@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { privacyViolation, sanitizeResearchPlan } = require('../backend/services/clinicalResearchPrivacy');
+const {
+  privacyViolation, sanitizeResearchPlan, validateResearchFocus,
+  MAX_RESEARCH_FOCUS_CHARS,
+} = require('../backend/services/clinicalResearchPrivacy');
 const {
   evidenceUrlKey, buildEvidenceBundle, createUsageAccumulator,
 } = require('../backend/services/clinicalEvidenceService');
@@ -29,6 +32,18 @@ test('privacy gate drops unsafe topic rather than sending it to web research', (
   assert.equal(result.rejectedTopics.length, 1);
   assert.equal(result.acceptedTopics.length, 1);
   assert.doesNotMatch(JSON.stringify(result.acceptedTopics), /CP-PRIVATE|ผู้ป่วย/);
+});
+
+test('research focus is trimmed, bounded, and rejects direct identifiers in deidentified mode',()=>{
+  assert.deepStrictEqual(validateResearchFocus('  หลักฐานการใช้ amlodipine ร่วมกับ simvastatin  ',{enforcePrivacy:true}),{
+    ok:true,researchFocus:'หลักฐานการใช้ amlodipine ร่วมกับ simvastatin',
+  });
+  assert.equal(validateResearchFocus('',{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_REQUIRED');
+  assert.equal(validateResearchFocus('สั้น',{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_INVALID');
+  assert.equal(validateResearchFocus('x'.repeat(MAX_RESEARCH_FOCUS_CHARS+1),{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_INVALID');
+  for(const value of ['ตรวจสอบเคส CASE-PRIVATE','ข้อมูลของ patient@example.com','ข้อมูลของ 081-234-5678']){
+    assert.equal(validateResearchFocus(value,{enforcePrivacy:true}).errorCode,'CLINICAL_RESEARCH_FOCUS_PRIVACY_REJECTED');
+  }
 });
 
 test('evidence accepts only actual allowlisted provider citations and preserves unknown publication date', () => {

@@ -76,31 +76,35 @@
 
       <aside id="assistantPanel" class="support-panel assistant-column" aria-label="AI Pharmacist Assistant" hidden>
         <div class="assistant-heading support-panel__heading">
-          <div><span class="ai-label">PRIVATE ASSISTANT</span><h2>AI Pharmacist Assistant</h2></div>
+          <div><span class="ai-label">PRIVATE ASSISTANT</span><h2>ผู้ช่วยเภสัชกร</h2><p>เข้าใจเคสนี้และช่วยเตรียมตอบ</p></div>
           <button id="closeAssistantButton" class="icon-button" type="button">ปิด</button>
         </div>
         <div class="assistant-actions"><button id="generateAssistantButton" class="primary-button" type="button" disabled>สร้างสรุปช่วยตอบ</button><button id="refreshAssistantButton" class="secondary-button" type="button" disabled hidden>รีเฟรชข้อมูล</button></div>
-        <div class="ai-boundary" role="note">AI ช่วยสรุปและเตรียมร่างสำหรับเภสัชกรตรวจสอบเท่านั้น เภสัชกรเป็นผู้ตัดสินใจและต้องตรวจแก้ร่างก่อนส่งเอง ระบบจะไม่ส่งข้อความโดยอัตโนมัติ</div>
+        <div class="ai-boundary" role="note">ใช้ข้อมูลในเคสเพื่อช่วยสรุปประเด็นสำคัญ คำถามที่ควรถามเพิ่ม และเตรียมร่างคำตอบสำหรับเภสัชกรตรวจสอบ ฟังก์ชันนี้ไม่ค้นข้อมูลหรือแหล่งอ้างอิงภายนอก เภสัชกรต้องตรวจแก้และเป็นผู้ส่งข้อความเอง</div>
         <div id="assistantContent" class="assistant-content"><p class="empty-state">เลือกเคสแล้วกด “สร้างสรุปช่วยตอบ” ระบบจะไม่เรียก AI โดยอัตโนมัติ</p></div>
       </aside>
 
       <aside id="clinicalResearchPanel" class="support-panel clinical-research-panel" aria-label="พี่หมอ Clinical Research สำหรับเภสัชกร" hidden>
         <div class="clinical-research-heading support-panel__heading">
-          <div><span class="ai-label">PHARMACIST REVIEW ONLY</span><h2>พี่หมอ Clinical Research</h2><p>ผู้ช่วยค้นคว้าข้อมูลประกอบการดูแลสำหรับเภสัชกร</p></div>
+          <div><span class="ai-label">PHARMACIST REVIEW ONLY</span><h2>พี่หมอ Clinical Research</h2><p>ค้นข้อมูลและแหล่งอ้างอิงเพิ่มเติมในประเด็นที่เภสัชกรต้องการ แล้วสรุปหลักฐานเพื่อประกอบการพิจารณา</p></div>
           <button id="closeClinicalResearchButton" class="icon-button" type="button">ปิด</button>
         </div>
         <div class="clinical-research-body">
-          <div class="ai-boundary" role="note">พี่หมอช่วยรวบรวมบริบทที่เกี่ยวข้อง ค้นข้อมูลจากแหล่งอ้างอิงที่น่าเชื่อถือ และจัดประเด็นสำคัญให้เภสัชกรตรวจสอบก่อนตอบกลับ ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา</div>
+          <div class="ai-boundary" role="note">ใช้เมื่อต้องการค้นหลักฐานเพิ่มเติม พี่หมอจะวางแผนค้นแหล่งอ้างอิงที่น่าเชื่อถือและสรุปผลให้เภสัชกรตรวจสอบ ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา</div>
           <section id="clinicalResearchSetup" class="clinical-research-setup" aria-labelledby="clinicalResearchSetupTitle">
             <h3 id="clinicalResearchSetupTitle">ก่อนเริ่มค้นคว้า</h3>
             <p id="clinicalResearchCapabilityMessage" class="clinical-research-capability">กำลังตรวจสอบสิทธิ์การใช้งาน…</p>
             <div id="clinicalResearchDeidentifiedFields" hidden>
-              <label for="clinicalResearchDeidentifiedSummary">สรุปเคสที่ไม่ระบุตัวตน</label>
-              <textarea id="clinicalResearchDeidentifiedSummary" maxlength="6000" rows="7" placeholder="ใส่เฉพาะข้อมูลทางคลินิกที่จำเป็น โดยตัดชื่อ เลขประจำตัว เบอร์โทร ที่อยู่ วันเกิด และรหัสในระบบออก"></textarea>
+              <label for="clinicalResearchDeidentifiedSummary">บริบทเคสที่ไม่ระบุตัวตน</label>
+              <p id="clinicalResearchDeidentifiedSummaryHelp" class="clinical-research-helper">ใส่เฉพาะข้อมูลทางคลินิกที่จำเป็น โดยตัดชื่อ เบอร์โทร ที่อยู่ วันเกิด รหัสผู้ป่วย รหัสเคส และข้อมูลที่ระบุตัวบุคคลออก</p>
+              <textarea id="clinicalResearchDeidentifiedSummary" maxlength="6000" rows="7" aria-describedby="clinicalResearchDeidentifiedSummaryHelp" placeholder="สรุปเฉพาะบริบททางคลินิกที่ตรวจแล้วว่าไม่ระบุตัวตน"></textarea>
               <label class="clinical-research-check"><input id="clinicalResearchPrivacyReviewed" type="checkbox"> ฉันตรวจแล้วว่าสรุปนี้ไม่มีข้อมูลที่ระบุตัวบุคคลโดยตรง</label>
             </div>
+            <label for="clinicalResearchFocus">ต้องการให้พี่หมอค้นคว้าประเด็นใด?</label>
+            <p id="clinicalResearchFocusHelp" class="clinical-research-helper">ระบุคำถามหรือประเด็นที่ต้องการหลักฐานเพิ่มเติม เช่น ข้อควรพิจารณาเมื่อใช้ amlodipine ร่วมกับ simvastatin</p>
+            <textarea id="clinicalResearchFocus" maxlength="2000" rows="4" aria-describedby="clinicalResearchFocusHelp" placeholder="ระบุประเด็นที่ต้องการค้นหลักฐานเพิ่มเติม"></textarea>
             <label id="clinicalResearchAcknowledgmentLabel" class="clinical-research-check" hidden><input id="clinicalResearchAcknowledgment" type="checkbox"> ฉันเข้าใจว่าผลลัพธ์ไม่ใช่คำวินิจฉัยหรือคำสั่งการรักษา และจะตรวจข้อมูล แหล่งอ้างอิง และร่างคำตอบก่อนใช้</label>
-            <button id="runClinicalResearchButton" class="primary-button" type="button" disabled>เริ่มค้นคว้า</button>
+            <button id="runClinicalResearchButton" class="primary-button" type="button" disabled>ค้นหลักฐานเพิ่มเติม</button>
           </section>
           <div class="clinical-research-actions">
             <button id="refreshClinicalResearchButton" class="secondary-button" type="button" disabled hidden>ค้นคว้าใหม่</button>

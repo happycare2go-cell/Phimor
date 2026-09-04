@@ -234,6 +234,7 @@ test('assistant passes only minimized structured context without routing identif
   assert.match(call.context,/"indication":"ข้อมูลที่บันทึก"/);
   assert.match(call.context,/"dayPeriods":\["morning","evening"\]/);
   assert.equal(call.timeoutMs,45000);
+  assert.equal(call.webSearch,undefined);
   assert.equal(audit.requesterType,'pharmacist'); assert.equal(audit.consultationCaseId,'CASE-1');
   assert.equal(audit.provider,'openai');
   assert.equal(audit.model,'pharmacist-model');

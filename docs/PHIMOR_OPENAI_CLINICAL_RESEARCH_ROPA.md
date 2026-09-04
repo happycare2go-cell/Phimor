@@ -20,7 +20,7 @@ decisions unresolved. It is not legal advice.
 | Data subjects | Patients/care recipients and, where present in necessary consultation context, their authorized representatives; exact scope `PENDING HUMAN/LEGAL REVIEW` |
 | Personal-data categories | Minimized consultation and care-context information; operational access/audit references |
 | Sensitive-data categories | Health information, medication/allergy/condition information, and relevant confirmed measurements/results |
-| Source of data | Authorized PHIMOR consultation and Care Profile domains in `controlled_live`; manually prepared de-identified material only in `deidentified_pilot` |
+| Source of data | Manually prepared de-identified material in the active `deidentified_pilot`; authorized PHIMOR consultation and Care Profile domains are supported only by inactive future `controlled_live` |
 | Processing operations | Access control, bounded context assembly, private planning, privacy validation, bounded external web research, private synthesis, human review, metadata-only audit |
 | Recipients/processors | OpenAI and applicable subprocessors `PENDING HUMAN/LEGAL REVIEW`; no automatic recipient/patient message |
 | Cross-border transfer assessment | `PENDING HUMAN/LEGAL REVIEW` |
@@ -33,7 +33,7 @@ decisions unresolved. It is not legal advice.
 | Data-subject rights procedure | Follow the bounded procedure below and the existing PHIMOR controlled DSR workflow |
 | Incident procedure | Feature kill switch and bounded response procedure below |
 | Security measures | Assigned-pharmacist authorization, feature flag, server-only credentials, `store:false`, strict schemas, privacy validator, bounded/allowlisted web search, metadata-only audit, rate limits, human review, no auto-send |
-| Production product decision | `CONTROLLED_LIVE COMMISSIONED — STANDARD_RETENTION ACCEPTED` |
+| Production product decision | `DEIDENTIFIED_PILOT ACTIVE — STANDARD_RETENTION ACCEPTED` |
 | Responsible approver | Managed in PHIMOR's accountable organizational record; no identity invented in Git |
 | Approval date | `2026-09-04` product commissioning decision |
 | Review/expiry date | `PENDING HUMAN/LEGAL REVIEW` |
@@ -102,5 +102,5 @@ sharing, PHI in a provider response/log, or API-credential compromise.
 - `PENDING`: privacy notice version/publication evidence
 - `PENDING`: lawful-basis/sensitive-data assessment
 - `PENDING`: security and incident-response approval
-- `RECORDED`: `controlled_live` product commissioning decision; pilot allowlist
-  remains only for `deidentified_pilot` compatibility
+- `RECORDED`: `deidentified_pilot` is the active production mode and requires
+  the pilot allowlist; `controlled_live` remains supported but inactive

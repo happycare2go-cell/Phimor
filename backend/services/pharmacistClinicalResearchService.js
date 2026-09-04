@@ -13,7 +13,9 @@ const {
   assertGroundedClinicalSynthesis,
 } = require('../providers/pharmacistClinicalResearch');
 const { buildConsultationResearchContext } = require('./consultationResearchContextBuilder');
-const { sanitizeResearchPlan, validateDeidentifiedPilotSummary } = require('./clinicalResearchPrivacy');
+const {
+  sanitizeResearchPlan, validateDeidentifiedPilotSummary, validateResearchFocus,
+} = require('./clinicalResearchPrivacy');
 const { buildEvidenceBundle, createUsageAccumulator } = require('./clinicalEvidenceService');
 const { recordAIInteractionMetadata } = require('./aiAuditService');
 const { minimizeAIClinicalContext } = require('./aiClinicalContextPrivacy');
@@ -32,7 +34,7 @@ const SAFE_PROVIDER_ERRORS = new Set([
 function unavailable(errorCode) {
   return Object.freeze({
     status:'unavailable', errorCode,
-    message:'ระบบวิเคราะห์บทสนทนายังไม่พร้อม กรุณาดำเนินการสนทนาด้วยตนเอง',
+    message:'พี่หมอ Clinical Research ยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง',
   });
 }
 
@@ -110,7 +112,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
   };
 
   return async function generateClinicalResearch({
-    caseId, pharmacistLineUserId, deidentifiedSummary,
+    caseId, pharmacistLineUserId, deidentifiedSummary, researchFocus,
     privacyReviewed = false, safetyAcknowledged = false, now = new Date(),
   } = {}) {
     if (!flags.consultation?.clinicalResearch || !pilotConfig.emergencyEnabled) {
@@ -118,6 +120,11 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     }
     const access = clinicalResearchAccess(pilotConfig, pharmacistLineUserId);
     if (!access.allowed) throw new ConsultationDomainError('CLINICAL_RESEARCH_NOT_ALLOWED', 403);
+    const focusValidation = validateResearchFocus(researchFocus, {
+      enforcePrivacy:pilotConfig.mode === CLINICAL_RESEARCH_MODES.DEIDENTIFIED_PILOT,
+    });
+    if (!focusValidation.ok) throw new ConsultationDomainError(focusValidation.errorCode, 400);
+    const safeResearchFocus = focusValidation.researchFocus;
     if (safetyAcknowledged !== true) throw new ConsultationDomainError('CLINICAL_RESEARCH_ACK_REQUIRED', 400);
     let prepared;
     if (pilotConfig.mode === CLINICAL_RESEARCH_MODES.DEIDENTIFIED_PILOT) {
@@ -137,10 +144,13 @@ function createPharmacistClinicalResearchService(overrides = {}) {
     const providerClinicalContext = minimizeAIClinicalContext(prepared.context, {
       blockedTerms:prepared.privacy?.blockedTerms,
     });
-    const serializedContext = JSON.stringify(providerClinicalContext);
+    const plannerContext = JSON.stringify({
+      pharmacistResearchFocus:safeResearchFocus,
+      privateClinicalContext:providerClinicalContext,
+    });
     let plan;
     let evidence = Object.freeze({ findings:Object.freeze([]), sources:Object.freeze([]), limitations:Object.freeze([]) });
-    let inputCharacterCount = serializedContext.length;
+    let inputCharacterCount = plannerContext.length;
     let outputCharacterCount = 0;
     let researchPerformed = false;
     let contractTask = 'pharmacist_clinical_research_plan';
@@ -149,8 +159,8 @@ function createPharmacistClinicalResearchService(overrides = {}) {
       plan = validateResearchPlan(await provider().generateStructured({
         task:'pharmacist_clinical_research_plan',
         systemInstructions:RESEARCH_PLANNER_INSTRUCTIONS,
-        context:serializedContext,
-        input:{ text:'Create a strictly de-identified clinical research plan when external evidence is needed.' },
+        context:plannerContext,
+        input:{ text:'Plan evidence research for the explicitly supplied pharmacist research focus.' },
         outputSchema:validateResearchPlan, responseSchema:RESEARCH_PLAN_SCHEMA,
         responseSchemaName:'phimor_clinical_research_plan',
         timeoutMs:config.ai.clinicalResearchTimeoutMs ?? config.ai.timeoutMs, requestId:interactionId,
@@ -192,6 +202,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
         }
       }
       const synthesisContext = JSON.stringify({
+        pharmacistResearchFocus:safeResearchFocus,
         privateClinicalContext:providerClinicalContext,
         researchPlan:{
           clinicalQuestions:plan.clinicalQuestions,
@@ -242,7 +253,7 @@ function createPharmacistClinicalResearchService(overrides = {}) {
       });
       if (!audit?.recorded) return unavailable('AI_AUDIT_WRITE_FAILED');
       return Object.freeze({
-        status:'available', mode:pilotConfig.mode, generatedAt,
+        status:'available', mode:pilotConfig.mode, generatedAt, researchFocus:safeResearchFocus,
         contextTimestamp:prepared.context.contextTimestamp,
         analyzedThroughSequence:prepared.context.conversation.analyzedThroughSequence,
         analyzedMessageCount:prepared.context.conversation.analyzedMessageCount,

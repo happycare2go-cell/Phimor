@@ -145,22 +145,22 @@ test('production blueprint generates runtime config without enabling Plus', () =
   assert.match(productionBlueprint, /key:\s*CONSULTATION_REALTIME_ALLOWED_ORIGINS\s*\n\s*value:\s*"https:\/\/phimor-liff\.onrender\.com"/);
   assert.doesNotMatch(productionBlueprint, /CONSULTATION_REALTIME_TICKET_SECRET\s*\n\s*value:/);
   assert.match(productionBlueprint, /preDeployCommand:\s*npm run migrate/);
-  assert.match(productionBlueprint, /key:\s*AI_PROVIDER\s*\n\s*value:\s*["']gemini["']/);
+  assert.match(productionBlueprint, /key:\s*AI_PROVIDER\s*\n\s*value:\s*["']openai["']/);
   assert.match(productionBlueprint, /key:\s*AI_PROVIDER_PHARMACIST\s*\n\s*value:\s*["']openai["']/);
   assert.match(productionBlueprint, /key:\s*AI_PROVIDER_CLINICAL_RESEARCH\s*\n\s*value:\s*["']openai["']/);
   assert.match(productionBlueprint, /key:\s*AI_TIMEOUT_PHARMACIST_MS\s*\n\s*value:\s*["']45000["']/);
   assert.match(productionBlueprint, /key:\s*AI_TIMEOUT_CLINICAL_RESEARCH_MS\s*\n\s*value:\s*["']90000["']/);
   assert.match(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*sync:\s*false/);
   assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_ENABLED\s*\n\s*value:\s*["']true["']/);
-  assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_MODE\s*\n\s*value:\s*["']controlled_live["']/);
+  assert.match(productionBlueprint, /key:\s*PHARMACIST_AI_RESEARCH_MODE\s*\n\s*value:\s*["']deidentified_pilot["']/);
   assert.match(productionBlueprint, /key:\s*PDF_DOWNLOAD_SECRET\s*\n\s*sync:\s*false/);
   assert.doesNotMatch(productionBlueprint, /key:\s*OPENAI_API_KEY\s*\n\s*value:/);
   for (const [key,value] of [
-    ['AI_PROVIDER','gemini'],['AI_PROVIDER_PHARMACIST','openai'],
+    ['AI_PROVIDER','openai'],['AI_PROVIDER_PHARMACIST','openai'],
     ['AI_PROVIDER_CLINICAL_RESEARCH','openai'],['AI_MODEL_PHARMACIST','gpt-5.6-terra'],
     ['AI_MODEL_CLINICAL_RESEARCH','gpt-5.6-sol'],['AI_TIMEOUT_PHARMACIST_MS','45000'],
     ['AI_TIMEOUT_CLINICAL_RESEARCH_MS','90000'],['PHARMACIST_AI_RESEARCH_ENABLED','true'],
-    ['PHARMACIST_AI_RESEARCH_MODE','controlled_live'],
+    ['PHARMACIST_AI_RESEARCH_MODE','deidentified_pilot'],
   ]) assert.match(productionEnvironmentExample,new RegExp(`^${key}=${value}$`,'m'));
 });
 

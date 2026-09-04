@@ -143,11 +143,12 @@ function createPharmacistConsultationsRouter(overrides = {}) {
   router.post('/:caseId/clinical-research',asyncHandler(async(req,res)=>{
     if (!IDENTIFIER_PATTERN.test(req.params.caseId)) return res.status(400).json({status:'invalid_request',errorCode:'INVALID_CASE_ID'});
     const keys=req.body&&typeof req.body==='object'?Object.keys(req.body):[];
-    const allowedFields=['refresh','deidentifiedSummary','privacyReviewed','safetyAcknowledged'];
+    const allowedFields=['refresh','deidentifiedSummary','researchFocus','privacyReviewed','safetyAcknowledged'];
     if (keys.some((key)=>!allowedFields.includes(key)) || (req.body?.refresh!==undefined && req.body.refresh!==true)
       || (req.body?.privacyReviewed!==undefined && typeof req.body.privacyReviewed!=='boolean')
       || (req.body?.safetyAcknowledged!==undefined && typeof req.body.safetyAcknowledged!=='boolean')
-      || (req.body?.deidentifiedSummary!==undefined && typeof req.body.deidentifiedSummary!=='string')) {
+      || (req.body?.deidentifiedSummary!==undefined && typeof req.body.deidentifiedSummary!=='string')
+      || (req.body?.researchFocus!==undefined && typeof req.body.researchFocus!=='string')) {
       return res.status(400).json({status:'invalid_request',errorCode:'UNSUPPORTED_FIELD'});
     }
     try {
@@ -156,6 +157,7 @@ function createPharmacistConsultationsRouter(overrides = {}) {
         caseId:req.params.caseId,
         pharmacistLineUserId:req.user.lineUserId,
         deidentifiedSummary:req.body?.deidentifiedSummary,
+        researchFocus:req.body?.researchFocus,
         privacyReviewed:req.body?.privacyReviewed === true,
         safetyAcknowledged:req.body?.safetyAcknowledged === true,
       }));

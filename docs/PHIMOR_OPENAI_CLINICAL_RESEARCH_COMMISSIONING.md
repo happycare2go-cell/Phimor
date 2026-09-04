@@ -11,12 +11,12 @@ stored in this repository.
 
 | Control | Recorded state |
 | --- | --- |
-| Ordinary PHIMOR AI | `AI_PROVIDER=gemini` |
+| Ordinary PHIMOR AI | `AI_PROVIDER=openai`; Gemini is manual rollback only |
 | Pharmacist Assistant | `AI_PROVIDER_PHARMACIST=openai`, `gpt-5.6-terra` |
 | Clinical Research | `AI_PROVIDER_CLINICAL_RESEARCH=openai`, `gpt-5.6-sol` |
 | Clinical Research feature | `PHARMACIST_AI_RESEARCH_ENABLED=true` |
-| Clinical Research mode | `PHARMACIST_AI_RESEARCH_MODE=controlled_live` |
-| Pilot allowlist | Ignored in `controlled_live`; required only in `deidentified_pilot` |
+| Clinical Research mode | `PHARMACIST_AI_RESEARCH_MODE=deidentified_pilot` |
+| Pilot allowlist | Required for `deidentified_pilot` |
 | OpenAI retention posture | `STANDARD_RETENTION` accepted for the current production phase |
 | Zero Data Retention | **Not enabled or verified** |
 | Data Sharing | **Off**, based on the recorded operator confirmation dated 2026-09-03 |
@@ -36,14 +36,15 @@ Clinical Research remains an explicit pharmacist action:
 2. `requirePharmacist` verifies an active pharmacist account.
 3. The case service verifies the pharmacist is assigned to the active/resolved
    paid and provisioned consultation.
-4. The pharmacist reads the disclosure, acknowledges the safety boundary, and
-   presses **เริ่มค้นคว้า**.
+4. In `deidentified_pilot`, the pharmacist supplies manually reviewed
+   de-identified context plus a separate research focus, reads the disclosure,
+   acknowledges the safety boundary, and presses **ค้นหลักฐานเพิ่มเติม**.
 5. The result is a pharmacist-review draft. Copying it fills the composer only;
    sending is a separate human action.
 
-In `controlled_live`, `PHARMACIST_AI_RESEARCH_PILOT_USERS` has no effect. In
-`deidentified_pilot`, the allowlist and manually reviewed de-identified summary
-remain mandatory for backward compatibility. Setting
+The active `deidentified_pilot` mode requires the allowlist and manually
+reviewed de-identified context. The supported `controlled_live` mode remains
+inactive and would ignore the pilot allowlist if separately approved. Setting
 `PHARMACIST_AI_RESEARCH_ENABLED=false` disables Clinical Research immediately
 without disabling ordinary consultation or the Pharmacist Assistant.
 
